@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **semantic layer: JS, TS and Python** (`--semantic` /
+  `buildFont({semantic: true})`): the tree-sitter overlay now covers
+  function/method definitions and calls, parameters (including TS
+  typed/optional wrappers), properties vs call-target methods, class
+  and `new` types, TS built-in types (`predefined_type` in the grammar)
+  and JS `const` function bindings / literal constants / Python
+  UPPER_CASE assignment constants. Grammar quirks handled: python's
+  call node is `call` (not `call_expression`). With this, M4 closes —
+  generic mode covers six languages with escapes and JS template
+  interpolation; multi-language-per-font is decided against
+  (cross-language false positives).
+
 - **template interpolation** (JS/TS): `` `hi `${`name`}` bye` `` renders
   like an editor — string segments orange, `${`/`}` keep the string
   color, the expression renders uncolored, and the string resumes after

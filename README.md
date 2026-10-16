@@ -127,14 +127,19 @@ tokenize+theme → compile → fontbuild → verify
     正反例 25/25 对齐）：单行块注释/模板/三引号全程着色，跨行状态起始行
     着色、续行无色，缩进关键字与 `*/ let` 中缀关键字着色，列 0 关键字、
     `$use`、f-string 前缀无色，JS 控制流紫/声明蓝颜色分明
-- [x] **M4c** tree-sitter 语义 token（`--semantic` / `buildFont({semantic: true})`）：
+- [x] **M4c** tree-sitter 语义 token（`--semantic` / `buildFont({semantic: true})`，
+ 覆盖 Rust / JS / TS / Python）：
   - 可选 crate `chromaglyph-treesitter`（workspace 里唯一带 C 依赖的 crate，
     core 保持纯 Rust）；解析代码树 → 语义 span（函数定义/调用/方法、参数、
     类型、常量、枚举成员、字段）→ 覆盖在 syntect 语法色之上，主题不认识
     的 scope 自动跳过——看起来像开了语言服务器的编辑器
   - core 只暴露 `BuildInput.semantic` 回调钩子（`SemanticLayer` 类型），
     与具体解析器完全解耦；oracle 全链路验证（新颜色→新 slot→新规则）
-- [ ] M4 剩余：多语言同字体、tree-sitter 语言扩展
+- **M4 收官**。范围决策记录：
+  - 多语言同字体**刻意不做**：跨语言假阳性无法接受——合并 spec 后
+    TS 的 `type` 会给 Rust 块里的 `type` 上色、Python 的 `is` 会命中
+    JS/Java 文本；exact 模式（内容已知）已经是多语言一字体，generic
+    保持一语言一字体
 
 ## 安装
 
