@@ -1,0 +1,29 @@
+{
+  "name": "@chromaglyph/markdown-it",
+  "version": "0.1.0",
+  "description": "markdown-it plugin (VitePress-ready): highlight code blocks by compiling them into a chromaglyph color font",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "dependencies": {
+    "@chromaglyph/node": "workspace:*"
+  },
+  "devDependencies": {
+    "markdown-it": "^14"
+  },
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "engines": {
+    "node": ">= 18"
+  }
+}

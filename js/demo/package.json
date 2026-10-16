@@ -9,10 +9,12 @@
   "dependencies": {
     "@chromaglyph/node": "workspace:*",
     "@chromaglyph/remark": "workspace:*",
+    "markdown-it": "^15.0.2",
     "rehype-document": "^7.0.3",
     "rehype-stringify": "^10",
     "remark-parse": "^11",
     "remark-rehype": "^11",
-    "unified": "^11"
+    "unified": "^11",
+    "@chromaglyph/markdown-it": "workspace:*"
   }
 }

@@ -18,18 +18,13 @@
  */
 import { readFileSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
-import { mkdirSync, writeFileSync } from 'node:fs'
 import { visit } from 'unist-util-visit'
 import { buildFontSafe } from '@chromaglyph/node'
-
-const slug = (name) =>
-  name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-
-/** @typedef {import('node:fs').PathOrFileDescriptor} PathLike */
+import { buildCssAssets } from '@chromaglyph/node/css'
 
 /**
  * @param {{
- *   font: PathLike | Uint8Array,
+ *   font: string | Uint8Array,
  *   themes?: string[],
  *   langs?: string[] | null,
  *   embed?: boolean,
@@ -73,50 +68,22 @@ function remarkChromaglyph(options = {}) {
     // silent degradation: any failure returns null and the document renders
     // with its usual (uncolored) code styling
     const result = buildFontSafe({ font: fontBytes, themes, blocks, verify, cacheDir })
-    if (!result) {
-      file.message('chromaglyph: font build degraded silently (see stderr for nothing — it is silent)')
-      return
-    }
+    if (!result) return
 
-    const hash8 = result.contentHash.slice(0, 8)
-    const family = `chromaglyph-${hash8}`
-    let fontUrl
-    if (embed) {
-      fontUrl = `data:font/woff;base64,${result.woff.toString('base64')}`
-    } else {
-      mkdirSync(outDir, { recursive: true })
-      const fileName = `chromaglyph-${hash8}.woff`
-      writeFileSync(resolve(outDir, fileName), result.woff)
-      fontUrl = `./${fileName}`
-    }
-
-    let css = `/* chromaglyph ${hash8} */\n`
-    css += `@font-face {\n  font-family: '${family}';\n  src: url(${fontUrl}) format('woff');\n}\n`
-    for (const [i, theme] of result.themes.entries()) {
-      css += `@font-palette-values --${family}-${slug(theme.name)} {\n  font-family: ${family};\n  base-palette: ${i};\n}\n`
-    }
-    const dark = result.themes[0]
-    const light = result.themes[1]
-    css += `[data-chromaglyph] {\n  font-family: ${family}, monospace;\n`
-    if (dark && dark.background) css += `  background: ${dark.background};\n`
-    css += `}\n`
-    if (light) {
-      css += `@media (prefers-color-scheme: light) {\n  [data-chromaglyph] {\n    font-palette: --${family}-${slug(light.name)};\n`
-      if (light.background) css += `    background: ${light.background};\n`
-      css += `  }\n}\n`
-    }
+    const assets = buildCssAssets(result, { embed, outDir, cwd: file.cwd || process.cwd() })
 
     // inject the stylesheet as the document's first node; pipelines must
     // keep raw html (remarkRehype + rehypeStringify with allowDangerousHtml,
     // or rehype-raw)
-    tree.children.unshift({ type: 'html', value: `<style>\n${css}</style>` })
+    tree.children.unshift({ type: 'html', value: `<style>\n${assets.css}</style>` })
 
     const report = JSON.parse(result.report)
     file.data.chromaglyph = {
       cached: result.cached,
       contentHash: result.contentHash,
-      css,
-      fontUrl,
+      css: assets.css,
+      fontUrl: assets.fontUrl,
+      family: assets.family,
       embed,
       outDir: embed ? null : outDir,
       warnings: report.warnings || [],

@@ -1,6 +1,6 @@
 {
   "name": "@chromaglyph/node",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "napi-rs bindings for chromaglyph: compile syntax highlighting into a color font, in-process",
   "license": "Apache-2.0",
   "repository": {
@@ -12,10 +12,12 @@
   "files": [
     "index.js",
     "index.d.ts",
+    "css.mjs",
     "*.node"
   ],
   "napi": {
     "binaryName": "chromaglyph",
+    "npmDir": "../../npm",
     "triples": {}
   },
   "devDependencies": {
@@ -27,5 +29,15 @@
   },
   "engines": {
     "node": ">= 18"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./css": "./css.mjs"
+  },
+  "optionalDependencies": {
+    "@chromaglyph/node-darwin-arm64": "0.1.0"
   }
 }
