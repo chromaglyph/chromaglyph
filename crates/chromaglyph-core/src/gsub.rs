@@ -41,7 +41,7 @@ pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
     if plan.rules.is_empty() || plan.alt_glyphs.is_empty() {
         return None;
     }
-    let num_palettes = plan.palette.len() as u16;
+    let num_palettes = plan.slots.len() as u16; // one nested single-subst lookup per slot
 
     // ---- nested single-substitution lookups, one per palette entry --------
     let mut pairs_by_pal: HashMap<u16, Vec<(u16, u16)>> = HashMap::new();

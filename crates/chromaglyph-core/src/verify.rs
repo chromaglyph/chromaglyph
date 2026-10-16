@@ -3,23 +3,27 @@
 //! The produced font is shaped in-process with rustybuzz (the same shaping
 //! algorithm HarfBuzz uses, which is what browsers run). For every block we
 //! compare the shaped glyph stream against the intended per-character glyphs
-//! (colored copy or base), then read COLR/CPAL back out of the produced font
-//! and check that each colored copy paints the base glyph in exactly the
-//! theme color.
+//! (colored copy or base). Substitution is theme-independent — the same
+//! rules run under every palette — so shaping is checked once, and then
+//! every CPAL palette is read back and compared with the theme intent slot
+//! by slot.
 
 use std::collections::HashMap;
 
 use read_fonts::{FontRef, TableProvider};
 use rustybuzz::{Face, UnicodeBuffer};
+use syntect::parsing::SyntaxSet;
 
 use crate::compile::{GlyphPlan, PreparedBlock};
 use crate::error::BuildError;
+use crate::theme::ThemeSpec;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VerifyResult {
     pub ok: bool,
     pub glyphs_checked: usize,
     pub colored_glyphs: usize,
+    pub palettes_checked: usize,
     pub failures: Vec<String>,
 }
 
@@ -29,6 +33,7 @@ impl VerifyResult {
             ok: true,
             glyphs_checked: 0,
             colored_glyphs: 0,
+            palettes_checked: 0,
             failures: Vec::new(),
         }
     }
@@ -71,9 +76,6 @@ pub fn verify_plan(ttf: &[u8], blocks: &[PreparedBlock<'_>], plan: &GlyphPlan) -
                 infos.len(),
                 cells.len()
             ));
-            if infos.is_empty() {
-                continue;
-            }
         }
         let expected: Vec<u16> = cells
             .iter()
@@ -110,12 +112,13 @@ pub fn verify_plan(ttf: &[u8], blocks: &[PreparedBlock<'_>], plan: &GlyphPlan) -
         }
     }
 
-    verify_colors(ttf, plan, &mut result);
+    verify_palettes(ttf, plan, &mut result);
     result
 }
 
-/// Read COLR/CPAL back from the produced font and check every colored copy.
-fn verify_colors(ttf: &[u8], plan: &GlyphPlan, result: &mut VerifyResult) {
+/// Read COLR/CPAL back from the produced font and check every colored copy
+/// under every palette (theme).
+fn verify_palettes(ttf: &[u8], plan: &GlyphPlan, result: &mut VerifyResult) {
     let font = match FontRef::new(ttf) {
         Ok(font) => font,
         Err(e) => {
@@ -140,7 +143,7 @@ fn verify_colors(ttf: &[u8], plan: &GlyphPlan, result: &mut VerifyResult) {
         .layer_records()
         .and_then(|r| r.ok())
         .unwrap_or(empty_layers);
-    let mut painted: HashMap<u16, (u16, u16)> = HashMap::new(); // alt -> (layer glyph, palette idx)
+    let mut painted: HashMap<u16, (u16, u16)> = HashMap::new(); // alt -> (layer glyph, slot)
     for record in base_records {
         let first = record.first_layer_index() as usize;
         if record.num_layers() as usize != 1 {
@@ -158,34 +161,63 @@ fn verify_colors(ttf: &[u8], plan: &GlyphPlan, result: &mut VerifyResult) {
             );
         }
     }
+
     let empty_colors: &[read_fonts::tables::cpal::ColorRecord] = &[];
     let colors: &[read_fonts::tables::cpal::ColorRecord] = cpal
         .color_records_array()
         .and_then(|r| r.ok())
         .unwrap_or(empty_colors);
-    for &(base, pal, alt) in &plan.alt_glyphs {
-        match painted.get(&alt) {
-            Some(&(layer_gid, layer_pal)) => {
-                if layer_gid != base || layer_pal != pal {
-                    result.fail(format!(
-                        "COLR for glyph {alt}: paints ({layer_gid}, {layer_pal}), expected ({base}, {pal})"
-                    ));
-                }
-                match colors.get(pal as usize) {
-                    Some(color) => {
-                        let got = (color.red(), color.green(), color.blue(), color.alpha());
-                        let want = plan.palette[pal as usize];
-                        if got != (want.red, want.green, want.blue, want.alpha) {
-                            result.fail(format!(
-                                "CPAL[{pal}]: got rgba {got:?}, theme says {:?}",
-                                (want.red, want.green, want.blue, want.alpha)
-                            ));
-                        }
+    let num_palettes = cpal.num_palettes() as usize;
+    let num_slots = cpal.num_palette_entries() as usize;
+    if num_palettes != plan.theme_fgs.len() || num_slots != plan.slots.len() {
+        result.fail(format!(
+            "CPAL has {num_palettes} palettes x {num_slots} slots, plan expects {} x {}",
+            plan.theme_fgs.len(),
+            plan.slots.len()
+        ));
+        return;
+    }
+    let palette_base: Vec<usize> = cpal
+        .color_record_indices()
+        .iter()
+        .map(|v| v.get() as usize)
+        .collect();
+
+    for theme in 0..num_palettes {
+        result.palettes_checked += 1;
+        // every slot's palette entry must equal the theme intent
+        for (slot, vector) in plan.slots.iter().enumerate() {
+            let want = vector[theme].unwrap_or(plan.theme_fgs[theme]);
+            let record = palette_base
+                .get(theme)
+                .and_then(|base| colors.get(base + slot));
+            match record {
+                Some(color) => {
+                    let got = (color.red(), color.green(), color.blue(), color.alpha());
+                    if got != (want.red, want.green, want.blue, want.alpha) {
+                        result.fail(format!(
+                            "palette {theme} slot {slot}: got rgba {got:?}, theme says {:?}",
+                            (want.red, want.green, want.blue, want.alpha)
+                        ));
                     }
-                    None => result.fail(format!("CPAL has no color record {pal}")),
                 }
+                None => result.fail(format!(
+                    "palette {theme} has no color record for slot {slot}"
+                )),
             }
-            None => result.fail(format!("no COLR record for colored glyph {alt}")),
+        }
+        // every colored copy paints its base glyph at the right slot
+        for &(base, slot, alt) in &plan.alt_glyphs {
+            match painted.get(&alt) {
+                Some(&(layer_gid, layer_slot)) => {
+                    if layer_gid != base || layer_slot != slot {
+                        result.fail(format!(
+                            "COLR for glyph {alt}: paints ({layer_gid}, {layer_slot}), expected ({base}, {slot})"
+                        ));
+                    }
+                }
+                None => result.fail(format!("no COLR record for colored glyph {alt}")),
+            }
         }
     }
 }
@@ -198,15 +230,16 @@ fn expected_gid(cell: &crate::compile::Cell, alt_of: &HashMap<(u16, u16), u16>) 
     }
 }
 
-/// Standalone verification: rebuild the plan from the produced font alone.
+/// Standalone verification: rebuild the plan from the produced font + the
+/// original inputs (blocks and themes), then run the oracle.
 ///
 /// The alt glyph ids are recovered from COLR (every colored copy is a COLR
 /// base glyph), so `chromaglyph verify` needs only the output font and the
-/// original input text.
+/// same source text and themes the font was built with.
 pub fn verify_font(
     ttf: &[u8],
-    blocks: &[PreparedBlock<'_>],
-    theme: &crate::spec::Theme,
+    blocks: &[crate::spec::Block<'_>],
+    themes: &[ThemeSpec],
 ) -> Result<VerifyResult, BuildError> {
     let font = FontRef::new(ttf).map_err(|e| BuildError::FontParse(e.to_string()))?;
     let num_glyphs = font.maxp()?.num_glyphs();
@@ -220,10 +253,21 @@ pub fn verify_font(
         .checked_sub(num_alts)
         .ok_or_else(|| BuildError::FontParse("more COLR glyphs than total glyphs".into()))?;
 
+    let ss = SyntaxSet::load_defaults_newlines();
     let charmap = skrifa::charmap::Charmap::new(&font);
+    let prepared: Vec<PreparedBlock<'_>> = blocks
+        .iter()
+        .map(|block| {
+            Ok(PreparedBlock {
+                id: block.id.clone(),
+                text: block.text,
+                colors: crate::tokenize::colorize_block(block, themes, &ss)?,
+            })
+        })
+        .collect::<Result<_, BuildError>>()?;
+    let theme_fgs: Vec<crate::spec::Color> = themes.iter().map(|t| t.foreground).collect();
     let plan = crate::compile::compile(
-        blocks,
-        theme,
+        &prepared,
         &|ch| {
             charmap
                 .map(ch)
@@ -231,6 +275,7 @@ pub fn verify_font(
                 .filter(|g| *g != 0)
         },
         num_source_glyphs,
+        &theme_fgs,
     )?;
-    Ok(verify_plan(ttf, blocks, &plan))
+    Ok(verify_plan(ttf, &prepared, &plan))
 }

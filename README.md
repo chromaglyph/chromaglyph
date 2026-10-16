@@ -1,8 +1,9 @@
 # Chromaglyph
 
-**把语法高亮编译进字体。** 给定一个静态 TTF、一个主题和内容已知（exact 模式）的代码块，
+**把语法高亮编译进字体。** 给定一个静态 TTF、若干主题和内容已知（exact 模式）的代码块，
 产出一个彩色 OpenType 字体：代码文本放进 DOM 后**字节不变**，高亮完全发生在字体内部的
-glyph 替换里——不用 `<span>`，复制粘贴零污染。
+glyph 替换里——不用 `<span>`，复制粘贴零污染。多主题 = 一个字体多调色板，明暗切换只是
+一次 CSS `@font-palette-values` 翻转，零重排。
 
 灵感来自 [Cobble / FontWithASyntaxHighlighter](https://github.com/ssssota/FontWithASyntaxHighlighter)。
 原版在字体里手写了一个「有限状态机词法分析器」（706 条 calt 规则逐字符推进状态）；
@@ -11,48 +12,62 @@ Chromaglyph 反其道而行：**内容在构建期已知，解析在构建期完
 ## 工作原理
 
 ```
-tokenize → theme → compile → fontbuild → verify
+tokenize+theme → compile → fontbuild → verify
 ```
 
-1. **tokenize**：`(lang, text)` → token 列表（M1 是硬编码的演示 lexer，M2 换 syntect）。
-2. **theme**：scope → CPAL 调色板索引（颜色去重；多主题 = 一个字体多调色板，M2）。
-3. **compile**（核心创新）：每个被着色的 token 出现位置生成一条链式上下文替换规则
+1. **tokenize + theme**：syntect（bat 的引擎，纯 Rust fancy-regex 构建，零 C 依赖）用真实
+   TextMate 语法解析，再在**每个主题**下把每个字符解析成具体颜色（颜色 == 主题默认前景色
+   视为「未着色」）。主题支持 VS Code JSON（含 JSONC、`include` 链合并）与 `.tmTheme`。
+2. **compile**（核心创新，slot 模型）：一个 **slot** = 一个去重后的「逐主题颜色向量」；
+   字符只要在任一主题下着色就属于联合结构。每个着色 run 生成一条链式上下文替换规则
    （GSUB ChainContext format 2），上下文取**恰好能唯一锚定该出现位置的最小窗口**，
    并在全部块的全局范围内做假匹配审计：
    - 上下文类别（class）同时包含基础字形和全部彩色副本 → 规则与替换顺序无关；
    - 长 token（注释、字符串）按 64 字形的整形器上下文预算切段，链式接力；
-   - 无法唯一区分的出现位置（如两个块内容完全相同但语言不同）降级为不染色并记入
-     report.warnings——**构建永不失败**。
-4. **fontbuild**：源字体表尽量按字节原样保留；彩色副本是**零轮廓字形** + COLRv0 层引用
-   基础字形（每个颜色的体积成本 ≈ 0），替换掉源字体的 GSUB/GPOS/GDEF 和 AAT 布局表
-   （避免干扰，M2 加 `--keep-base-features`）。v1 只收静态 TrueType（拒绝 CFF/OTF、变字体）。
-5. **verify**（预言机）：rustybuzz 进程内整形产出的字体，逐字符比对替换后的 glyph id；
-   再用 read-fonts 读回 COLR/CPAL 核对颜色。`build` 默认自跑，不合格直接报错。
+   - 含无字形字符的 token（行尾换行、emoji）在断点切开，周围继续染色；
+   - 无法唯一区分的出现位置降级为不染色并记入 report.warnings——**构建永不失败**；
+   - 因为规则只依赖 slot，**一套 GSUB 服务所有主题**，切换调色板零重排。
+3. **fontbuild**：源字体表尽量按字节原样保留；彩色副本是**零轮廓字形** + COLRv0 层引用
+   基础字形（每 slot 体积成本 ≈ 0），CPAL 一主题一调色板；替换掉源字体的 GSUB/GPOS/GDEF
+   和 AAT 布局表（避免干扰）。v1 只收静态 TrueType（拒绝 CFF/OTF、变字体）。
+4. **verify**（预言机）：rustybuzz 进程内整形产出的字体，逐字符比对替换后的 glyph id
+   （整形与主题无关，验一次即可）；再按调色板逐一读回 CPAL 核对颜色。`build` 默认自跑。
 
-## 状态：M1 walking skeleton ✅
+## 状态
 
-- [x] cargo workspace：`chromaglyph-core`（纯函数库）+ `chromaglyph-cli`
-- [x] 读静态 TTF → 彩色字体（COLRv0 + CPAL + calt GSUB）→ WOFF1
-- [x] rustybuzz 预言机逐字符验证 + COLR/CPAL 颜色回读 + 浏览器像素级验证
-- [x] 多块合并、全局消歧、64 字形上下文预算、降级不失败
-- [x] 自我压力测试：喂 2000 行 Rust 源码（24815 字符）→ 744 条规则，验证全对
-- [ ] M2：syntect tokenizer、TextMate/VS Code 主题导入、多调色板 + `@font-palette-values`、
-      `--css`/`--report` 完整化、`--keep-base-features`
+- [x] **M1** walking skeleton（见 git 历史）
+- [x] **M2** CLI 完整化：
+  - syntect tokenizer（Rust/JS/TS/Python/Go/… 全部内置语法，`--lang auto` 按扩展名探测）
+  - 主题导入：VS Code `.json`（JSONC + `include` 链）与 `.tmTheme`；内置 `dark-plus` /
+    `light-plus`（vendored 自 VS Code `theme-defaults`，MIT）
+  - 多主题 = 多调色板 + 生成 `@font-palette-values` CSS（含 `prefers-color-scheme`
+    明暗自动切换、背景色进 CSS 不进字体）
+  - `--report` JSON、`verify` 子命令独立重验（从 COLR 反推结构，无需原字体）
+  - 浏览器验证：同一 woff 双调色板明暗渲染正确
+  - 自我压力测试：compile.rs 全文 24469 字符 → 482 条规则，双调色板 oracle 全绿
 - [ ] M3：napi-rs 绑定 + remark/VitePress 插件（批处理合并、内容哈希缓存、失败静默降级）
 - [ ] M4：tree-sitter 语义 token、cmap14/variation-selector 路线、任意代码的通用模式
 
 ## 用法
 
 ```sh
-chromaglyph build --font JetBrainsMono-Regular.ttf --lang rust \
-    --input examples/hello.rs --output out.woff \
-    [--css snippet.css] [--report report.json] [--no-verify]
-chromaglyph verify --font out.woff --input examples/hello.rs --lang rust
+chromaglyph build --font JetBrainsMono-Regular.ttf \
+    --input examples/hello.rs \            # --lang auto 按扩展名探测
+    --theme dark-plus --theme light-plus \ # 或 my-theme.json / my.tmTheme，可重复
+    --output out.woff --css snippet.css --report report.json
+chromaglyph verify --font out.woff --input examples/hello.rs
 ```
+
+生成的 CSS（节选）：
 
 ```css
 @font-face { font-family: 'chromaglyph'; src: url('out.woff') format('woff'); }
-pre, code { font-family: chromaglyph, 'JetBrains Mono', monospace; }
+@font-palette-values --chromaglyph-dark  { font-family: chromaglyph; base-palette: 0; }
+@font-palette-values --chromaglyph-light { font-family: chromaglyph; base-palette: 1; }
+pre, code { font-family: chromaglyph, monospace; background: #1e1e1e; }
+@media (prefers-color-scheme: light) {
+  pre, code { font-palette: --chromaglyph-light; background: #ffffff; }
+}
 ```
 
 输出扩展名选 `.ttf` 则写裸 sfnt，`.woff`（默认）写 WOFF1（zlib）。纯 Rust 生态还没有成熟的
@@ -60,29 +75,32 @@ WOFF2 编码器（需要 Brotli + woff2 变换栈），v1 先退 WOFF1，浏览�
 
 ```sh
 cargo build --release
-cargo test                     # 17 tests: 规则生成单测 + 端到端（含 fixture 字体）
+cargo test                                        # 23 tests
 cargo run -p chromaglyph-cli -- build --font crates/chromaglyph-core/tests/fixtures/JetBrainsMono-Regular.ttf \
-    --input examples/hello.rs --output target/demo.woff --css target/demo.css
-python3 -m http.server -d target/demo 8143   # 打开 index.html 看效果
+    --input examples/hello.rs --output target/demo/chromaglyph-demo.woff --css target/demo/chromaglyph-demo.css
+python3 -m http.server -d target/demo 8143        # 打开 index.html 看明暗双调色板
 ```
 
-## 尺寸对比（examples/hello.rs，114 字符）
+## 尺寸对比（examples/hello.rs，114 字符，双主题）
 
 | 表 | 本项目 | 参考实现 FontWithASyntaxHighlighter |
 |----|-------|-------|
-| GSUB | 1.3 KB（exact 模式，仅锚定规则） | 39 KB（FSM 全状态机） |
-| COLR | 0.5 KB（空轮廓 + 层引用） | 12.7 KB（轮廓复制） |
-| 规则数 | 10 | 706 |
+| GSUB | 1.2 KB（exact 模式，仅锚定规则） | 39 KB（FSM 全状态机） |
+| COLR | 0.4 KB（空轮廓 + 层引用） | 12.7 KB（轮廓复制） |
+| CPAL | 40 B（2 调色板 × 6 slot） | 50 B（1 调色板） |
+| 规则数 | 9 | 706 |
 
-自我压力测试（`compile.rs` 本身，24815 字符）：6217 个 token 去重后 744 条规则，
-191 个彩色副本，ttf 290 KB / woff 117 KB，构建 1.8s。
+自我压力测试（`compile.rs` 本身，24469 字符，双主题）：6217 token 级颜色 → 482 条规则、
+7 slot、226 彩色副本，ttf 285 KB / woff 116 KB，构建 3.2s（audit 为 O(n²)，后续可优化）。
 
 ## 技术选型
 
 - 读字体 `read-fonts` / `skrifa`，写表 `write-fonts`（fontations 系）
 - 整形预言机 `rustybuzz`（HarfBuzz 算法的纯 Rust 移植）
+- 语法/主题 `syntect`（`default-fancy`：fancy-regex，零 C 依赖）
 - WOFF1 `flate2`（zlib）
 
 ## License
 
-Apache-2.0。测试 fixture `JetBrainsMono-Regular.ttf` 遵循其自身的 OFL 许可。
+Apache-2.0。`themes/*.json` 与测试 fixture `JetBrainsMono-Regular.ttf` 遵循其自身的
+上游许可（VS Code theme-defaults MIT；JetBrains Mono OFL）。

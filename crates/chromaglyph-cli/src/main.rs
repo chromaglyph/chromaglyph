@@ -1,16 +1,17 @@
 //! chromaglyph CLI: `build` and `verify`.
 //!
-//! M1 surface:
 //!   chromaglyph build --font JetBrainsMono-Regular.ttf --lang rust \
-//!       --input code.rs --output out.woff [--css snippet.css] [--report r.json]
-//!       [--no-verify]
-//!   chromaglyph verify --font out.woff --lang rust --input code.rs
+//!       --input code.rs --output out.woff \
+//!       [--theme dark-plus --theme light-plus | --theme my-theme.json ...] \
+//!       [--css snippet.css] [--report r.json] [--no-verify]
+//!   chromaglyph verify --font out.woff --input code.rs [--lang rust] [--theme ...]
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use chromaglyph_core::{build, verify, Block, BuildError, BuildInput, Theme};
+use chromaglyph_core::theme::load_theme_arg;
+use chromaglyph_core::{build, verify, Block, BuildError, BuildInput, ThemeSpec};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -34,13 +35,19 @@ enum Command {
         /// Input source file whose content is compiled into the font
         #[arg(long)]
         input: PathBuf,
-        /// Language of the input (rust in M1; unknown falls back to plain)
-        #[arg(long, default_value = "rust")]
+        /// Language of the input: `auto` (detect from --input's extension),
+        /// a name (`rust`, `typescript`, …) or an extension (`rs`)
+        #[arg(long, default_value = "auto")]
         lang: String,
+        /// Theme: builtin name (`dark-plus`, `light-plus`) or a path to a
+        /// VS Code .json / TextMate .tmTheme file. Repeat for multiple
+        /// palettes; the first is the default.
+        #[arg(long = "theme", default_values_t = default_themes())]
+        themes: Vec<String>,
         /// Output font path; .ttf writes raw sfnt, .woff (default) wraps WOFF1
         #[arg(long, default_value = "chromaglyph.woff")]
         output: PathBuf,
-        /// Optional path for the companion CSS snippet
+        /// Optional path for the companion CSS (font-face + palettes)
         #[arg(long)]
         css: Option<PathBuf>,
         /// Optional path for the JSON build report
@@ -58,9 +65,15 @@ enum Command {
         /// The same source file that was built with
         #[arg(long)]
         input: PathBuf,
-        #[arg(long, default_value = "rust")]
+        #[arg(long, default_value = "auto")]
         lang: String,
+        #[arg(long = "theme", default_values_t = default_themes())]
+        themes: Vec<String>,
     },
+}
+
+fn default_themes() -> Vec<String> {
+    vec![String::from("dark-plus"), String::from("light-plus")]
 }
 
 fn main() -> ExitCode {
@@ -70,6 +83,7 @@ fn main() -> ExitCode {
             font,
             input,
             lang,
+            themes,
             output,
             css,
             report,
@@ -78,12 +92,18 @@ fn main() -> ExitCode {
             &font,
             &input,
             &lang,
+            &themes,
             &output,
             css.as_deref(),
             report.as_deref(),
             no_verify,
         ),
-        Command::Verify { font, input, lang } => cmd_verify(&font, &input, &lang),
+        Command::Verify {
+            font,
+            input,
+            lang,
+            themes,
+        } => cmd_verify(&font, &input, &lang, &themes),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -98,6 +118,17 @@ fn read_required(path: &Path) -> Result<Vec<u8>, BuildError> {
     fs::read(path).map_err(|e| BuildError::Io(format!("cannot read {}: {e}", path.display())))
 }
 
+/// Resolve `--lang auto` against the input file's extension.
+fn resolve_lang(lang: &str, input: &Path) -> String {
+    if lang != "auto" {
+        return lang.to_string();
+    }
+    input
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_else(|| "plain".into())
+}
+
 fn one_block<'a>(id: &str, lang: &str, bytes: &'a [u8]) -> Result<Block<'a>, BuildError> {
     // A block's text must stay byte-identical to what will sit in the DOM;
     // we do not normalize line endings.
@@ -110,10 +141,23 @@ fn one_block<'a>(id: &str, lang: &str, bytes: &'a [u8]) -> Result<Block<'a>, Bui
     })
 }
 
+fn load_themes(args: &[String]) -> Result<Vec<ThemeSpec>, BuildError> {
+    let mut themes = Vec::with_capacity(args.len());
+    for arg in args {
+        let spec =
+            load_theme_arg(arg).map_err(|e| BuildError::Theme(format!("--theme {arg:?}: {e}")))?;
+        println!("theme: {} ({})", spec.name, arg);
+        themes.push(spec);
+    }
+    Ok(themes)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn cmd_build(
     font_path: &Path,
     input_path: &Path,
     lang: &str,
+    theme_args: &[String],
     output: &Path,
     css_path: Option<&Path>,
     report_path: Option<&Path>,
@@ -121,12 +165,13 @@ fn cmd_build(
 ) -> Result<(), BuildError> {
     let font_bytes = read_required(font_path)?;
     let input_bytes = read_required(input_path)?;
-    let block = one_block("main", lang, &input_bytes)?;
-    let theme = Theme::builtin_dark();
+    let lang = resolve_lang(lang, input_path);
+    let block = one_block("main", &lang, &input_bytes)?;
+    let themes = load_themes(theme_args)?;
 
     let out = build(&BuildInput {
         font_bytes: &font_bytes,
-        theme: &theme,
+        themes: &themes,
         blocks: &[block],
         run_verify: !no_verify,
     })?;
@@ -154,20 +199,15 @@ fn cmd_build(
         out.ttf.len()
     );
     println!(
-        "  {} blocks, {} chars, {} tokens ({} uncolored) -> {} rules, {} colored glyph copies, palette {}",
-        r.blocks,
-        r.chars,
-        r.tokens,
-        r.uncolored_tokens,
-        r.rules,
-        r.alt_glyphs,
-        r.palette.join(" ")
+        "  {} blocks, {} chars ({} colored), {} slots, {} rules, {} colored glyph copies",
+        r.blocks, r.chars, r.colored_cells, r.slots, r.rules, r.alt_glyphs
     );
     println!(
-        "  verify: {} ({} glyphs, {} colored)",
+        "  verify: {} ({} glyphs, {} colored, {} palettes)",
         if r.verify.ok { "OK" } else { "FAILED" },
         r.verify.glyphs_checked,
-        r.verify.colored_glyphs
+        r.verify.colored_glyphs,
+        r.verify.palettes_checked
     );
     for warning in &r.warnings {
         println!("  warning: {warning}");
@@ -178,16 +218,22 @@ fn cmd_build(
     Ok(())
 }
 
-fn cmd_verify(font_path: &Path, input_path: &Path, lang: &str) -> Result<(), BuildError> {
+fn cmd_verify(
+    font_path: &Path,
+    input_path: &Path,
+    lang: &str,
+    theme_args: &[String],
+) -> Result<(), BuildError> {
     let font_bytes = read_required(font_path)?;
     let input_bytes = read_required(input_path)?;
-    let block = one_block("main", lang, &input_bytes)?;
-    let theme = Theme::builtin_dark();
-    let result = verify(&font_bytes, &[block], &theme)?;
+    let lang = resolve_lang(lang, input_path);
+    let block = one_block("main", &lang, &input_bytes)?;
+    let themes = load_themes(theme_args)?;
+    let result = verify(&font_bytes, &[block], &themes)?;
     if result.ok {
         println!(
-            "verify OK: {} glyphs checked, {} colored, 0 mismatches",
-            result.glyphs_checked, result.colored_glyphs
+            "verify OK: {} glyphs checked, {} colored, {} palettes, 0 mismatches",
+            result.glyphs_checked, result.colored_glyphs, result.palettes_checked
         );
         Ok(())
     } else {

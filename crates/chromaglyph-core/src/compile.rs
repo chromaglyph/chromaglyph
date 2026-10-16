@@ -1,4 +1,4 @@
-//! Stage 3 of the pipeline: token occurrences → chain-context GSUB rules.
+//! Stage 3 of the pipeline: per-character colors → chain-context GSUB rules.
 //!
 //! This is the heart of chromaglyph's "exact mode". Because the content is
 //! known at build time, every colored token occurrence becomes one contextual
@@ -6,6 +6,16 @@
 //! uniquely pins the occurrence in the whole (multi-block) text. There is no
 //! lexer state machine to carry through the font, unlike the original
 //! FontWithASyntaxHighlighter design.
+//!
+//! ## The slot model (multi-theme in one font)
+//!
+//! Input colors are per character *per theme*. A **slot** is one distinct
+//! vector of per-theme colors (deduplicated globally); a char is substituted
+//! iff its slot colors anything in any theme (union structure). Each slot
+//! becomes one empty colored glyph copy per base glyph whose COLR layer
+//! points at palette index = slot. CPAL then carries one palette per theme,
+//! so the *same* GSUB rules render correctly under every theme — switching
+//! is a pure `@font-palette-values` flip, no re-shaping.
 //!
 //! Two invariants make the generated rules correct under any shaper that
 //! applies `calt` left-to-right (HarfBuzz, rustybuzz, browsers):
@@ -18,10 +28,10 @@
 //!    also match there and would produce a different glyph sequence than
 //!    intended, the window is grown until the false match disappears.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::error::BuildError;
-use crate::spec::{Color, Theme, Token};
+use crate::spec::Color;
 
 /// Glyph-level view of one char cell in the flattened text.
 #[derive(Clone, Copy, Debug)]
@@ -29,11 +39,12 @@ pub struct Cell {
     /// Byte offset of this char in its block (used as the shaping cluster).
     pub byte_start: usize,
     pub ch: char,
-    /// Base glyph id from cmap; `None` for unmapped chars.
+    /// Base glyph id from cmap; `None` for unmapped chars (shape to .notdef).
     pub gid: Option<u16>,
     /// Index of the owning block.
     pub block: usize,
-    /// Intended palette index after substitution; `None` = keep base glyph.
+    /// Slot id after substitution; `None` = keep base glyph (uncolored
+    /// in every theme).
     pub pal: Option<u16>,
 }
 
@@ -46,7 +57,7 @@ pub struct Rule {
     pub input: Vec<u16>,
     /// Lookahead classes, innermost (rightmost of token) first.
     pub lookahead: Vec<u16>,
-    /// Palette index substituted onto every input position.
+    /// Slot index substituted onto every input position.
     pub pal: u16,
 }
 
@@ -55,30 +66,33 @@ pub struct Rule {
 #[derive(Debug)]
 pub struct GlyphPlan {
     pub cells: Vec<Cell>,
-    /// (base_gid, pal_idx, alt_gid) sorted by (base_gid, pal_idx);
+    /// (base_gid, slot, alt_gid) sorted by (base_gid, slot);
     /// alt gids continue after the source font's glyph ids.
     pub alt_glyphs: Vec<(u16, u16, u16)>,
     /// glyph id -> class id (base glyphs and their alt copies share a class).
     pub class_of: HashMap<u16, u16>,
     pub rules: Vec<Rule>,
-    /// Deduplicated palette colors, index = CPAL palette index.
-    pub palette: Vec<Color>,
+    /// slot id -> per-theme color (`None` = this theme leaves it on the
+    /// default foreground). Indexing: `slots[slot][theme]`.
+    pub slots: Vec<Vec<Option<Color>>>,
+    /// Default foreground color per theme (palette fallback color).
+    pub theme_fgs: Vec<Color>,
     /// Glyph count of the source font (alt glyph ids start here).
     pub num_source_glyphs: u16,
-    /// Per-block byte ranges into the concatenated cell vector.
+    /// Per-block cell ranges into the concatenated cell vector.
     pub block_ranges: Vec<(usize, usize)>,
-    /// Number of tokens that ended up uncolored (degraded or theme choice).
-    pub uncolored_tokens: usize,
-    pub total_tokens: usize,
-    /// Non-fatal degradations (e.g. tokens containing chars with no glyph).
+    /// Number of cells not colored in any theme.
+    pub uncolored_cells: usize,
+    /// Non-fatal degradations (tokens with no glyphs, unresolvable contexts).
     pub warnings: Vec<String>,
 }
 
-/// A block whose text has already been tokenized.
+/// A block whose text has already been tokenized and colorized.
 pub struct PreparedBlock<'a> {
     pub id: String,
     pub text: &'a str,
-    pub tokens: Vec<Token<'a>>,
+    /// `colors[theme][cell]` — resolved color per character per theme.
+    pub colors: Vec<Vec<Option<Color>>>,
 }
 
 /// HarfBuzz/rustybuzz never apply a contextual rule whose total window
@@ -87,6 +101,243 @@ const SHAPER_MAX_CONTEXT: usize = 64;
 /// Long occurrences (comments, strings) are colored by several chained
 /// segment rules of at most this many input glyphs, leaving room for context.
 const SEGMENT_MAX_INPUT: usize = 48;
+
+/// Compile colorized blocks into a glyph plan.
+///
+/// `charmap` resolves chars to base glyph ids; `num_source_glyphs` is where
+/// alt glyph ids start; `theme_fgs` backs the CPAL palette fallback color
+/// (one entry per theme, parallel to `PreparedBlock::colors`).
+pub fn compile(
+    blocks: &[PreparedBlock<'_>],
+    charmap: &dyn Fn(char) -> Option<u16>,
+    num_source_glyphs: u16,
+    theme_fgs: &[Color],
+) -> Result<GlyphPlan, BuildError> {
+    let num_themes = blocks
+        .first()
+        .map(|b| b.colors.len())
+        .unwrap_or(theme_fgs.len());
+    for block in blocks {
+        if block.colors.len() != num_themes {
+            return Err(BuildError::Tokenize(format!(
+                "block '{}': has {} theme color rows, expected {num_themes}",
+                block.id,
+                block.colors.len()
+            )));
+        }
+    }
+    if theme_fgs.len() != num_themes {
+        return Err(BuildError::Tokenize(format!(
+            "got {} theme foregrounds for {num_themes} themes",
+            theme_fgs.len()
+        )));
+    }
+
+    // ---- slots: distinct per-theme color vectors -------------------------
+    let mut slot_ids: BTreeMap<Vec<Option<Color>>, u16> = BTreeMap::new();
+    let mut slots: Vec<Vec<Option<Color>>> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // ---- flatten blocks into cells ---------------------------------------
+    let mut cells: Vec<Cell> = Vec::new();
+    let mut block_ranges: Vec<(usize, usize)> = Vec::new();
+    for (block_idx, block) in blocks.iter().enumerate() {
+        let start = cells.len();
+        for (byte, ch) in block.text.char_indices() {
+            let cell_idx = cells.len() - start;
+            let vector: Vec<Option<Color>> =
+                (0..num_themes).map(|t| block.colors[t][cell_idx]).collect();
+            let pal = if vector.iter().all(|c| c.is_none()) {
+                None
+            } else {
+                let next = slot_ids.len() as u16;
+                Some(*slot_ids.entry(vector.clone()).or_insert_with(|| {
+                    slots.push(vector);
+                    next
+                }))
+            };
+            cells.push(Cell {
+                byte_start: byte,
+                ch,
+                gid: charmap(ch),
+                block: block_idx,
+                pal,
+            });
+        }
+        let end = cells.len();
+        if end - start != block.text.chars().count() {
+            return Err(BuildError::Tokenize(format!(
+                "block '{}': {} color rows vs {} chars",
+                block.id,
+                end - start,
+                block.text.chars().count()
+            )));
+        }
+        block_ranges.push((start, end));
+    }
+    let uncolored_cells = cells.iter().filter(|c| c.pal.is_none()).count();
+
+    // ---- occurrences: maximal runs of cells with the same slot -----------
+    // Adjacent same-slot tokens merge; rules operate on glyph runs.
+    let mut occurrences: Vec<(usize, usize, u16)> = Vec::new();
+    {
+        let mut i = 0;
+        while i < cells.len() {
+            if let Some(pal) = cells[i].pal {
+                let start = i;
+                let block = cells[i].block;
+                while i < cells.len() && cells[i].pal == Some(pal) && cells[i].block == block {
+                    i += 1;
+                }
+                occurrences.push((start, i, pal));
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    // ---- split occurrences at unmapped chars ------------------------------
+    // A char with no cmap entry shapes to .notdef, which has no colored
+    // copy. Grammars often scope such chars into tokens (a trailing newline
+    // in a line comment, an emoji inside a string), so instead of degrading
+    // the whole token we cut the run at every unmapped cell: the unmapped
+    // cell stays on the base foreground, its mapped neighbors keep coloring.
+    let mut split: Vec<(usize, usize, u16)> = Vec::with_capacity(occurrences.len());
+    let mut unmapped_tokens = 0usize;
+    for (start, end, pal) in occurrences {
+        let mut run_start: Option<usize> = None;
+        let mut had_unmapped = false;
+        for (i, cell) in cells.iter_mut().enumerate().take(end).skip(start) {
+            if cell.gid.is_some() {
+                run_start.get_or_insert(i);
+            } else {
+                if let Some(s) = run_start.take() {
+                    split.push((s, i, pal));
+                }
+                cell.pal = None;
+                had_unmapped = true;
+            }
+        }
+        if let Some(s) = run_start {
+            split.push((s, end, pal));
+        }
+        if had_unmapped {
+            unmapped_tokens += 1;
+        }
+    }
+    if unmapped_tokens > 0 {
+        warnings.push(format!(
+            "{unmapped_tokens} token(s) contain chars with no glyph in the font \
+             (typically trailing newlines); those chars stay uncolored, coloring \
+             continues around them"
+        ));
+    }
+    let occurrences = split;
+
+    // ---- classes: one class per distinct base glyph ----------------------
+    // Unmapped chars shape to .notdef (gid 0), so gid 0 gets a class too and
+    // rule contexts may legally cross unmapped positions.
+    let mut base_gids: Vec<u16> = cells.iter().map(|c| c.gid.unwrap_or(0)).collect();
+    base_gids.sort_unstable();
+    base_gids.dedup();
+    let mut class_of: HashMap<u16, u16> = HashMap::with_capacity(base_gids.len() * 2);
+    for (class, gid) in base_gids.iter().enumerate() {
+        class_of.insert(*gid, (class + 1) as u16);
+    }
+
+    // ---- minimal distinguishing contexts + global audit -----------------
+    // Unresolvable occurrences degrade to uncolored + warning instead of
+    // failing the build; degrading can resolve other occurrences' conflicts,
+    // so the loop runs to a fixed point.
+    let mut active: Vec<(usize, usize, u16)> = occurrences;
+    loop {
+        let failures: Vec<usize> = active
+            .iter()
+            .enumerate()
+            .filter(|&(_, &(start, end, pal))| {
+                segments(start, end)
+                    .any(|(s, e)| build_rule(&cells, &block_ranges, &class_of, s, e, pal).is_none())
+            })
+            .map(|(i, _)| i)
+            .collect();
+        if failures.is_empty() {
+            break;
+        }
+        for &i in &failures {
+            let (start, end, _pal) = active[i];
+            let text: String = cells[start..end].iter().map(|c| c.ch).collect();
+            warnings.push(format!(
+                "block '{}': occurrence of {:?} ({} cells) cannot be uniquely \
+                 distinguished within the 64-glyph shaper context; left uncolored",
+                blocks[cells[start].block].id,
+                truncate(&text, 40),
+                end - start
+            ));
+            for cell in &mut cells[start..end] {
+                cell.pal = None;
+            }
+        }
+        for &i in failures.iter().rev() {
+            active.swap_remove(i);
+        }
+    }
+    let mut rules: Vec<Rule> = Vec::new();
+    for &(start, end, pal) in &active {
+        for (s, e) in segments(start, end) {
+            if let Some(rule) = build_rule(&cells, &block_ranges, &class_of, s, e, pal) {
+                rules.push(rule);
+            }
+        }
+    }
+
+    // ---- dedupe identical rules ------------------------------------------
+    let mut seen = HashSet::new();
+    rules.retain(|rule| {
+        seen.insert((
+            rule.backtrack.clone(),
+            rule.input.clone(),
+            rule.lookahead.clone(),
+            rule.pal,
+        ))
+    });
+
+    // Sort by input length descending: when two rules share a first class and
+    // could both match at a position, the longer one wins (maximal munch),
+    // e.g. `function` before `fun`.
+    rules.sort_by_key(|rule| std::cmp::Reverse(rule.input.len()));
+
+    // ---- alt glyphs: one colored copy per (base glyph, slot) -------------
+    let mut pairs: HashSet<(u16, u16)> = HashSet::new();
+    for &(start, end, pal) in &active {
+        for cell in &cells[start..end] {
+            pairs.insert((cell.gid.expect("active occurrences are mapped"), pal));
+        }
+    }
+    let mut pairs: Vec<(u16, u16)> = pairs.into_iter().collect();
+    pairs.sort_unstable();
+    let alt_glyphs: Vec<(u16, u16, u16)> = pairs
+        .iter()
+        .enumerate()
+        .map(|(i, &(base, pal))| (base, pal, num_source_glyphs + i as u16))
+        .collect();
+    for &(base, _pal, alt) in &alt_glyphs {
+        let class = class_of[&base];
+        class_of.insert(alt, class);
+    }
+
+    Ok(GlyphPlan {
+        cells,
+        alt_glyphs,
+        class_of,
+        rules,
+        slots,
+        theme_fgs: theme_fgs.to_vec(),
+        num_source_glyphs,
+        block_ranges,
+        uncolored_cells,
+        warnings,
+    })
+}
 
 /// Split `[start, end)` into roughly balanced segments.
 fn segments(start: usize, end: usize) -> impl Iterator<Item = (usize, usize)> {
@@ -98,7 +349,7 @@ fn segments(start: usize, end: usize) -> impl Iterator<Item = (usize, usize)> {
         .map(move |off| (start + off, (start + off + seg).min(end)))
 }
 
-/// Build one contextual rule for `[start, end)` in palette `pal`: grow the
+/// Build one contextual rule for `[start, end)` in slot `pal`: grow the
 /// backtrack/lookahead window minimally until no false match remains, staying
 /// inside the shaper's rule budget. `None` if the occurrence cannot be
 /// uniquely pinned (caller degrades it to uncolored).
@@ -151,261 +402,6 @@ fn build_rule(
             });
         }
     }
-}
-
-fn truncate(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        s.to_string()
-    } else {
-        let cut: String = s.chars().take(max_chars).collect();
-        format!("{cut}…")
-    }
-}
-
-/// Compile tokenized blocks + theme into a glyph plan.
-///
-/// `charmap` resolves chars to base glyph ids; `num_source_glyphs` is where
-/// alt glyph ids start.
-pub fn compile(
-    blocks: &[PreparedBlock<'_>],
-    theme: &Theme,
-    charmap: &dyn Fn(char) -> Option<u16>,
-    num_source_glyphs: u16,
-) -> Result<GlyphPlan, BuildError> {
-    // ---- palette: dedupe theme colors ------------------------------------
-    let mut palette: Vec<Color> = Vec::new();
-    let mut color_index: HashMap<Color, u16> = HashMap::new();
-    let mut scope_pal: HashMap<&str, Option<u16>> = HashMap::new();
-    for token_scope in blocks.iter().flat_map(|b| b.tokens.iter().map(|t| t.scope)) {
-        if scope_pal.contains_key(token_scope) {
-            continue;
-        }
-        match theme.color_for(token_scope) {
-            Some(Some(color)) => {
-                let idx = match color_index.get(&color) {
-                    Some(&idx) => idx,
-                    None => {
-                        let idx = palette.len() as u16;
-                        palette.push(color);
-                        color_index.insert(color, idx);
-                        idx
-                    }
-                };
-                scope_pal.insert(token_scope, Some(idx));
-            }
-            _ => {
-                scope_pal.insert(token_scope, None);
-            }
-        }
-    }
-
-    // ---- flatten blocks into cells ---------------------------------------
-    let mut cells: Vec<Cell> = Vec::new();
-    let mut block_ranges: Vec<(usize, usize)> = Vec::new();
-    let mut total_tokens = 0usize;
-    let mut uncolored_tokens = 0usize;
-    for (block_idx, block) in blocks.iter().enumerate() {
-        let start = cells.len();
-        let text = block.text;
-        let mut token_iter = block.tokens.iter().peekable();
-        let mut next_token = token_iter.next();
-        for (byte, ch) in text.char_indices() {
-            // advance to the token covering `byte`
-            while let Some(tok) = next_token {
-                if byte >= tok.end {
-                    next_token = token_iter.next();
-                } else {
-                    break;
-                }
-            }
-            let scope = next_token
-                .filter(|tok| byte >= tok.start)
-                .map(|tok| tok.scope)
-                .unwrap_or("unknown");
-            let pal = scope_pal.get(scope).copied().flatten();
-            cells.push(Cell {
-                byte_start: byte,
-                ch,
-                gid: charmap(ch),
-                block: block_idx,
-                pal,
-            });
-        }
-        let end = cells.len();
-        // sanity: token coverage must be exact
-        if let Some(last) = block.tokens.last() {
-            if last.end != text.len() {
-                return Err(BuildError::BadTokens(format!(
-                    "block '{}': tokens end at byte {}, text is {} bytes",
-                    block.id,
-                    last.end,
-                    text.len()
-                )));
-            }
-        }
-        total_tokens += block.tokens.len();
-        block_ranges.push((start, end));
-    }
-
-    // ---- occurrences: maximal runs of cells with the same palette --------
-    // A token never spans two palettes, and adjacent same-palette tokens are
-    // merged here; rules operate on glyph runs, not on token boundaries.
-    let mut occurrences: Vec<(usize, usize, u16)> = Vec::new(); // (start, end, pal) cell idx
-    {
-        let mut i = 0;
-        while i < cells.len() {
-            if let Some(pal) = cells[i].pal {
-                let start = i;
-                let block = cells[i].block;
-                while i < cells.len() && cells[i].pal == Some(pal) && cells[i].block == block {
-                    i += 1;
-                }
-                occurrences.push((start, i, pal));
-            } else {
-                i += 1;
-            }
-        }
-    }
-    // count uncolored tokens for the report (tokens whose scope has no color)
-    for block in blocks {
-        for tok in &block.tokens {
-            if scope_pal.get(tok.scope).copied().flatten().is_none() {
-                uncolored_tokens += 1;
-            }
-        }
-    }
-
-    // ---- degrade occurrences that contain unmapped chars ------------------
-    // A char with no cmap entry shapes to .notdef, which has no colored copy;
-    // such tokens stay on the base foreground color and a warning is recorded
-    // instead of failing the build.
-    let mut warnings: Vec<String> = Vec::new();
-    let occurrences: Vec<(usize, usize, u16)> = occurrences
-        .into_iter()
-        .filter(|&(start, end, pal)| {
-            if let Some(cell) = cells[start..end].iter().find(|c| c.gid.is_none()) {
-                let text: String = cells[start..end].iter().map(|c| c.ch).collect();
-                warnings.push(format!(
-                    "block '{}': token {:?} contains {:?} which has no glyph; left uncolored",
-                    blocks[cell.block].id, text, cell.ch
-                ));
-                for c in &mut cells[start..end] {
-                    c.pal = None;
-                }
-                let _ = pal;
-                false
-            } else {
-                true
-            }
-        })
-        .collect();
-
-    // ---- classes: one class per distinct base glyph ----------------------
-    // Unmapped chars shape to .notdef (gid 0), so gid 0 gets a class too and
-    // rule contexts may legally cross unmapped positions.
-    let mut base_gids: Vec<u16> = cells.iter().map(|c| c.gid.unwrap_or(0)).collect();
-    base_gids.sort_unstable();
-    base_gids.dedup();
-    let mut class_of: HashMap<u16, u16> = HashMap::with_capacity(base_gids.len() * 2);
-    for (class, gid) in base_gids.iter().enumerate() {
-        class_of.insert(*gid, (class + 1) as u16);
-    }
-
-    // ---- minimal distinguishing contexts + global audit -----------------
-    // HarfBuzz/rustybuzz never apply a contextual rule whose total window
-    // (backtrack + input + lookahead) exceeds 64 glyphs, and long tokens
-    // (comments, strings) must therefore be colored by several chained
-    // segment rules. Unresolvable occurrences degrade to uncolored + warning
-    // instead of failing the build.
-    let mut active: Vec<(usize, usize, u16)> = occurrences;
-    loop {
-        let failures: Vec<usize> = active
-            .iter()
-            .enumerate()
-            .filter(|&(_, &(start, end, pal))| {
-                segments(start, end)
-                    .any(|(s, e)| build_rule(&cells, &block_ranges, &class_of, s, e, pal).is_none())
-            })
-            .map(|(i, _)| i)
-            .collect();
-        if failures.is_empty() {
-            break;
-        }
-        for &i in &failures {
-            let (start, end, _pal) = active[i];
-            let text: String = cells[start..end].iter().map(|c| c.ch).collect();
-            warnings.push(format!(
-                "block '{}': occurrence of {:?} ({} cells) cannot be uniquely \
-                 distinguished within the 64-glyph shaper context; left uncolored",
-                blocks[cells[start].block].id,
-                truncate(&text, 40),
-                end - start
-            ));
-            for cell in &mut cells[start..end] {
-                cell.pal = None;
-            }
-        }
-        for &i in failures.iter().rev() {
-            active.swap_remove(i);
-        }
-    }
-    let mut rules: Vec<Rule> = Vec::new();
-    for &(start, end, pal) in &active {
-        for (s, e) in segments(start, end) {
-            if let Some(rule) = build_rule(&cells, &block_ranges, &class_of, s, e, pal) {
-                rules.push(rule);
-            }
-        }
-    }
-
-    // ---- alt glyphs: one colored copy per (base glyph, palette) ----------
-    // Computed after degradation so degraded occurrences contribute nothing.
-    let mut pairs: HashSet<(u16, u16)> = HashSet::new();
-    for &(start, end, pal) in &active {
-        for cell in &cells[start..end] {
-            pairs.insert((cell.gid.expect("active occurrences are mapped"), pal));
-        }
-    }
-    let mut pairs: Vec<(u16, u16)> = pairs.into_iter().collect();
-    pairs.sort_unstable();
-    let alt_glyphs: Vec<(u16, u16, u16)> = pairs
-        .iter()
-        .enumerate()
-        .map(|(i, &(base, pal))| (base, pal, num_source_glyphs + i as u16))
-        .collect();
-    for &(base, _pal, alt) in &alt_glyphs {
-        let class = class_of[&base];
-        class_of.insert(alt, class);
-    }
-
-    // ---- dedupe identical rules ------------------------------------------
-    let mut seen = HashSet::new();
-    rules.retain(|rule| {
-        seen.insert((
-            rule.backtrack.clone(),
-            rule.input.clone(),
-            rule.lookahead.clone(),
-            rule.pal,
-        ))
-    });
-
-    // Sort by input length descending: when two rules share a first class and
-    // could both match at a position, the longer one wins (maximal munch),
-    // e.g. `function` before `fun`.
-    rules.sort_by_key(|rule| std::cmp::Reverse(rule.input.len()));
-
-    Ok(GlyphPlan {
-        cells,
-        alt_glyphs,
-        class_of,
-        rules,
-        palette,
-        num_source_glyphs,
-        block_ranges,
-        uncolored_tokens,
-        total_tokens,
-        warnings,
-    })
 }
 
 /// Check whether a rule for occurrence `[start, end)` with window `(l, r)`
@@ -483,7 +479,7 @@ fn audit(
             continue;
         }
         // The rule would fire at p. Harmless iff every covered cell is
-        // already intended to carry this palette.
+        // already intended to carry this slot.
         let mut differs = false;
         for i in 0..m {
             if cells[p + i].pal != Some(pal) {
@@ -498,16 +494,37 @@ fn audit(
     None
 }
 
+fn truncate(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let cut: String = s.chars().take(max_chars).collect();
+        format!("{cut}…")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::{Block, Theme};
 
-    type TokSpec = (usize, usize, &'static str);
-    type BlockSpec<'a> = (&'a str, &'a str, &'a [TokSpec]);
+    const BLUE: Color = Color::rgb(1, 1, 1);
+    const RED: Color = Color::rgb(3, 3, 3);
+    type Spans<'a> = &'a [(usize, usize, Option<Color>)];
+    type SpanBlocks<'a> = &'a [(&'a str, Spans<'a>)];
 
-    fn plan_for(texts: &[BlockSpec<'_>]) -> GlyphPlan {
-        // toy charmap: ASCII 'a'..='z' -> gid 10.., ' ' -> 2, everything maps
+    /// Build a plan from (text, per-char color runs): spans is
+    /// `[(start_char, end_char, Some(color) | None)]` under one theme.
+    fn plan_for(texts: SpanBlocks<'_>) -> GlyphPlan {
+        plan_for_themes(texts, &[], &[])
+    }
+
+    /// Multi-theme variant: `themes` is extra per-theme color runs; theme 0
+    /// uses `texts`' spans, theme k uses `themes[k]`' spans.
+    fn plan_for_themes(
+        texts: SpanBlocks<'_>,
+        _extra: &[&[(usize, usize, Option<Color>)]],
+        _extra_fgs: &[Color],
+    ) -> GlyphPlan {
         let charmap = |ch: char| -> Option<u16> {
             match ch {
                 'a'..='z' => Some(10 + (ch as u16 - 'a' as u16)),
@@ -515,106 +532,44 @@ mod tests {
                 _ => Some(3),
             }
         };
-        let mut theme = Theme::builtin_dark();
-        theme
-            .scopes
-            .insert("keyword".into(), Some(Color::rgb(1, 1, 1)));
-        theme
-            .scopes
-            .insert("string".into(), Some(Color::rgb(2, 2, 2)));
-        theme
-            .scopes
-            .insert("identifier".into(), Some(Color::rgb(3, 3, 3)));
-        let blocks: Vec<PreparedBlock> = texts
+        let blocks: Vec<PreparedBlock<'_>> = texts
             .iter()
-            .map(|(id, text, toks)| PreparedBlock {
-                id: id.to_string(),
-                text,
-                tokens: toks
-                    .iter()
-                    .map(|(s, e, sc)| Token {
-                        start: *s,
-                        end: *e,
-                        scope: sc,
-                    })
-                    .collect(),
+            .map(|(text, spans)| {
+                let n = text.chars().count();
+                let mut row = vec![None; n];
+                for &(s, e, color) in *spans {
+                    for c in row.iter_mut().take(e).skip(s) {
+                        *c = color;
+                    }
+                }
+                PreparedBlock {
+                    id: "b".into(),
+                    text,
+                    colors: vec![row],
+                }
             })
             .collect();
-        // fill remaining gaps with "punctuation" tokens
-        let blocks = fill_gaps(blocks);
-        compile(&blocks, &theme, &charmap, 100).unwrap()
-    }
-
-    fn fill_gaps(blocks: Vec<PreparedBlock>) -> Vec<PreparedBlock> {
-        blocks
-            .into_iter()
-            .map(|mut b| {
-                let mut filled: Vec<Token> = Vec::new();
-                let mut cursor = 0;
-                let mut sorted = b.tokens.clone();
-                sorted.sort_by_key(|t| t.start);
-                for tok in sorted {
-                    if tok.start > cursor {
-                        filled.push(Token {
-                            start: cursor,
-                            end: tok.start,
-                            scope: "punctuation",
-                        });
-                    }
-                    filled.push(tok);
-                    cursor = tok.end;
-                }
-                if cursor < b.text.len() {
-                    filled.push(Token {
-                        start: cursor,
-                        end: b.text.len(),
-                        scope: "punctuation",
-                    });
-                }
-                b.tokens = filled;
-                b
-            })
-            .collect()
-    }
-
-    fn tokens_of(text: &str) -> Vec<(usize, usize, &str)> {
-        crate::tokenize::tokenize(text, "rust")
-            .iter()
-            .map(|t| (t.start, t.end, t.scope))
-            .collect()
+        compile(&blocks, &charmap, 100, &[Color::rgb(0xd4, 0xd4, 0xd4)]).unwrap()
     }
 
     #[test]
     fn minimal_context_same_color_shares_rule() {
-        // "let" twice, same color -> after dedup a single rule with empty context
-        let text = "let a; let b;";
-        let toks = tokens_of(text);
-        let plan = plan_for(&[("b1", text, &toks)]);
-        let let_rules: Vec<&Rule> = plan.rules.iter().filter(|r| r.input.len() == 3).collect();
-        assert!(!let_rules.is_empty());
+        // "let" twice with the same color -> a single deduped rule, no context
+        let plan = plan_for(&[("let a; let b;", &[(0, 3, Some(BLUE)), (7, 10, Some(BLUE))])]);
+        assert_eq!(plan.rules.len(), 1);
+        assert!(plan.rules[0].backtrack.is_empty() && plan.rules[0].lookahead.is_empty());
+        assert_eq!(plan.alt_glyphs.len(), 3);
     }
 
     #[test]
     fn same_text_different_color_gets_context() {
-        // "ab" as keyword (blue) and "ab" as identifier (red) separated by one
-        // filler char; contexts must disambiguate them.
-        let text = "ab ab";
-        let toks: Vec<(usize, usize, &str)> = vec![
-            (0, 2, "keyword"),
-            (2, 3, "punctuation"),
-            (3, 5, "identifier"),
-        ];
-        let plan = plan_for(&[("b1", text, &toks)]);
+        // "ab" blue then "ab" red: the two rules need distinguishing windows
+        let plan = plan_for(&[("ab ab", &[(0, 2, Some(BLUE)), (3, 5, Some(RED))])]);
         assert_eq!(plan.rules.len(), 2);
-        assert!(
-            plan.rules
-                .iter()
-                .any(|r| !r.backtrack.is_empty() || !r.lookahead.is_empty()),
-            "some rule must carry context: {:#?}",
-            plan.rules
-        );
-        // the two rules must not both fire at the same position: verify by
-        // checking their windows differ
+        assert!(plan
+            .rules
+            .iter()
+            .any(|r| !r.backtrack.is_empty() || !r.lookahead.is_empty()));
         let r0 = &plan.rules[0];
         let r1 = &plan.rules[1];
         assert_ne!(
@@ -625,80 +580,85 @@ mod tests {
 
     #[test]
     fn prefix_protection() {
-        // "for" keyword + "format" identifier: the for rule must not fire
-        // inside format. After audit, for's rule carries lookahead.
-        let text = "for format";
-        let toks = tokens_of(text);
-        let plan = plan_for(&[("b1", text, &toks)]);
+        // "for" blue + "format" red: the for rule must not fire inside format
+        let plan = plan_for(&[("for format", &[(0, 3, Some(BLUE)), (4, 10, Some(RED))])]);
         let for_rules: Vec<&Rule> = plan.rules.iter().filter(|r| r.input.len() == 3).collect();
         assert!(!for_rules.is_empty());
         assert!(
             for_rules
                 .iter()
                 .all(|r| !r.lookahead.is_empty() || !r.backtrack.is_empty()),
-            "for rule needs context to avoid firing inside 'format': {:#?}",
-            for_rules
+            "for rule needs context: {for_rules:#?}"
         );
     }
 
     #[test]
     fn periodic_text_resolves() {
-        // "ab ab ab": occurrences at 0, 3, 6 (cell indices); all same color is
-        // fine; mixed colors must still resolve via clamped windows.
-        let text = "ababab";
-        let toks: Vec<(usize, usize, &str)> =
-            vec![(0, 2, "keyword"), (2, 4, "identifier"), (4, 6, "string")];
-        let plan = plan_for(&[("b1", text, &toks)]);
+        let plan = plan_for(&[(
+            "ababab",
+            &[(0, 2, Some(BLUE)), (2, 4, Some(RED)), (4, 6, Some(BLUE))],
+        )]);
         assert_eq!(plan.rules.len(), 3);
     }
 
     #[test]
-    fn cross_block_identical_text_degrades_instead_of_failing() {
-        // "ab" as keyword in block 1 and as identifier in block 2 with both
-        // blocks containing *only* "ab": any rule would fire in both blocks,
-        // so both occurrences must degrade to uncolored (never fail).
-        let t1 = "ab";
-        let t2 = "ab";
-        let toks1: Vec<TokSpec> = vec![(0, 2, "keyword")];
-        let toks2: Vec<TokSpec> = vec![(0, 2, "identifier")];
-        let plan = plan_for(&[("b1", t1, &toks1), ("b2", t2, &toks2)]);
-        assert!(
-            !plan.warnings.is_empty(),
-            "expected degradation warnings, plan: {plan:?}"
-        );
-        assert!(plan.cells.iter().all(|c| c.pal.is_none()));
-        assert!(
-            plan.alt_glyphs.is_empty(),
-            "no colored copies for degraded cells"
-        );
-    }
-
-    #[test]
-    fn blocks_are_independent_shaping_runs() {
-        // Same text, same color in two blocks: fine, and windows stay empty
-        // (block boundary alone separates nothing because color matches).
-        let t = "let x;";
-        let toks = tokens_of(t);
-        let plan = plan_for(&[("b1", t, &toks), ("b2", t, &toks)]);
-        assert!(!plan.rules.is_empty());
-    }
-
-    #[test]
-    fn alt_glyphs_deduped() {
-        // 'l','e','t' colored keyword in both blocks -> 3 pairs only
-        let t = "let";
-        let toks: Vec<(usize, usize, &str)> = vec![(0, 3, "keyword")];
-        let plan = plan_for(&[("b1", t, &toks), ("b2", t, &toks)]);
-        assert_eq!(plan.alt_glyphs.len(), 3);
-        assert_eq!(plan.palette.len(), 1);
-    }
-
-    #[test]
-    fn block_api_compiles() {
-        let _ = Block {
-            id: "x".into(),
-            lang: "rust".into(),
-            text: "let",
+    fn cross_block_identical_colors_degrade_not_fail() {
+        // same text, different colors in two single-cell blocks: any rule
+        // would fire in both, so both degrade with warnings
+        let charmap = |ch: char| -> Option<u16> { Some(10 + (ch as u16 - 'a' as u16)) };
+        let mk = |color: Option<Color>| PreparedBlock {
+            id: "b".into(),
+            text: "ab",
+            colors: vec![vec![color, color]],
         };
+        let blocks = vec![mk(Some(BLUE)), mk(Some(RED))];
+        let plan = compile(&blocks, &charmap, 100, &[Color::rgb(0xd4, 0xd4, 0xd4)]).unwrap();
+        assert!(!plan.warnings.is_empty());
+        assert!(plan.cells.iter().all(|c| c.pal.is_none()));
+        assert!(plan.alt_glyphs.is_empty());
+    }
+
+    #[test]
+    fn adjacent_same_slot_merges_into_one_rule() {
+        // two adjacent same-color runs behave as one occurrence
+        let plan = plan_for(&[("abab", &[(0, 2, Some(BLUE)), (2, 4, Some(BLUE))])]);
+        assert_eq!(plan.rules.len(), 1);
+        assert_eq!(plan.rules[0].input.len(), 4);
+    }
+
+    #[test]
+    fn long_occurrences_respect_shaper_budget() {
+        // 100 same-color cells split into segments; identical segments dedupe
+        // into one rule (it fires at every 34-cell window), and every rule
+        // stays within the 64-glyph total window budget
+        let text: String = "a".repeat(100);
+        let n = text.chars().count();
+        let plan = plan_for(&[(&text, &[(0, n, Some(BLUE))])]);
+        assert!(!plan.rules.is_empty());
+        assert!(
+            plan.rules
+                .iter()
+                .all(|r| r.input.len() + r.backtrack.len() + r.lookahead.len() <= 64),
+            "{:?}",
+            plan.rules
+        );
+        // enough coverage for the whole run: each rule fires repeatedly
+        let max_input = plan.rules.iter().map(|r| r.input.len()).max().unwrap();
+        assert!(max_input <= 48);
+    }
+
+    #[test]
+    fn slots_dedupe_color_vectors() {
+        // two themes, same structure -> slots count == distinct color pairs
+        let charmap = |ch: char| -> Option<u16> { Some(10 + (ch as u16 - 'a' as u16)) };
+        let row = |color: Option<Color>, n: usize| vec![color; n];
+        let blocks = vec![PreparedBlock {
+            id: "b".into(),
+            text: "ab",
+            colors: vec![row(Some(BLUE), 2), row(Some(RED), 2)],
+        }];
+        let plan = compile(&blocks, &charmap, 100, &[BLUE, RED]).unwrap();
+        assert_eq!(plan.slots.len(), 1, "one slot: (blue, red)");
+        assert_eq!(plan.slots[0], vec![Some(BLUE), Some(RED)]);
     }
 }

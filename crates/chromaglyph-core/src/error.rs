@@ -21,6 +21,10 @@ pub enum BuildError {
     VerifyFailed(Vec<String>),
     /// WOFF wrapping/unwrapping failure.
     Woff(String),
+    /// Theme loading/parsing failure.
+    Theme(String),
+    /// Tokenizer failure (unknown language, syntect error).
+    Tokenize(String),
     /// I/O or misc failure with context.
     Io(String),
 }
@@ -47,6 +51,8 @@ impl fmt::Display for BuildError {
                 Ok(())
             }
             BuildError::Woff(msg) => write!(f, "woff error: {msg}"),
+            BuildError::Theme(msg) => write!(f, "theme error: {msg}"),
+            BuildError::Tokenize(msg) => write!(f, "tokenize error: {msg}"),
             BuildError::Io(msg) => write!(f, "{msg}"),
         }
     }

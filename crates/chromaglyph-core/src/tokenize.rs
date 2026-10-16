@@ -1,193 +1,173 @@
-//! M1 walking-skeleton tokenizer: a small hardcoded lexer good enough to
-//! exercise the compile/verify pipeline on Rust-ish code.
+//! Stage 1+2 of the pipeline: tokenize with real grammars (syntect, the bat
+//! engine, pure-Rust fancy-regex build) and resolve each character's color
+//! under each theme.
 //!
-//! M2 replaces this with syntect (TextMate grammars); M4 may add tree-sitter.
-//! The only contract downstream code relies on: tokens are sorted,
-//! non-overlapping, and cover every byte of the block text.
+//! What comes out is concrete colors, not scope names: syntect's selector
+//! engine does the scope→style resolution per theme, and a color equal to
+//! the theme's default foreground is reported as "uncolored" (the char keeps
+//! its base glyph and follows the page's CSS foreground, exactly like an
+//! editor renders unstyled text).
 
-use crate::spec::Token;
+use syntect::easy::HighlightLines;
+use syntect::parsing::SyntaxSet;
 
-pub const RUST_KEYWORDS: &[&str] = &[
-    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern",
-    "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub",
-    "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type",
-    "unsafe", "use", "where", "while",
+use crate::error::BuildError;
+use crate::spec::{Block, Color};
+use crate::theme::ThemeSpec;
+
+/// Common language-name aliases → file extensions understood by syntect.
+const LANG_ALIASES: &[(&str, &str)] = &[
+    ("rust", "rs"),
+    ("javascript", "js"),
+    ("typescript", "ts"),
+    ("python", "py"),
+    ("go", "go"),
+    ("c", "c"),
+    ("cpp", "cpp"),
+    ("c++", "cpp"),
+    ("csharp", "cs"),
+    ("java", "java"),
+    ("json", "json"),
+    ("yaml", "yaml"),
+    ("toml", "toml"),
+    ("html", "html"),
+    ("css", "css"),
+    ("shell", "sh"),
+    ("bash", "sh"),
+    ("sql", "sql"),
+    ("markdown", "md"),
+    ("plain", "txt"),
 ];
 
-/// Tokenize `text` for `lang`. Unknown languages fall back to `plain`
-/// (strings, numbers and line comments only; every identifier punctuation).
-pub fn tokenize<'a>(text: &'a str, lang: &str) -> Vec<Token<'a>> {
-    let keywords: &[&str] = match lang {
-        "rust" | "rs" => RUST_KEYWORDS,
-        _ => &[],
-    };
-    let allow_comments = matches!(lang, "rust" | "rs" | "plain");
-    let allow_strings = true;
-
-    let bytes = text.as_bytes();
-    let mut tokens = Vec::new();
-    let mut i = 0usize;
-
-    let push = |tokens: &mut Vec<Token>, start: usize, end: usize, scope: &'static str| {
-        debug_assert!(end > start);
-        tokens.push(Token { start, end, scope });
-    };
-
-    while i < bytes.len() {
-        let b = bytes[i];
-        let rest = &text[i..];
-        // whitespace runs
-        if b.is_ascii_whitespace() {
-            let start = i;
-            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-                i += 1;
-            }
-            push(&mut tokens, start, i, "whitespace");
-        }
-        // line comments
-        else if allow_comments && rest.starts_with("//") {
-            let start = i;
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            push(&mut tokens, start, i, "comment");
-        }
-        // block comments (non-nesting, fine for a demo lexer)
-        else if allow_comments && rest.starts_with("/*") {
-            let start = i;
-            let mut j = i + 2;
-            while j < bytes.len() && !text[j..].starts_with("*/") {
-                j += 1;
-            }
-            i = (j + 2).min(bytes.len());
-            push(&mut tokens, start, i, "comment");
-        }
-        // string literal, "..." with backslash escapes
-        else if allow_strings && b == b'"' {
-            let start = i;
-            i += 1;
-            while i < bytes.len() {
-                match bytes[i] {
-                    b'\\' => i = (i + 2).min(bytes.len()),
-                    b'"' => {
-                        i += 1;
-                        break;
-                    }
-                    _ => i += 1,
-                }
-            }
-            push(&mut tokens, start, i, "string");
-        }
-        // char literal, '...' with escapes (careful not to eat lifetimes:
-        // only treat as char literal when a closing quote follows shortly)
-        else if allow_strings && b == b'\'' && closes_char_literal(&text[i..]) {
-            let start = i;
-            i += 1;
-            while i < bytes.len() {
-                match bytes[i] {
-                    b'\\' => i = (i + 2).min(bytes.len()),
-                    b'\'' => {
-                        i += 1;
-                        break;
-                    }
-                    _ => i += 1,
-                }
-            }
-            push(&mut tokens, start, i, "string");
-        }
-        // number literal: digits, underscores, exponent/suffix letters
-        else if b.is_ascii_digit() {
-            let start = i;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            push(&mut tokens, start, i, "number");
-        }
-        // identifier / keyword
-        else if b.is_ascii_alphabetic() || b == b'_' {
-            let start = i;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            let word = &text[start..i];
-            let scope = if keywords.contains(&word) {
-                "keyword"
-            } else {
-                "identifier"
-            };
-            push(&mut tokens, start, i, scope);
-        }
-        // anything else (ASCII punctuation, non-ASCII chars): one char per token
-        else {
-            let start = i;
-            i += text[start..]
-                .chars()
-                .next()
-                .map(char::len_utf8)
-                .unwrap_or(1);
-            push(&mut tokens, start, i, "punctuation");
-        }
+/// Resolve a `--lang` value (alias, extension, or "plain") to a syntect
+/// syntax; unknown values fall back to Plain Text with an error-free life.
+pub fn resolve_syntax<'a>(lang: &str, ss: &'a SyntaxSet) -> &'a syntect::parsing::SyntaxReference {
+    let key = lang.trim().to_ascii_lowercase();
+    if key == "plain" || key == "txt" || key.is_empty() {
+        return ss.find_syntax_plain_text();
     }
-
-    debug_assert_eq!(
-        tokens.first().map(|t| t.start),
-        Some(0),
-        "tokens must cover the text from byte 0"
-    );
-    tokens
+    let ext = LANG_ALIASES
+        .iter()
+        .find(|(name, _)| *name == key)
+        .map(|(_, ext)| *ext)
+        .unwrap_or(&key);
+    ss.find_syntax_by_extension(ext)
+        .unwrap_or_else(|| ss.find_syntax_plain_text())
 }
 
-/// Heuristic: does a `'` at the start of `s` begin a char literal
-/// (`'a'`, `'\n'`, `'\u{1F600}'`) rather than a lifetime (`'a`)?
-fn closes_char_literal(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    let mut i = 1;
-    while i < bytes.len() && i <= 8 {
-        match bytes[i] {
-            b'\\' => i += 2,
-            b'\'' => return true,
-            _ if bytes[i].is_ascii_whitespace() => return false,
-            _ => i += 1,
+/// Resolve per-character colors for one block under every theme.
+///
+/// Returns `colors[theme][char]`: `Some(color)` when the theme colors this
+/// char differently from its default foreground, `None` otherwise.
+pub fn colorize_block(
+    block: &Block<'_>,
+    themes: &[ThemeSpec],
+    ss: &SyntaxSet,
+) -> Result<Vec<Vec<Option<Color>>>, BuildError> {
+    let syntax = resolve_syntax(&block.lang, ss);
+    let mut by_theme = Vec::with_capacity(themes.len());
+    for theme in themes {
+        let mut hl = HighlightLines::new(syntax, &theme.theme);
+        let default_fg = syntect_color(theme.foreground);
+        let mut colors = Vec::new();
+        for line in block.text.split_inclusive('\n') {
+            let regions = hl
+                .highlight_line(line, ss)
+                .map_err(|e| BuildError::Tokenize(format!("block '{}': {e}", block.id)))?;
+            for (style, region) in regions {
+                let colored = if style.foreground == default_fg {
+                    None
+                } else {
+                    Some(Color::rgb(
+                        style.foreground.r,
+                        style.foreground.g,
+                        style.foreground.b,
+                    ))
+                };
+                // one entry per char (regions are char-aligned substrings)
+                colors.extend(std::iter::repeat_n(colored, region.chars().count()));
+            }
         }
+        let char_count = block.text.chars().count();
+        if colors.len() != char_count {
+            return Err(BuildError::Tokenize(format!(
+                "block '{}': highlighted {} chars but text has {}",
+                block.id,
+                colors.len(),
+                char_count
+            )));
+        }
+        by_theme.push(colors);
     }
-    false
+    Ok(by_theme)
+}
+
+fn syntect_color(c: Color) -> syntect::highlighting::Color {
+    syntect::highlighting::Color {
+        r: c.red,
+        g: c.green,
+        b: c.blue,
+        a: c.alpha,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn covers_all_bytes() {
-        let text = "fn main() { let s = \"hi \\\\\" there\"; } // done\n";
-        let tokens = tokenize(text, "rust");
-        assert_eq!(tokens.first().unwrap().start, 0);
-        assert_eq!(tokens.last().unwrap().end, text.len());
-        for pair in tokens.windows(2) {
-            assert_eq!(pair[0].end, pair[1].start, "tokens must be contiguous");
-        }
+    fn themes() -> Vec<ThemeSpec> {
+        vec![ThemeSpec::builtin("dark-plus").unwrap()]
     }
 
     #[test]
-    fn recognizes_scopes() {
-        let tokens = tokenize("fn x // c", "rust");
-        let scopes: Vec<&str> = tokens.iter().map(|t| t.scope).collect();
-        assert_eq!(
-            scopes,
-            vec![
-                "keyword",
-                "whitespace",
-                "identifier",
-                "whitespace",
-                "comment"
-            ]
+    fn rust_colors_are_resolved() {
+        let ss = SyntaxSet::load_defaults_newlines();
+        let text = "fn main() { let s = \"hi\"; } // done\n";
+        let block = Block {
+            id: "t".into(),
+            lang: "rust".into(),
+            text,
+        };
+        let colors = colorize_block(&block, &themes(), &ss).unwrap();
+        let chars: Vec<char> = text.chars().collect();
+        // `fn` (chars 0,1) is keyword blue in Dark+
+        assert_eq!(colors[0][0].map(|c| c.to_hex()), Some("#569cd6".into()));
+        // space (char 2) is default foreground -> uncolored
+        assert_eq!(colors[0][2], None);
+        // `s` inside "hi" string region colored, quotes too
+        let quote_open = chars.iter().position(|c| *c == '"').unwrap();
+        assert!(colors[0][quote_open].is_some());
+        // comment green
+        let comment = text.find("//").unwrap();
+        let idx = text[..comment].chars().count();
+        assert_eq!(colors[0][idx].map(|c| c.to_hex()), Some("#6a9955".into()));
+    }
+
+    #[test]
+    fn char_count_matches_for_multibyte() {
+        let ss = SyntaxSet::load_defaults_newlines();
+        let text = "// 注释 émoji 🎨 ok\nlet x = \"héllo\";\n";
+        let block = Block {
+            id: "t".into(),
+            lang: "rust".into(),
+            text,
+        };
+        let colors = colorize_block(&block, &themes(), &ss).unwrap();
+        assert_eq!(colors[0].len(), text.chars().count());
+    }
+
+    #[test]
+    fn unknown_lang_falls_back_to_plain() {
+        let ss = SyntaxSet::load_defaults_newlines();
+        let block = Block {
+            id: "t".into(),
+            lang: "definitely-not-a-lang".into(),
+            text: "let x",
+        };
+        let colors = colorize_block(&block, &themes(), &ss).unwrap();
+        assert!(
+            colors[0].iter().all(|c| c.is_none()),
+            "plain text has no coloring"
         );
-        assert_eq!(tokens[0].end - tokens[0].start, 2);
-    }
-
-    #[test]
-    fn lifetime_is_not_char_literal() {
-        let tokens = tokenize("&'static str", "rust");
-        assert_eq!(tokens[1].scope, "punctuation"); // the quote, not a string
     }
 }

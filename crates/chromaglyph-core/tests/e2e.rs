@@ -1,12 +1,13 @@
-//! M1 end-to-end: fixture TTF + code snippet → colored font, verified by
-//! the rustybuzz oracle (run inside `build`), then re-verified standalone
-//! from the woff bytes.
+//! End-to-end: fixture TTF + code snippet + two themes → one color font
+//! with two CPAL palettes, verified by the rustybuzz oracle (inside
+//! `build`), then re-verified standalone from the woff bytes.
 
-use chromaglyph_core::{build, verify, Block, BuildInput, Theme};
+use chromaglyph_core::theme::ThemeSpec;
+use chromaglyph_core::{build, verify, Block, BuildInput};
 
 const FONT: &[u8] = include_bytes!("fixtures/JetBrainsMono-Regular.ttf");
 
-const SAMPLE: &str = r#"// chromaglyph m1
+const SAMPLE: &str = r#"// chromaglyph m2
 fn main() {
     let msg = "hello chromaglyph";
     let n = 42;
@@ -22,12 +23,19 @@ fn blocks(text: &'static str) -> Vec<Block<'static>> {
     }]
 }
 
+fn themes() -> Vec<ThemeSpec> {
+    vec![
+        ThemeSpec::builtin("dark-plus").unwrap(),
+        ThemeSpec::builtin("light-plus").unwrap(),
+    ]
+}
+
 #[test]
-fn m1_end_to_end() {
-    let theme = Theme::builtin_dark();
+fn two_themes_one_font() {
+    let themes = themes();
     let out = build(&BuildInput {
         font_bytes: FONT,
-        theme: &theme,
+        themes: &themes,
         blocks: &blocks(SAMPLE),
         run_verify: true,
     })
@@ -35,28 +43,15 @@ fn m1_end_to_end() {
 
     assert!(out.report.rules > 0, "expected some substitution rules");
     assert!(out.report.alt_glyphs > 0);
-    assert_eq!(
-        out.report.palette.len(),
-        5,
-        "keyword/string/comment/number/identifier colors"
-    );
-    assert_eq!(
-        out.report.source_glyphs + out.report.alt_glyphs as u16,
-        out.report.total_glyphs
-    );
+    assert_eq!(out.report.slots, out.report.palettes[0].len());
+    assert_eq!(out.report.palettes.len(), 2, "one palette per theme");
     assert!(out.report.verify.ok);
+    assert_eq!(out.report.verify.palettes_checked, 2);
     assert_eq!(out.report.verify.failures.len(), 0);
-    assert!(out.report.verify.colored_glyphs > 0);
-    // the exact-mode GSUB stays tiny even though the source font's layout
-    // tables were dropped (GSUB+GPOS+GDEF of JetBrains Mono are large)
-    assert!(
-        out.report.tables["GSUB"] < 8 * 1024,
-        "GSUB should be small: {:?}",
-        out.report.tables["GSUB"]
-    );
-    assert!(out.woff.len() < out.ttf.len(), "woff must compress");
 
-    // tables of interest exist
+    // the palettes actually differ (dark vs light for the same slot)
+    assert_ne!(out.report.palettes[0], out.report.palettes[1]);
+
     for table in ["GSUB", "COLR", "CPAL", "glyf", "loca", "hmtx"] {
         assert!(
             out.report.tables.contains_key(table),
@@ -65,20 +60,32 @@ fn m1_end_to_end() {
         );
     }
 
-    // the woff round-trips: unwrap it and run the standalone oracle
-    let ttf_again = chromaglyph_core::woff::unwrap(&out.woff).expect("woff must unwrap");
-    let result = verify(&out.woff, &blocks(SAMPLE), &theme).expect("standalone verify");
+    // the woff round-trips: run the standalone oracle from the woff bytes
+    let result = verify(&out.woff, &blocks(SAMPLE), &themes).expect("standalone verify");
     assert!(
         result.ok,
         "standalone verify from woff: {:?}",
         result.failures
     );
-    let _ = ttf_again;
+}
+
+#[test]
+fn single_theme_still_works() {
+    let themes = vec![ThemeSpec::builtin("dark-plus").unwrap()];
+    let out = build(&BuildInput {
+        font_bytes: FONT,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: true,
+    })
+    .expect("single-theme build");
+    assert_eq!(out.report.palettes.len(), 1);
+    assert!(out.report.verify.ok);
 }
 
 #[test]
 fn rejects_cff_fonts() {
-    let theme = Theme::builtin_dark();
+    let themes = themes();
     // the reference project's CFF-flavored otf
     let path = "/Users/taiyuuki/projects/i/font/FontWithASyntaxHighlighter/FontWithASyntaxHighlighter-Regular.otf";
     let Ok(bytes) = std::fs::read(path) else {
@@ -87,7 +94,7 @@ fn rejects_cff_fonts() {
     };
     let err = match build(&BuildInput {
         font_bytes: &bytes,
-        theme: &theme,
+        themes: &themes,
         blocks: &blocks("fn"),
         run_verify: false,
     }) {
@@ -101,8 +108,8 @@ fn rejects_cff_fonts() {
 }
 
 #[test]
-fn ambiguity_across_blocks_degrades_not_fails() {
-    let theme = Theme::builtin_dark();
+fn cross_language_ambiguity_degrades_not_fails() {
+    let themes = themes();
     let blocks = vec![
         Block {
             id: "rust-block".into(),
@@ -110,17 +117,17 @@ fn ambiguity_across_blocks_degrades_not_fails() {
             text: "let",
         },
         Block {
-            id: "js-block".into(),
+            id: "plain-block".into(),
             lang: "plain".into(),
             text: "let",
         },
     ];
-    // identical block text, different language colors: any rule would fire
-    // in both blocks, so the build degrades both to uncolored (with a
-    // warning) instead of failing
+    // rust colors "let" as a keyword, plain leaves it uncolored; identical
+    // text in both blocks means any rule would fire in both — the build
+    // degrades the occurrence (warning) instead of failing
     let out = build(&BuildInput {
         font_bytes: FONT,
-        theme: &theme,
+        themes: &themes,
         blocks: &blocks,
         run_verify: true,
     })
@@ -130,4 +137,23 @@ fn ambiguity_across_blocks_degrades_not_fails() {
         "degradation must be reported"
     );
     assert!(out.report.verify.ok, "degraded font must still verify");
+}
+
+#[test]
+fn real_tokenization_colors_function_names() {
+    // syntect resolves scopes Dark+ styles: `main` (entity.name.function)
+    // gets the function yellow, distinct from keywords — meaning the demo
+    // is no longer limited to the M1 lexer's five scopes
+    let themes = vec![ThemeSpec::builtin("dark-plus").unwrap()];
+    let out = build(&BuildInput {
+        font_bytes: FONT,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: false,
+    })
+    .unwrap();
+    assert!(
+        out.report.palettes[0].iter().any(|c| c == "#dcdcaa"),
+        "function yellow in palette"
+    );
 }

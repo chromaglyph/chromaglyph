@@ -197,17 +197,23 @@ pub fn assemble(
         num_layer_records: num_alt as u16,
         ..Default::default()
     };
-    let color_records: Vec<ColorRecord> = plan
-        .palette
-        .iter()
-        .map(|c| ColorRecord::new(c.blue, c.green, c.red, c.alpha))
-        .collect();
+    let num_slots = plan.slots.len() as u16;
+    let num_themes = plan.theme_fgs.len() as u16;
+    // color records are palette-major: theme t occupies
+    // [t*num_slots, (t+1)*num_slots)
+    let mut color_records: Vec<ColorRecord> = Vec::with_capacity((num_slots * num_themes) as usize);
+    for (theme, fg) in plan.theme_fgs.iter().enumerate() {
+        for slot in &plan.slots {
+            let c = slot[theme].unwrap_or(*fg);
+            color_records.push(ColorRecord::new(c.blue, c.green, c.red, c.alpha));
+        }
+    }
     let cpal = Cpal {
-        num_palette_entries: color_records.len() as u16,
-        num_palettes: 1,
+        num_palette_entries: num_slots,
+        num_palettes: num_themes,
         num_color_records: color_records.len() as u16,
         color_records_array: Some(color_records).into(),
-        color_record_indices: vec![0],
+        color_record_indices: (0..num_themes).map(|t| t * num_slots).collect(),
         ..Default::default()
     };
 

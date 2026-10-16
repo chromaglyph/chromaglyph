@@ -11,6 +11,7 @@ read-fonts.workspace = true
 skrifa.workspace = true
 write-fonts.workspace = true
 rustybuzz.workspace = true
+syntect.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
