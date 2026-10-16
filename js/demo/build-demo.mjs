@@ -149,6 +149,19 @@ public class Demo { // public at column 0 stays plain; class is teal
         return s.length();
     }
 }`,
+  typescript: `// TypeScript: top-level keywords stay plain (column 0, no anchor);
+namespace Demo { // namespace too — but indented keywords color below
+    interface User {
+        readonly id: number
+        name: string // string is at line end: no lookahead glyph
+        tags?: string[]
+    }
+    export function greet(user: User): string {
+        const { name, tags = [] } = user
+        return \`hi \${name.toUpperCase()} bye [\${tags.join(', ')}]\`
+        // interpolation: \${ and } keep the string color, the expression is plain
+    }
+}`,
 }
 
 const sections = []
