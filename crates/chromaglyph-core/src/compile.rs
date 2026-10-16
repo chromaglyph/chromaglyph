@@ -81,10 +81,11 @@ pub struct GlyphPlan {
     /// Glyph count of the source font (alt glyph ids start here).
     pub num_source_glyphs: u16,
     /// Plain (uncolored) glyphs appended after the alt copies, each with a
-    /// cmap mapping — generic mode injects a newline glyph this way so
-    /// shaping runs do not break at line ends (keyword boundaries and
-    /// block-comment states then survive line breaks). Empty (exact mode):
-    /// the source cmap is copied byte-for-byte instead.
+    /// cmap mapping. Currently always empty: browsers shape each source
+    /// line as its own run, so an injected newline glyph cannot keep a
+    /// run whole and generic mode maps none (a `\n` is a hard barrier,
+    /// like any unmapped char). When non-empty, the output cmap is
+    /// resynthesized; when empty, the source cmap is copied byte-for-byte.
     pub plain_glyphs: Vec<(u32, u16)>,
     /// Per-block cell ranges into the concatenated cell vector.
     pub block_ranges: Vec<(usize, usize)>,

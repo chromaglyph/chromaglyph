@@ -97,27 +97,29 @@ import { buildFont } from '@chromaglyph/node'
 import { buildCssAssets } from '@chromaglyph/node/css'
 
 const samples = {
-  rust: `use std::fmt; // NOTE: "use" at buffer start stays plain (no glyph to anchor on)
+  rust: `use std::fmt; // "use" at line start stays plain: no glyph to anchor on
 // a comment
-/* multi
-   line
-   block */
-fn main() {
+/* one-line block */ fn demo() { // fn AFTER a space anchors fine
     let s = "fn // let";
     let n = 3.14;
     let m = 1.max(2);
+    /* multi-line comments color
+       their opening line only */ let x = 1;
 }`,
-  javascript: `// config
-const name = 'chromaglyph';
-let tmpl = \`multi
-line \${name}\`;
-let empty = ""; let mixed = 'a"b';
-if ($use) return 42;`,
-  python: `"""Module docstring
-spans lines."""
-def main():
+  javascript: `// config (top-level keywords at column 0 stay plain: no anchor)
+function demo() {
+    const name = 'chromaglyph';
+    let tmpl = \`one-line template \${name}\`;
+    let empty = ""; let mixed = 'a"b';
+    if ($use) return 42;
+    let multi = \`line one only,
+plain after the newline\`;
+}`,
+  python: `"""One-line docstring."""
+def main(): # def at line start: no anchor
+    msg = "hi"
     # comment
-    s = f"hi {x}"
+    s = f"interp {x}"
     t = '''single triple "with dq" inside'''
     return 3.14`,
 }
@@ -137,14 +139,22 @@ const genericPage = `<!doctype html><meta charset="utf-8"><title>chromaglyph × 
   h1, h2 { font-family: system-ui, sans-serif; }
   pre { padding: 1rem; border-radius: 8px; overflow-x: auto; font-size: 15px; line-height: 1.6; }
   ${sections.map((s) => `pre.${s.lang} { font-family: ${s.family}, monospace; }`).join('\n  ')}
+  @media (prefers-color-scheme: light) {
+    body { background: #ffffff; color: #1e1e1e; }
+    pre { background: #ffffff; }
+    ${sections.map((s) => `pre.${s.lang} { font-palette: --${s.family}-light-plus; }`).join('\n    ')}
+  }
 </style>
-${sections.map((s) => s.css).join('\n')}
+${sections.map((s) => `<style>\n${s.css}\n</style>`).join('\n')}
 <h1>chromaglyph × generic mode</h1>
 <p>Three fonts, zero compiled-in content: each font highlights ANY text of
 its language — keywords, comments, strings, numbers — via a synthesized
-state machine. Line-start keywords, multi-line block comments, JS template
-literals and Python docstrings all survive newlines (an injected zero-width
-newline glyph keeps the shaping run whole).</p>
+state machine. Browsers shape every source line as its own run, so the
+highlighting is line-scoped: a keyword colors when the glyphs beside it
+live in the font (indent it one space and it colors; at column 0 or the
+very end of a line it stays plain), and multi-line states (block comments,
+template literals, docstrings) color their opening line only — the
+continuation lines start a fresh, plain run.</p>
 ${sections
   .map((s) => `<h2>${s.lang}</h2>\n<pre class="${s.lang}">${s.code.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`)
   .join('\n')}

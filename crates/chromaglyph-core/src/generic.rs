@@ -8,31 +8,34 @@
 //! language spec:
 //!
 //! - **keywords**: rules per keyword over 1:1 letter classes, word
-//!   boundaries via the "not an identifier char" class (plus the newline
-//!   class, so keywords at a line start color). Keyword *groups* let one
-//!   language color `keyword.control` and `storage.type` words
+//!   boundaries via the "not an identifier char" class. Keyword *groups*
+//!   let one language color `keyword.control` and `storage.type` words
 //!   differently, like a real grammar.
 //! - **strings**: any number of single-character quote kinds (JS `"`
 //!   `'` `` ` ``); the opening quote enters the string state, the closing
 //!   quote substitutes into a distinct *end* class so propagation stops
-//!   right after it. Each kind decides whether literals span newlines
-//!   (template literals do, ordinary quotes do not).
-//! - **spans**: multi-character delimited states — line comments (end at
-//!   the newline), block comments, Python-style triple-quoted strings
-//!   (both survive newlines). A `"""` opener beats the simple `"` string
-//!   because openers match longest-first.
+//!   right after it.
+//! - **spans**: multi-character delimited states — line comments, block
+//!   comments, Python-style triple-quoted strings. A `"""` opener beats
+//!   the simple `"` string because openers match longest-first.
 //! - **numbers**: a digit after a word boundary opens a number state that
 //!   propagates over identifier classes; `.` continues the state only
 //!   when a digit follows (`3.14` colors, `1.max` does not swallow
 //!   `max`).
 //!
-//! A newline glyph is **injected** into the output font (empty, zero
-//! width, plain — see `plain_glyphs`) whenever the source font does not
-//! map `\n`, so shaping runs do not break at line ends in browsers:
-//! keyword boundaries can anchor on it and spanning states (block
-//! comments, template literals, triple-quoted strings) survive it.
-//! Unmapped chars (emoji, …) still break runs — states die there, in
-//! browsers and in the oracle alike.
+//! **Newlines are hard barriers — always, mapped or not.** Browsers lay
+//! out `pre` content line by line: every source line is its own shaping
+//! run, and contextual rules can never see across a `\n` (a mapped
+//! newline glyph changes nothing — the character is consumed as the
+//! forced break, so no glyph of this font precedes the next line's first
+//! character). The model therefore treats `\n`/`\r` exactly like
+//! unmapped characters: states die at line ends, and a keyword at the
+//! start of a line has no glyph to anchor on and stays plain (indent it
+//! by one space and it colors; the spaces are in-run backtrack). This
+//! was verified pixel-exact in a real browser; the earlier v1.1 idea of
+//! injecting a newline glyph to keep runs whole does not hold —
+//! rustybuzz shapes the whole text as one run and would happily verify
+//! the fiction.
 //!
 //! Three mechanisms make the states work under real shapers (which apply
 //! a contextual lookup left to right, seeing earlier substitutions in
@@ -54,11 +57,11 @@
 //! same rule set under every theme; `@font-palette-values` flips themes
 //! with no re-shaping.
 //!
-//! v1.2 scope: keyword groups, multiple quote kinds per language
-//! (including newline-spanning template literals), line/block comments,
-//! triple-quoted strings, numbers; no escapes, no nested interpolation
-//! (`${…}` is colored as string body); a single language per font.
-//! Built-in specs: Rust, JavaScript, TypeScript, Python.
+//! v1.2 scope: keyword groups, multiple quote kinds per language,
+//! line/block comments, triple-quoted strings, numbers — all
+//! **line-scoped**; no escapes, no nested interpolation (`${…}` is
+//! colored as string body); a single language per font. Built-in specs:
+//! Rust, JavaScript, TypeScript, Python.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -78,16 +81,17 @@ pub struct KeywordGroup {
     pub words: &'static [&'static str],
 }
 
-/// A single-character-quote string kind.
+/// A single-character-quote string kind. Literals never span newlines:
+/// browsers shape each source line as its own run (see the module docs).
 pub struct StringKind {
     pub quote: char,
-    /// Whether literals may span newlines (JS template literals: yes).
-    pub spans_newlines: bool,
     pub scope: &'static str,
 }
 
 /// A multi-character delimited span: line comments (empty `close`),
-/// block comments, Python-style triple-quoted strings.
+/// block comments, Python-style triple-quoted strings. Every span ends
+/// at the closing delimiter **or the end of the line**, whichever comes
+/// first — cross-line states cannot exist in browser shaping runs.
 pub struct SpanKind {
     pub open: &'static str,
     /// Empty → the span runs to the next newline.
@@ -128,7 +132,6 @@ pub fn rust() -> LanguageSpec {
         }],
         strings: &[StringKind {
             quote: '"',
-            spans_newlines: false,
             scope: "string.quoted.double.rust",
         }],
         spans: &[
@@ -202,17 +205,14 @@ pub fn javascript() -> LanguageSpec {
         strings: &[
             StringKind {
                 quote: '"',
-                spans_newlines: false,
                 scope: "string.quoted.double.js",
             },
             StringKind {
                 quote: '\'',
-                spans_newlines: false,
                 scope: "string.quoted.single.js",
             },
             StringKind {
                 quote: '`',
-                spans_newlines: true,
                 scope: "string.template.js",
             },
         ],
@@ -325,17 +325,14 @@ pub fn typescript() -> LanguageSpec {
         strings: &[
             StringKind {
                 quote: '"',
-                spans_newlines: false,
                 scope: "string.quoted.double.ts",
             },
             StringKind {
                 quote: '\'',
-                spans_newlines: false,
                 scope: "string.quoted.single.ts",
             },
             StringKind {
                 quote: '`',
-                spans_newlines: true,
                 scope: "string.template.ts",
             },
         ],
@@ -358,7 +355,8 @@ pub fn typescript() -> LanguageSpec {
 }
 
 /// Built-in Python spec: `#` comments, both quote kinds, triple-quoted
-/// strings that span lines (docstrings), f-string prefixes stay plain.
+/// strings (their opening line — states are line-scoped, see the module
+/// docs), f-string prefixes stay plain.
 pub fn python() -> LanguageSpec {
     LanguageSpec {
         name: "python",
@@ -389,12 +387,10 @@ pub fn python() -> LanguageSpec {
         strings: &[
             StringKind {
                 quote: '"',
-                spans_newlines: false,
                 scope: "string.quoted.double.python",
             },
             StringKind {
                 quote: '\'',
-                spans_newlines: false,
                 scope: "string.quoted.single.python",
             },
         ],
@@ -761,8 +757,7 @@ pub fn synthesize(
         let quote_class = char_class[&s.quote];
         for &gid in &gids {
             let class = class_of[&gid];
-            let body =
-                class != quote_class && class != c_notdef && (s.spans_newlines || class != c_nl);
+            let body = class != quote_class && class != c_notdef && class != c_nl;
             if body {
                 push_alt(
                     &mut next_new,
@@ -812,10 +807,10 @@ pub fn synthesize(
                 }
             }
         }
-        let line = span.close.is_empty();
+        let _line = span.close.is_empty();
         for &gid in &gids {
             let class = class_of[&gid];
-            if class != c_notdef && (!line || class != c_nl) {
+            if class != c_notdef && class != c_nl {
                 push_alt(
                     &mut next_new,
                     &mut alt_glyphs,
@@ -849,53 +844,14 @@ pub fn synthesize(
         }
     }
 
-    // ---- injected newline glyph -------------------------------------------
-    // Browsers shape one run per font; a `\n` with no glyph in this font
-    // falls back and breaks the run — killing keyword boundaries at line
-    // starts and any state that should span lines. An empty zero-width
-    // glyph mapped to `\n` keeps runs whole. It is plain (uncolored),
-    // class c_nl: no line-comment or number propagation references that
-    // class, so line comments still end at newlines and numbers do not
-    // span them. (The source font may map `\r` but not `\n` — only `\n`
-    // decides the injection.)
-    let mut plain_glyphs: Vec<(u32, u16)> = Vec::new();
-    let lf_gid = char_gid(mappings, '\n');
-    if lf_gid.is_none() {
-        let gid = next_new;
-        next_new += 1;
-        class_of.insert(gid, c_nl);
-        plain_glyphs.push(('\n' as u32, gid));
-        if char_gid(mappings, '\r').is_none() {
-            plain_glyphs.push(('\r' as u32, gid));
-        }
-        // every state whose body includes the newline class needs a body
-        // copy of the injected glyph: block comments, triple-quoted
-        // strings, template literals
-        for (j, span) in spec.spans.iter().enumerate() {
-            if !span.close.is_empty() {
-                push_alt(
-                    &mut next_new,
-                    &mut alt_glyphs,
-                    gid,
-                    layout.span_body[j],
-                    span_state[j],
-                    &mut class_of,
-                );
-            }
-        }
-        for (k, s) in spec.strings.iter().enumerate() {
-            if s.spans_newlines {
-                push_alt(
-                    &mut next_new,
-                    &mut alt_glyphs,
-                    gid,
-                    layout.str_body[k],
-                    str_state[k],
-                    &mut class_of,
-                );
-            }
-        }
-    }
+    // ---- newline: no glyph, on purpose -----------------------------------
+    // Browsers shape each source line as its own run (the `\n` is consumed
+    // as the forced break), so mapping a newline glyph would change
+    // nothing in a real renderer — rustybuzz alone would shape across it
+    // and "verify" behavior no browser has. `plain_glyphs` stays empty;
+    // the model treats `\n`/`\r` as hard barriers (class c_nl / notdef
+    // participate in no rule), exactly like unmapped characters.
+    let plain_glyphs: Vec<(u32, u16)> = Vec::new();
 
     // ---- rules ------------------------------------------------------------
     // Order inside a first-glyph rule set decides who wins at a position:
@@ -1002,9 +958,10 @@ pub fn synthesize(
                 || (class >= first_letter_class
                     && class < first_letter_class + keyword_letters.len() as u16))
     };
-    // keyword boundary classes: plain punctuation or the (now mapped)
-    // newline — both exist as glyphs the shaper can anchor on
-    let boundaries = [C_NOTWORD, c_nl];
+    // keyword boundary class: plain punctuation only. A newline can never
+    // anchor a keyword — the previous line is a different shaping run in
+    // every browser, so a column-0 keyword has no in-run glyph before it
+    let boundaries = [C_NOTWORD];
 
     for &class in &present {
         if let Some(rules) = terminators.get(&class) {
@@ -1013,9 +970,10 @@ pub fn synthesize(
                 .or_default()
                 .extend(rules.iter().cloned());
         }
-        for (j, span) in spec.spans.iter().enumerate() {
-            let line = span.close.is_empty();
-            if class != c_notdef && (!line || class != c_nl) {
+        for (j, _span) in spec.spans.iter().enumerate() {
+            // every span dies at the newline — line-scoped by browser
+            // necessity, line comment and block comment alike
+            if class != c_notdef && class != c_nl {
                 prop(
                     &mut by_class,
                     class,
@@ -1029,7 +987,7 @@ pub fn synthesize(
             let Some(&quote_class) = char_class.get(&s.quote) else {
                 continue;
             };
-            if class != quote_class && class != c_notdef && (s.spans_newlines || class != c_nl) {
+            if class != quote_class && class != c_notdef && class != c_nl {
                 prop(
                     &mut by_class,
                     class,
@@ -1134,21 +1092,24 @@ pub enum Tok {
     SpanClose(usize),
 }
 
-/// Highlight `text` per the spec, one [`Tok`] per char.
+/// Highlight `text` per the spec, one [`Tok`] per char, **line-scoped**.
 ///
 /// `mapped` says whether the *output* font has a glyph for a char; it
-/// models the shaper's real capabilities. States die at unmapped chars
-/// (browsers send those to a fallback font, breaking the shaping run).
-/// Keywords and numbers open only after a mapped plain-punctuation or
-/// newline glyph; string literals stop at newlines unless their kind
-/// spans; span openers match longest-first, so `"""` beats `"`.
+/// models the shaper's real capabilities. Newlines are hard barriers
+/// even when a glyph exists for them: browsers shape each source line as
+/// its own run, so no state and no keyword anchor can cross a `\n`.
+/// Unmapped chars (emoji, …) break runs the same way. Span openers match
+/// longest-first, so `"""` beats `"`.
 pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Vec<Tok> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = vec![Tok::Plain; chars.len()];
-    // a word boundary glyph: mapped, not an identifier char, and not one
-    // of the delimiter chars that live in their own classes
+    // a word boundary glyph: mapped, not an identifier char, not a
+    // newline, and not one of the delimiter chars that live in their own
+    // classes
     let boundary = |c: char| {
         mapped(c)
+            && c != '\n'
+            && c != '\r'
             && !is_ident(c, spec.ident_extra)
             && !spec.strings.iter().any(|s| s.quote == c)
             && !spec
@@ -1197,8 +1158,9 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                         i += n;
                         break;
                     }
-                    if !mapped(chars[i]) {
-                        break; // barrier: state dies, plain scan resumes
+                    let c = chars[i];
+                    if !mapped(c) || c == '\n' || c == '\r' {
+                        break; // barrier or line end: state dies
                     }
                     out[i] = Tok::SpanBody(j);
                     i += 1;
@@ -1219,7 +1181,7 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                     i += 1;
                     break;
                 }
-                if !mapped(c) || (!s.spans_newlines && (c == '\n' || c == '\r')) {
+                if !mapped(c) || c == '\n' || c == '\r' {
                     break; // barrier or line end: state dies
                 }
                 out[i] = Tok::StrBody(k);
@@ -1550,8 +1512,9 @@ mod tests {
     use super::*;
 
     fn toks(s: &str) -> Vec<Tok> {
-        // the built font injects a newline glyph, so everything maps
-        lex(&rust(), s, &|_| true)
+        // everything mapped except the barrier chars that shape no glyph
+        // in a browser (newlines are barriers regardless — see module docs)
+        lex(&rust(), s, &|c| c != '\n' && c != '\r')
     }
 
     #[test]
@@ -1572,11 +1535,25 @@ mod tests {
     }
 
     #[test]
-    fn lex_line_start_keywords_with_newline_mapping() {
-        // with '\n' mapped (the injected glyph), a keyword after a newline
-        // anchors on it and colors
+    fn lex_line_start_keywords_stay_plain() {
+        // every source line is its own shaping run in a browser: a
+        // column-0 keyword has no in-run glyph to anchor on — even when
+        // the font maps `\n` (pixel-verified in a real browser)
         let t = lex(&rust(), "a\nfn b", &|_| true);
-        assert_eq!(&t[2..4], &[Tok::Keyword(0); 2]);
+        assert_eq!(&t[2..4], &[Tok::Plain; 2], "line start: no anchor");
+        // one space of indentation and the space glyph anchors it
+        let t = lex(&rust(), "a\n fn b", &|_| true);
+        assert_eq!(&t[3..5], &[Tok::Keyword(0); 2]);
+    }
+
+    #[test]
+    fn lex_newline_is_a_barrier_even_when_mapped() {
+        // states die at the newline; the next line starts a fresh scan
+        let t = lex(&rust(), "\"a\nfn let", &|_| true);
+        assert_eq!(t[0], Tok::StrOpen(0));
+        assert_eq!(t[1], Tok::StrBody(0));
+        assert_eq!(t[2], Tok::Plain);
+        assert_eq!(&t[3..9], &[Tok::Plain; 6]);
     }
 
     #[test]
@@ -1589,20 +1566,18 @@ mod tests {
         assert_eq!(&t[0..2], &[Tok::SpanOpen(0); 2]);
         assert_eq!(&t[2..8], &[Tok::SpanBody(0); 6]); // quote inside a comment stays comment
         assert_eq!(t[8], Tok::Plain); // newline ends the comment
-        assert_eq!(
-            &t[9..11],
-            &[Tok::Keyword(0); 2],
-            "the injected newline glyph anchors line-start keywords"
-        );
+        assert_eq!(&t[9..11], &[Tok::Plain; 2], "line-start keyword stays plain");
     }
 
     #[test]
     fn lex_block_comments() {
+        // block comments are line-scoped: continuation lines start plain
         let t = toks("a /* b\n c */ d");
         assert_eq!(&t[2..4], &[Tok::SpanOpen(1); 2]);
-        assert_eq!(t[8], Tok::SpanBody(1), "block comments span newlines");
-        assert_eq!(&t[10..12], &[Tok::SpanClose(1); 2]);
-        // unterminated block comment runs to the barrier/end
+        assert_eq!(&t[4..6], &[Tok::SpanBody(1); 2]); // " b"
+        assert_eq!(t[6], Tok::Plain); // the newline itself
+        assert_eq!(&t[7..14], &[Tok::Plain; 7], "next line: no state survives");
+        // unterminated block comment runs to the line end / barrier
         let t = toks("x /* let fn");
         assert_eq!(&t[2..4], &[Tok::SpanOpen(1); 2]);
         assert_eq!(&t[5..11], &[Tok::SpanBody(1); 6]);
@@ -1629,7 +1604,9 @@ mod tests {
         let t = toks(" 0x1F_ff");
         assert_eq!(&t[1..8], &[Tok::Number; 7]);
         let t = lex(&rust(), "\n42", &|_| true);
-        assert_eq!(&t[1..3], &[Tok::Number; 2], "number at line start");
+        assert_eq!(&t[1..3], &[Tok::Plain; 2], "number at line start has no anchor");
+        let t = lex(&rust(), "a\n 42", &|_| true);
+        assert_eq!(&t[3..5], &[Tok::Number; 2], "indented number colors");
     }
 
     #[test]
@@ -1669,12 +1646,17 @@ mod tests {
     }
 
     #[test]
-    fn lex_js_template_literals_span_lines() {
+    fn lex_js_template_literals_are_line_scoped() {
+        // a multi-line template colors its opening line; the continuation
+        // line is a fresh run and its closing backtick opens a new,
+        // unterminated template
         let t = lex(&javascript(), "`a\nb`", &|_| true);
         assert_eq!(t[0], Tok::StrOpen(2));
-        assert_eq!(t[2], Tok::StrBody(2), "template literals span newlines");
-        assert_eq!(t[4], Tok::StrClose(2));
-        // ordinary quotes still die at the newline
+        assert_eq!(t[1], Tok::StrBody(2));
+        assert_eq!(t[2], Tok::Plain); // newline kills the template
+        assert_eq!(t[3], Tok::Plain);
+        assert_eq!(t[4], Tok::StrOpen(2), "fresh template on the new line");
+        // ordinary quotes die the same way
         let t = lex(&javascript(), "\"a\nb\"", &|_| true);
         assert_eq!(t[2], Tok::Plain, "double-quoted string dies at newline");
         assert_eq!(t[3], Tok::Plain);
@@ -1737,10 +1719,15 @@ mod tests {
     #[test]
     fn lex_python_triple_kinds_and_lines() {
         let spec = python();
-        // docstring spans lines
+        // a multi-line docstring colors its opening line; the second line
+        // is a fresh run — its trailing `"""` opens a new (unterminated)
+        // triple rather than closing the first
         let t = lex(&spec, "\"\"\"Doc\nstring.\"\"\"", &|_| true);
-        assert_eq!(t[6], Tok::SpanBody(0), "triple strings span newlines");
-        assert_eq!(&t[14..17], &[Tok::SpanClose(0); 3]);
+        assert_eq!(&t[0..3], &[Tok::SpanOpen(0); 3]);
+        assert_eq!(&t[3..6], &[Tok::SpanBody(0); 3]); // Doc
+        assert_eq!(t[6], Tok::Plain); // the newline
+        assert_eq!(&t[7..14], &[Tok::Plain; 7]); // string.
+        assert_eq!(&t[14..17], &[Tok::SpanOpen(0); 3]); // fresh, unterminated
         // single-quoted triple is a different kind
         let t = lex(&spec, "'''a\"\"\"b'''", &|_| true);
         assert_eq!(&t[0..3], &[Tok::SpanOpen(1); 3]);
@@ -1768,11 +1755,15 @@ mod tests {
         assert_eq!(t[0], Tok::SpanOpen(2));
         assert_eq!(&t[1..7], &[Tok::SpanBody(2); 6]);
         assert_eq!(t[7], Tok::Plain, "newline ends the comment");
-        assert_eq!(&t[8..11], &[Tok::Keyword(1); 3], "def is group 1");
-        assert_eq!(&t[21..25], &[Tok::Keyword(0); 4], "pass is group 0");
-        let t = lex(&spec, "z = 1\nif x and not y:\n    pass\n", &|_| true);
-        assert_eq!(&t[6..8], &[Tok::Keyword(0); 2]);
-        assert_eq!(&t[11..14], &[Tok::Keyword(3); 3], "and is group 3");
-        assert_eq!(&t[26..30], &[Tok::Keyword(0); 4], "pass at line start");
+        assert_eq!(&t[8..11], &[Tok::Plain; 3], "def at line start: no anchor");
+        assert_eq!(
+            &t[21..25],
+            &[Tok::Plain; 4],
+            "keyword at line end: no lookahead glyph in its run"
+        );
+        // indented mid-line keywords color normally
+        let t = lex(&spec, "z = 1\n    if x and not y:\n        pass\n", &|_| true);
+        assert_eq!(&t[10..12], &[Tok::Keyword(0); 2], "if after indentation");
+        assert_eq!(&t[15..18], &[Tok::Keyword(3); 3], "and is group 3");
     }
 }

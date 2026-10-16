@@ -15,7 +15,7 @@ test('generic mode builds a font that highlights any text', () => {
   })
   assert.ok(out.woff.length > 50_000, 'a real font comes back')
   const report = JSON.parse(out.report)
-  assert.ok(report.rules >= 300, `real rule machine, got ${report.rules}`)
+  assert.ok(report.rules >= 250, `real rule machine, got ${report.rules}`)
   assert.ok(report.verify.ok, 'oracle green')
   assert.equal(report.palettes.length, 2, 'one palette per theme')
   assert.ok(out.css.includes('@font-palette-values'), 'css companion present')

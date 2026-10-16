@@ -357,9 +357,9 @@ fn generic_mode_adversarial_samples() {
 fn generic_mode_new_languages() {
     let themes = themes();
     for (spec, min_rules) in [
-        (chromaglyph_core::generic::javascript(), 300),
-        (chromaglyph_core::generic::typescript(), 450),
-        (chromaglyph_core::generic::python(), 300),
+        (chromaglyph_core::generic::javascript(), 250),
+        (chromaglyph_core::generic::typescript(), 260),
+        (chromaglyph_core::generic::python(), 200),
     ] {
         let out = build(&BuildInput {
             font_bytes: FONT,

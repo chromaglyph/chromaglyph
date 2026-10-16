@@ -176,8 +176,9 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
                     .iter()
                     .map(|&(base, pal, alt)| ((base, pal), alt))
                     .collect();
-                // model the *produced* font: the injected newline glyph
-                // is mapped even when the source font maps no `\n`/`\r`
+                // model the *produced* font — the shaper sees its cmap,
+                // not the source font's (identical today: no glyphs are
+                // injected, but this stays correct if one ever is)
                 let produced = read_fonts::FontRef::new(&ttf).map_err(|e| {
                     BuildError::VerifyFailed(vec![format!("cannot re-read produced font: {e}")])
                 })?;
