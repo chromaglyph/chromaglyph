@@ -1,0 +1,16 @@
+[package]
+name = "chromaglyph-cli"
+description = "CLI for chromaglyph: build and verify fonts with compiled-in syntax highlighting"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "chromaglyph"
+path = "src/main.rs"
+
+[dependencies]
+chromaglyph-core.workspace = true
+clap.workspace = true
+serde_json.workspace = true
