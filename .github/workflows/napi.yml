@@ -166,3 +166,38 @@ jobs:
           fi
           cd crates/chromaglyph-node
           npm publish --access public --provenance
+
+  # The pure-JS plugins (remark / markdown-it). They resolve their
+  # workspace:* dependency on @chromaglyph/node at publish time, so they
+  # ride the same release train as the native packages.
+  publish-js:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Publish @chromaglyph/remark and @chromaglyph/markdown-it
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for pkg in remark markdown-it; do
+            VERSION=$(node -p "require('./js/$pkg/package.json').version")
+            if npm view "@chromaglyph/$pkg@$VERSION" version >/dev/null 2>&1; then
+              echo "@chromaglyph/$pkg@$VERSION already on npm, skipping"
+              continue
+            fi
+            pnpm --filter "@chromaglyph/$pkg" publish --access public --no-git-checks
+          done

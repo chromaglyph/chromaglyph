@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 (2026-10-16)
 
 - **generic mode v1.1** (`--generic rust`): build a font that highlights ANY
   text of a language — content no longer needs to be known at build time.
