@@ -105,6 +105,9 @@ tokenize+theme → compile → fontbuild → verify
   - oracle 对四种语言各跑「精选 + 按 spec 生成的 400 个确定性随机」样本，
     另加各语言对抗样本（引号交错、未闭合、关键字胶水、屏障 emoji）；
     node 侧 `buildFont({generic: 'js'})` 同步暴露（语言名进内容哈希）
+  - 浏览器验证（js/demo 的 generic.html，三字体一页）：跨行块注释/模板
+    字符串/docstring 在真实浏览器里逐行着色，行首 `fn`/`def` 正常上色，
+    JS 控制流紫/声明蓝两组关键字颜色分明，`$use` 保持无色
 - [x] **M4c** tree-sitter 语义 token（`--semantic` / `buildFont({semantic: true})`）：
   - 可选 crate `chromaglyph-treesitter`（workspace 里唯一带 C 依赖的 crate，
     core 保持纯 Rust）；解析代码树 → 语义 span（函数定义/调用/方法、参数、

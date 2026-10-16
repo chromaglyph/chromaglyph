@@ -89,3 +89,61 @@ const page = `<!doctype html><meta charset="utf-8"><title>chromaglyph × markdow
 ${mditHtml}`
 writeFileSync(resolve(here, 'out/mdit.html'), page)
 console.log('wrote out/mdit.html')
+
+// ---- generic mode: one font per language, highlights ANY text ----
+// Content is NOT compiled in: the font synthesizes a state machine, so
+// these code blocks could be anything — swapped at runtime, even.
+import { buildFont } from '@chromaglyph/node'
+import { buildCssAssets } from '@chromaglyph/node/css'
+
+const samples = {
+  rust: `// a comment
+/* multi
+   line
+   block */
+fn main() {
+    let s = "fn // let";
+    let n = 3.14;
+}`,
+  javascript: `// config
+const name = 'chromaglyph';
+let tmpl = \`multi
+line \${name}\`;
+if ($use) return 42;`,
+  python: `"""Module docstring
+spans lines."""
+def main():
+    # comment
+    s = f"hi {x}"
+    return 3.14`,
+}
+
+const sections = []
+for (const [lang, code] of Object.entries(samples)) {
+  const result = buildFont({ font, themes: ['dark-plus', 'light-plus'], blocks: [], generic: lang })
+  const { css } = buildCssAssets(result, { embed: true })
+  const family = css.match(/font-family: '(chromaglyph-[0-9a-f]+)'/)[1]
+  sections.push({ lang, code, css, family })
+  console.log(`generic ${lang}: ${result.woff.length} bytes (hash ${result.contentHash.slice(0, 8)})`)
+}
+
+const genericPage = `<!doctype html><meta charset="utf-8"><title>chromaglyph × generic</title>
+<style>
+  body { background: #1e1e1e; color: #d4d4d4; max-width: 46rem; margin: 3rem auto; padding: 0 1rem; }
+  h1, h2 { font-family: system-ui, sans-serif; }
+  pre { padding: 1rem; border-radius: 8px; overflow-x: auto; font-size: 15px; line-height: 1.6; }
+  ${sections.map((s) => `pre.${s.lang} { font-family: ${s.family}, monospace; }`).join('\n  ')}
+</style>
+${sections.map((s) => s.css).join('\n')}
+<h1>chromaglyph × generic mode</h1>
+<p>Three fonts, zero compiled-in content: each font highlights ANY text of
+its language — keywords, comments, strings, numbers — via a synthesized
+state machine. Line-start keywords, multi-line block comments, JS template
+literals and Python docstrings all survive newlines (an injected zero-width
+newline glyph keeps the shaping run whole).</p>
+${sections
+  .map((s) => `<h2>${s.lang}</h2>\n<pre class="${s.lang}">${s.code.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`)
+  .join('\n')}
+`
+writeFileSync(resolve(here, 'out/generic.html'), genericPage)
+console.log('wrote out/generic.html')
