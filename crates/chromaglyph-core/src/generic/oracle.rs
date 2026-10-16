@@ -68,6 +68,12 @@ pub fn sample_texts(spec: &LanguageSpec) -> Vec<String> {
         pieces.push(format!("{}a\\\"b{}", s.quote, s.quote));
         pieces.push(format!("{}\\\\{}", s.quote, s.quote));
         pieces.push(format!("{}x\\", s.quote)); // dangling escape
+        // interpolation holes: open/expression/resume, empty, nested-flat
+        if let Some((open, close)) = s.interpolation {
+            pieces.push(format!("{}a{}b{}c{}", s.quote, open, close, s.quote));
+            pieces.push(format!("{}{}{}{}", s.quote, open, close, s.quote));
+            pieces.push(format!("{}a{}b{}c{}d{}e{}", s.quote, open, open, close, close, s.quote));
+        }
     }
     pieces.push("\\".into());
     pieces.push("\\\\".into());

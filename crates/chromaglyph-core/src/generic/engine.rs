@@ -25,6 +25,10 @@ pub(in crate::generic) struct Layout {
     str_open: Vec<u16>,
     str_body: Vec<u16>,
     str_close: Vec<u16>,
+    /// slot per string kind with interpolation (0 when none): the opener
+    /// keeps the string color, the expression body renders uncolored
+    interp_open: Vec<u16>,
+    interp_body: Vec<u16>,
     num: u16,
     /// slot per span kind (only spans with a close use `span_close`)
     span_open: Vec<u16>,
@@ -43,11 +47,18 @@ pub(in crate::generic) fn layout(spec: &LanguageSpec) -> Layout {
     let mut str_open = Vec::with_capacity(spec.strings.len());
     let mut str_body = Vec::with_capacity(spec.strings.len());
     let mut str_close = Vec::with_capacity(spec.strings.len());
-    for _ in spec.strings {
+    let mut interp_open = vec![0u16; spec.strings.len()];
+    let mut interp_body = vec![0u16; spec.strings.len()];
+    for (k, s) in spec.strings.iter().enumerate() {
         str_open.push(next);
         str_body.push(next + 1);
         str_close.push(next + 2);
         next += 3;
+        if s.interpolation.is_some() {
+            interp_open[k] = next;
+            interp_body[k] = next + 1;
+            next += 2;
+        }
     }
     let num = next;
     next += 1;
@@ -68,6 +79,8 @@ pub(in crate::generic) fn layout(spec: &LanguageSpec) -> Layout {
         str_open,
         str_body,
         str_close,
+        interp_open,
+        interp_body,
         num,
         span_open,
         span_body,
@@ -85,6 +98,8 @@ impl Layout {
             Tok::StrOpen(k) => self.str_open[k],
             Tok::StrBody(k) => self.str_body[k],
             Tok::StrClose(k) => self.str_close[k],
+            Tok::InterpOpen(k) => self.interp_open[k],
+            Tok::InterpBody(k) => self.interp_body[k],
             Tok::SpanOpen(j) => self.span_open[j],
             Tok::SpanBody(j) => self.span_body[j],
             Tok::SpanClose(j) => self.span_close[j],
@@ -114,7 +129,14 @@ pub fn synthesize(
         let colors: Vec<Option<Color>> = themes.iter().map(|t| t.scope_color(s.scope)).collect();
         slots[layout.str_open[k] as usize] = colors.clone();
         slots[layout.str_body[k] as usize] = colors.clone();
-        slots[layout.str_close[k] as usize] = colors;
+        slots[layout.str_close[k] as usize] = colors.clone();
+        if s.interpolation.is_some() {
+            // the `${` opener keeps the string color; the expression body
+            // paints the default foreground — visually plain, but its
+            // alt glyphs still carry the interpolation state class
+            slots[layout.interp_open[k] as usize] = colors;
+            slots[layout.interp_body[k] as usize] = vec![None; themes.len()];
+        }
     }
     slots[layout.num as usize] = themes
         .iter()
@@ -170,6 +192,37 @@ pub fn synthesize(
         id
     });
     let c_esc = *c_esc;
+    // interpolation braces get their own classes in specs that use holes:
+    // the opener rule must see the exact `${` sequence (a shared
+    // not-a-word class would match `$` + any punctuation) and the resume
+    // rule must fire on `}` alone. Cost: `){return` compact style loses
+    // its anchor — braces stop being keyword boundaries in those languages
+    let any_interp = spec.strings.iter().any(|s| s.interpolation.is_some());
+    let mut interp_claimed_ident: HashSet<char> = HashSet::new();
+    let c_close_brace = if any_interp {
+        let mut claim = |ch: char, next_class: &mut u16| -> u16 {
+            *char_class.entry(ch).or_insert_with(|| {
+                let id = *next_class;
+                *next_class += 1;
+                id
+            })
+        };
+        for s in spec.strings.iter() {
+            if let Some((open, close)) = s.interpolation {
+                for ch in open.chars().chain([close]) {
+                    claim(ch, &mut next_class);
+                }
+            }
+        }
+        for ch in char_class.keys() {
+            if is_ident(*ch, spec.ident_extra) {
+                interp_claimed_ident.insert(*ch);
+            }
+        }
+        Some(*char_class.get(&'}').expect("claimed above"))
+    } else {
+        None
+    };
     let c_nl = next_class;
     next_class += 1;
     // .notdef is its own class, referenced by no rule: an unmapped char in
@@ -200,6 +253,15 @@ pub fn synthesize(
     next_class += keyword_letters.len() as u16;
     // state classes (exclusive sets of colored copies)
     let str_state: Vec<u16> = (0..spec.strings.len())
+        .map(|_| {
+            let id = next_class;
+            next_class += 1;
+            id
+        })
+        .collect();
+    // one interpolation state per kind that has holes; kinds without
+    // holes never reference theirs
+    let interp_state: Vec<u16> = (0..spec.strings.len())
         .map(|_| {
             let id = next_class;
             next_class += 1;
@@ -357,6 +419,44 @@ pub fn synthesize(
                     gid,
                     layout.str_body[k],
                     str_state[k],
+                    &mut class_of,
+                );
+            }
+        }
+    }
+    // interpolation copies: the opener glyphs (string-colored, entering
+    // the interpolation state) and one uncolored copy of every glyph the
+    // expression may contain — the closer reuses the string body slot
+    for (k, s) in spec.strings.iter().enumerate() {
+        let Some((open, close)) = s.interpolation else { continue };
+        if quote_gid[k].is_none() {
+            continue;
+        }
+        let mut seen_open: HashSet<u16> = HashSet::new();
+        for ch in open.chars() {
+            if let Some(gid) = char_gid(mappings, ch) {
+                if seen_open.insert(gid) {
+                    push_alt(
+                        &mut next_new,
+                        &mut alt_glyphs,
+                        gid,
+                        layout.interp_open[k],
+                        interp_state[k],
+                        &mut class_of,
+                    );
+                }
+            }
+        }
+        let _ = close;
+        for &gid in &gids {
+            let class = class_of[&gid];
+            if class != c_notdef && class != c_nl && Some(class) != c_close_brace {
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.interp_body[k],
+                    interp_state[k],
                     &mut class_of,
                 );
             }
@@ -528,6 +628,49 @@ pub fn synthesize(
         rules.sort_by_key(|r| std::cmp::Reverse(r.input.len()));
     }
 
+    // interpolation: the opener substitutes its glyphs (string-colored)
+    // into the interpolation state; the closer resumes the string via the
+    // ordinary body slot. Nested openers stay expression body — the
+    // first closer wins, flat by design
+    let mut interp_openers: HashMap<u16, Vec<Rule>> = HashMap::new();
+    let mut interp_resume: HashMap<u16, Vec<Rule>> = HashMap::new();
+    for (k, s) in spec.strings.iter().enumerate() {
+        let Some((open, close)) = s.interpolation else { continue };
+        if quote_gid[k].is_none() {
+            continue;
+        }
+        let mut input: Vec<u16> = Vec::new();
+        let mut ok = !open.is_empty();
+        for ch in open.chars() {
+            match char_class.get(&ch) {
+                Some(&cls) => input.push(cls),
+                None => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        let Some(&close_cls) = char_class.get(&close) else { continue };
+        if !ok {
+            continue;
+        }
+        interp_openers.entry(input[0]).or_default().push(Rule {
+            backtrack: vec![str_state[k]],
+            input,
+            lookahead: vec![],
+            pal: layout.interp_open[k],
+        });
+        interp_resume.entry(close_cls).or_default().push(Rule {
+            backtrack: vec![interp_state[k]],
+            input: vec![close_cls],
+            lookahead: vec![],
+            pal: layout.str_body[k],
+        });
+    }
+    for rules in interp_openers.values_mut() {
+        rules.sort_by_key(|r| std::cmp::Reverse(r.input.len()));
+    }
+
     let present: Vec<u16> = {
         let mut v: Vec<u16> = class_of
             .values()
@@ -542,11 +685,16 @@ pub fn synthesize(
     // identifier chars, keyword letters, dot (with a digit lookahead).
     // Delimiter classes have no number rule — the number state dies at a
     // quote or comment delimiter, which then opens its own state.
+    let claimed_ident_classes: HashSet<u16> = interp_claimed_ident
+        .iter()
+        .filter_map(|ch| char_class.get(ch).copied())
+        .collect();
     let num_body = |class: u16| -> bool {
         spec.numbers
             && digit_gid.is_some()
             && (class == c_digit
                 || class == C_IDENT
+                || claimed_ident_classes.contains(&class)
                 || (class >= first_letter_class
                     && class < first_letter_class + keyword_letters.len() as u16))
     };
@@ -557,6 +705,18 @@ pub fn synthesize(
 
     for &class in &present {
         if let Some(rules) = terminators.get(&class) {
+            by_class
+                .entry(class)
+                .or_default()
+                .extend(rules.iter().cloned());
+        }
+        if let Some(rules) = interp_openers.get(&class) {
+            by_class
+                .entry(class)
+                .or_default()
+                .extend(rules.iter().cloned());
+        }
+        if let Some(rules) = interp_resume.get(&class) {
             by_class
                 .entry(class)
                 .or_default()
@@ -610,6 +770,22 @@ pub fn synthesize(
                     class,
                     str_state[k],
                     layout.str_body[k],
+                    vec![],
+                );
+            }
+        }
+        // expression contents propagate the interpolation state uncolored;
+        // the closer's class is excluded — the resume rule owns it
+        for (k, s) in spec.strings.iter().enumerate() {
+            if s.interpolation.is_none() || quote_gid[k].is_none() {
+                continue;
+            }
+            if class != c_notdef && class != c_nl && Some(class) != c_close_brace {
+                prop(
+                    &mut by_class,
+                    class,
+                    interp_state[k],
+                    layout.interp_body[k],
                     vec![],
                 );
             }

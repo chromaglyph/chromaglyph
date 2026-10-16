@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **template interpolation** (JS/TS): `` `hi `${`name`}` bye` `` renders
+  like an editor — string segments orange, `${`/`}` keep the string
+  color, the expression renders uncolored, and the string resumes after
+  the closer. One flat level: the first `}` resumes, nested openers are
+  expression body (no stack in GSUB, by design). The opener is a
+  two-glyph rule from the string state; expression glyphs propagate an
+  interpolation state whose slot paints the default foreground. `$`,
+  `{` and `}` get dedicated classes in interpolating languages (compact
+  `){return` style loses its keyword anchor — accepted). Python
+  f-strings deliberately not covered: the `f` prefix is a plain
+  identifier to the font, indistinguishable from `r"..."` raw strings
+  and `"{} {}".format()`, which would regress. Oracle samples gain
+  hole/empty/nested pieces; browser pixel check: 5/5 align.
+
 - **generic mode: Go and Java** (`--generic go | java`, node
   `buildFont({generic})` alike): Go gets `"` strings, backtick raw
   strings with a new per-kind `escapes: false` switch — raw strings have

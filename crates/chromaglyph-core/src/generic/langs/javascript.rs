@@ -55,16 +55,19 @@ pub fn spec() -> LanguageSpec {
             StringKind {
                 quote: '"',
                 escapes: true,
+            interpolation: None,
                 scope: "string.quoted.double.js",
             },
             StringKind {
                 quote: '\'',
                 escapes: true,
+            interpolation: None,
                 scope: "string.quoted.single.js",
             },
             StringKind {
                 quote: '`',
                 escapes: true,
+            interpolation: Some(("${", '}')),
                 scope: "string.template.js",
             },
         ],

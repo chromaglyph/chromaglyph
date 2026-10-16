@@ -52,16 +52,19 @@ pub fn spec() -> LanguageSpec {
             StringKind {
                 quote: '"',
                 escapes: true,
+            interpolation: None,
                 scope: "string.quoted.double.go",
             },
             StringKind {
                 quote: '\'',
                 escapes: true,
+            interpolation: None,
                 scope: "string.quoted.single.go",
             },
             StringKind {
                 quote: '`',
                 escapes: false,
+            interpolation: None,
                 scope: "string.quoted.raw.go",
             },
         ],

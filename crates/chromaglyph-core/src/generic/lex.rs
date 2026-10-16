@@ -19,6 +19,11 @@ pub enum Tok {
     StrOpen(usize),
     StrBody(usize),
     StrClose(usize),
+    /// `${` opener of an interpolation hole (string-colored); the state
+    /// behind it is the interpolation state, not the string state
+    InterpOpen(usize),
+    /// expression contents of an interpolation hole (uncolored)
+    InterpBody(usize),
     /// span kind index within `LanguageSpec::spans`
     SpanOpen(usize),
     SpanBody(usize),
@@ -132,6 +137,35 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                     out[i + 1] = Tok::StrBody(k);
                     i += 2;
                     continue;
+                }
+                // interpolation hole: the opener keeps the string color,
+                // the expression renders uncolored, the closer resumes the
+                // string (mirrors the font's open/propagate/resume rules;
+                // flat — the first closer wins, nested openers are body)
+                if let Some((open, close)) = s.interpolation {
+                    let open_chars: Vec<char> = open.chars().collect();
+                    if chars[i..].starts_with(&open_chars)
+                        && open_chars.iter().all(|&ch| mapped(ch))
+                    {
+                        for tok in out.iter_mut().take(i + open_chars.len()).skip(i) {
+                            *tok = Tok::InterpOpen(k);
+                        }
+                        i += open_chars.len();
+                        while i < chars.len() {
+                            let c = chars[i];
+                            if c == close && mapped(c) {
+                                out[i] = Tok::StrBody(k); // resume as body
+                                i += 1;
+                                break;
+                            }
+                            if !mapped(c) || c == '\n' || c == '\r' {
+                                break; // hole dies with the line/barrier
+                            }
+                            out[i] = Tok::InterpBody(k);
+                            i += 1;
+                        }
+                        continue;
+                    }
                 }
                 if !mapped(c) || c == '\n' || c == '\r' {
                     break; // barrier or line end: state dies
@@ -408,9 +442,38 @@ mod tests {
         assert_eq!(t[2], Tok::Plain, "double-quoted string dies at newline");
         assert_eq!(t[3], Tok::Plain);
         assert_eq!(t[4], Tok::StrOpen(0), "fresh string after the break");
-        // interpolation degrades to string body (documented v1.2 scope)
+        // interpolation: opener string-colored, expression uncolored,
+        // closer resumes the string — like an editor renders templates
         let t = lex(&javascript(), "`x ${y} z`", &|_| true);
-        assert_eq!(&t[1..9], &[Tok::StrBody(2); 8]);
+        assert_eq!(t[1], Tok::StrBody(2), "x is string body");
+        assert_eq!(t[2], Tok::StrBody(2), "space before the hole");
+        assert_eq!(&t[3..5], &[Tok::InterpOpen(2); 2], "${{ opens the hole");
+        assert_eq!(t[5], Tok::InterpBody(2), "y is uncolored expression");
+        assert_eq!(t[6], Tok::StrBody(2), "}} resumes the string");
+        assert_eq!(t[7], Tok::StrBody(2));
+        assert_eq!(t[9], Tok::StrClose(2));
+        // double-quoted strings never open holes: ${} stays string body
+        let t = lex(&javascript(), "\"a ${b} c\"", &|_| true);
+        assert_eq!(&t[1..9], &[Tok::StrBody(0); 8]);
+        // `$` without `{` stays literal string body
+        let t = lex(&javascript(), "`a$b`", &|_| true);
+        assert_eq!(&t[1..4], &[Tok::StrBody(2); 3]);
+        // empty hole `${}` and nested openers (flat: first closer wins)
+        let t = lex(&javascript(), "`${}`", &|_| true);
+        assert_eq!(&t[1..3], &[Tok::InterpOpen(2); 2]);
+        assert_eq!(t[3], Tok::StrBody(2), "empty hole closes immediately");
+        assert_eq!(t[4], Tok::StrClose(2));
+        // flat nesting: the inner ${{ is plain expression body, the first
+        // }} resumes the string, and `c` is string again
+        let t = lex(&javascript(), "`${a${b}c`", &|_| true);
+        assert_eq!(&t[3..7], &[Tok::InterpBody(2); 4], "a and the inner ${{b");
+        assert_eq!(t[7], Tok::StrBody(2), "first }} resumes the string");
+        assert_eq!(t[8], Tok::StrBody(2), "c is string again");
+        // escaped opener stays literal: \$ then { — no hole
+        let t = lex(&javascript(), "`a\\${b}`", &|_| true);
+        assert_eq!(t[2], Tok::StrBody(2), "escaped backslash");
+        assert_eq!(t[3], Tok::StrBody(2), "the $ after it is literal");
+        assert_eq!(t[4], Tok::StrBody(2), "{{ stays body");
     }
 
     #[test]

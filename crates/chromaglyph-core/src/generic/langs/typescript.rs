@@ -93,16 +93,19 @@ pub fn spec() -> LanguageSpec {
             StringKind {
                 quote: '"',
                 escapes: true,
+            interpolation: None,
                 scope: "string.quoted.double.ts",
             },
             StringKind {
                 quote: '\'',
                 escapes: true,
+            interpolation: None,
                 scope: "string.quoted.single.ts",
             },
             StringKind {
                 quote: '`',
                 escapes: true,
+            interpolation: Some(("${", '}')),
                 scope: "string.template.ts",
             },
         ],

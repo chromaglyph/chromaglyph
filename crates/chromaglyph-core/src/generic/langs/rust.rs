@@ -17,6 +17,7 @@ pub fn spec() -> LanguageSpec {
         strings: &[StringKind {
             quote: '"',
             escapes: true,
+            interpolation: None,
             scope: "string.quoted.double.rust",
         }],
         spans: &[

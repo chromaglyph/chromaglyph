@@ -14,9 +14,14 @@ pub struct KeywordGroup {
 /// browsers shape each source line as its own run (see the module docs).
 /// `escapes: false` marks literal kinds (Go raw strings) where a
 /// backslash has no meaning — the closing quote closes even after one.
+/// `interpolation` enables one level of `${expr}`-style holes: the
+/// opener keeps the string color, the expression renders uncolored, the
+/// closer resumes the string. Nesting is flat — the first closer wins.
 pub struct StringKind {
     pub quote: char,
     pub escapes: bool,
+    /// `(opener, closer)`, e.g. JS templates: `Some(("${", '}'))`.
+    pub interpolation: Option<(&'static str, char)>,
     pub scope: &'static str,
 }
 
