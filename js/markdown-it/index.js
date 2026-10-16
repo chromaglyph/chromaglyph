@@ -20,7 +20,7 @@
  * affected; failures degrade silently (no stylesheet, normal rendering);
  * builds are content-hash cached.
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { buildFontSafe } from '@chromaglyph/node'
 import { buildCssAssets } from '@chromaglyph/node/css'
@@ -28,14 +28,15 @@ import { buildCssAssets } from '@chromaglyph/node/css'
 /**
  * @param {import('markdown-it').MarkdownIt} md
  * @param {{
- *   font: string | Uint8Array,
- *   themes?: string[],
- *   langs?: string[] | null,
- *   embed?: boolean,
- *   outDir?: string,
- *   verify?: boolean,
- *   cacheDir?: string,
- *   cwd?: string,
+ *  font: string | Uint8Array,
+ *  themes?: string[],
+ *  langs?: string[] | null,
+ *  embed?: boolean,
+ *  outDir?: string,
+ *  style?: 'inline' | 'link',
+ *  verify?: boolean,
+ *  cacheDir?: string,
+ *  cwd?: string,
  * }} [options]
  */
 function markdownItChromaglyph(md, options = {}) {
@@ -45,6 +46,12 @@ function markdownItChromaglyph(md, options = {}) {
     langs = null,
     embed = true,
     outDir = 'chromaglyph-out',
+    // 'inline' 注入 <style>（纯 HTML 管线）；'link' 注入 <link rel="stylesheet">。
+    // Vue 系框架（VitePress / Nuxt Content）把 markdown 产物当 Vue 模板编译：
+    // <style> 在客户端编译器里是"副作用标签"（直接报错，dev 下页面 404），SSR
+    // 又会把 CSS 文本当文本节点实体转义（@font-face 报废）。<link> 是普通元素，
+    // 两条路都活——CSS 走 data: URI（embed:true）或落盘 css 文件（embed:false）。
+    style = 'inline',
     verify = true,
     cacheDir,
     cwd = process.cwd(),
@@ -85,7 +92,17 @@ function markdownItChromaglyph(md, options = {}) {
     if (blocks.length > 0) {
       result = buildFontSafe({ font: loadFont(), themes, blocks, verify, cacheDir })
       if (result) {
-        css = buildCssAssets(result, { embed, outDir, cwd }).css
+        const assets = buildCssAssets(result, { embed, outDir, cwd })
+        if (style === 'link') {
+          if (embed) {
+            css = `<link rel="stylesheet" href="data:text/css;base64,${Buffer.from(assets.css).toString('base64')}">`
+          } else {
+            writeFileSync(resolve(cwd, outDir, `chromaglyph-${assets.hash8}.css`), assets.css)
+            css = `<link rel="stylesheet" href="./chromaglyph-${assets.hash8}.css">`
+          }
+        } else {
+          css = `<style>\n${assets.css}</style>`
+        }
         lastResult = result
       }
     }
@@ -110,12 +127,14 @@ function markdownItChromaglyph(md, options = {}) {
     const token = tokens[idx]
     if (!current.fenceIndex.has(token)) return base
     const index = current.fenceIndex.get(token)
+    // v-pre：Vue 系框架按模板编译 markdown 产物，代码里的 {{ }} 会被当成
+    // 插值；纯 HTML 管线里它只是一个无害的自定义属性
     let out = base.includes('<pre')
-      ? base.replace('<pre', `<pre data-chromaglyph="${index}"`)
+      ? base.replace('<pre', `<pre v-pre data-chromaglyph="${index}"`)
       : base
     if (!current.injected && current.css) {
       current.injected = true
-      out = `<style>\n${current.css}</style>\n${out}`
+      out = `${current.css}\n${out}`
     }
     return out
   }

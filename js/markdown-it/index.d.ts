@@ -8,10 +8,19 @@ export interface MarkdownItChromaglyphOptions {
   themes?: string[]
   /** Restrict processing to these languages; others keep default styling. */
   langs?: string[] | null
-  /** Inline the font as a data: URI in the injected <style> (default true). */
+  /** Inline the font as a data: URI in the injected stylesheet (default true). */
   embed?: boolean
   /** Directory for emitted font files when `embed` is false. */
   outDir?: string
+  /**
+   * How the stylesheet reaches the page (default 'inline').
+   * - 'inline': `<style>` tag — plain markdown-it HTML pipelines.
+   * - 'link': `<link rel="stylesheet">` — required for Vue-template
+   *   frameworks (VitePress, Nuxt Content): a `<style>` inside a Vue
+   *   component template is rejected by the client compiler and
+   *   entity-escaped by SSR, so it never reaches the browser.
+   */
+  style?: 'inline' | 'link'
   /** Run the rustybuzz oracle (default true). */
   verify?: boolean
   /** On-disk cache directory for incremental rebuilds. */

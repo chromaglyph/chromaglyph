@@ -15,6 +15,46 @@ md.use(chromaglyph, { font: './JetBrainsMono-Regular.ttf', cacheDir: '.chromagly
 const html = md.render(markdown)
 ```
 
+### VitePress
+
+VitePress renders through markdown-it, so the plugin drops in via the markdown
+config — with two framework-level switches:
+
+```ts
+// .vitepress/config.mts
+import { resolve } from 'node:path'
+import { defineConfig } from 'vitepress'
+import chromaglyph from '@chromaglyph/markdown-it'
+
+export default defineConfig({
+  markdown: {
+    config(md) {
+      // VitePress's built-in Shiki wraps tokens in colored <span>s — exactly
+      // what chromaglyph eliminates. Hand the fence back to plain escaping.
+      ;(md.options as { highlight: unknown }).highlight = null
+      md.use(chromaglyph, {
+        font: resolve(process.cwd(), 'JetBrainsMono-Regular.ttf'),
+        style: 'link', // not 'inline': see below
+        cacheDir: '.chromaglyph-cache',
+      })
+    },
+  },
+})
+```
+
+- **`style: 'link'`**: Vue frameworks compile the markdown output as a Vue
+  template. A `<style>` tag there is a side-effect tag — the client compiler
+  errors out (dev serves a 404 for the page) and SSR entity-escapes the CSS
+  text (breaking `@font-face`). A `<link rel="stylesheet">` is an ordinary
+  element and survives both paths. Plain markdown-it pipelines keep the
+  default `'inline'`.
+- **`highlight = null`**: without it, Shiki's inline-colored spans paint every
+  glyph and double-highlight against the font's palette.
+- Fences are tagged `v-pre` so `{{ }}` inside code is never treated as Vue
+  interpolation.
+
+A runnable site lives in `js/vitepress` in the repo.
+
 The plugin wraps `md.render` — the markdown is parsed once, every
 fenced code block batches into a single font (cross-language
 disambiguation included), and already-highlighted fences from other
@@ -43,6 +83,7 @@ pipeline keeps working for anything this plugin skips.
 | `langs` | `null` | Filter fences by language (`['rust', 'ts']`); `null` takes every fenced block. |
 | `embed` | `true` | Inline the font as a data: URI; `false` emits files into `outDir`. |
 | `outDir` | `'chromaglyph-out'` | Where emitted font/CSS assets go (`embed: false`). |
+| `style` | `'inline'` | `'inline'` injects a `<style>` tag; `'link'` injects a `<link rel="stylesheet">` (data: URI stylesheet, or a `.css` file with `embed: false`) — required for Vue-template frameworks like VitePress. |
 | `verify` | `true` | Run the rustybuzz oracle over the produced font before shipping it. |
 | `cacheDir` | — | Optional on-disk cache directory for incremental site builds. |
 
