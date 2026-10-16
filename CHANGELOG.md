@@ -1,17 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- **tree-sitter semantic layer** (`--semantic` CLI flag, `semantic: true`
-  in buildFont): an optional `chromaglyph-treesitter` crate (the only one
-  with C dependencies) parses code with tree-sitter and overlays semantic
-  colors — function definitions/calls/methods, parameters, types,
-  constants, enum members, struct fields — on top of the syntactic
-  highlighting, giving the "editor with a language server" look. Core
-  stays pure Rust: it exposes a `SemanticLayer` callback hook
-  (`BuildInput.semantic`), and scopes a theme does not color are skipped,
-  so plain themes are unaffected. Rust only for now.
-
 ## 0.1.1 (2026-10-16)
 
 - **generic mode v1.1** (`--generic rust`): build a font that highlights ANY
@@ -50,10 +38,20 @@
   every window-growth step (O(n²)). Output is byte-identical to the
   previous implementation on all tests and stress inputs; a 126k-char
   input builds in 0.54s vs 2.18s before.
-- **ci**: release publishing is idempotent (already-published platform
-  versions skip), npm auth is wired via `setup-node` `registry-url`, and
-  the root `@chromaglyph/node` package publishes from CI alongside the
-  platform binaries. Requires the `NPM_TOKEN` repository secret.
+- **tree-sitter semantic layer** (`--semantic` CLI flag, `semantic: true`
+  in buildFont): an optional `chromaglyph-treesitter` crate (the only one
+  with C dependencies) parses code with tree-sitter and overlays semantic
+  colors — function definitions/calls/methods, parameters, types,
+  constants, enum members, struct fields — on top of the syntactic
+  highlighting, giving the "editor with a language server" look. Core
+  stays pure Rust: it exposes a `SemanticLayer` callback hook
+  (`BuildInput.semantic`); scopes a theme does not color are skipped.
+  Rust only for now.
+- **ci**: release publishing is idempotent (already-published versions
+  skip) and authenticates via npm **trusted publishing** (GitHub Actions
+  OIDC) — no registry token in any secret; the root `@chromaglyph/node`
+  and the pure-JS plugins publish from CI alongside the platform
+  binaries.
 
 ## 0.1.0 (2026-10-16)
 
