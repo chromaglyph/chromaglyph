@@ -62,6 +62,10 @@ tokenize+theme → compile → fontbuild → verify
     （只 parse 一次、批处理全部 fence、从已解析 token 渲染）、链式接住已有 fence 规则、
     嵌套渲染隔离、`md.chromaglyph()` 自省；8 个测试
   - 共享 CSS 构建器移至 `@chromaglyph/node/css`（两个插件同源）
+  - **真实站点**（`js/vitepress`，`pnpm --filter @chromaglyph/vitepress-demo dev`）：
+    VitePress 全链路验证过的接入方式——`style: 'link'`（Vue 模板管线里 `<style>`
+    活不下去）、`md.options.highlight = null`（Shiki 的 span 会双重上色）、
+    `html.dark` ↔ `font-palette` 同步 shim（明暗切换零重排，像素级验证）
 - **0.1.0 已发布**：crates.io `chromaglyph-core` / `chromaglyph`；npm
   `@chromaglyph/node`（+ darwin-arm64 平台包）、`@chromaglyph/remark`、
   `@chromaglyph/markdown-it`（其余平台二进制走 `.github/workflows/napi.yml` CI 矩阵）
@@ -187,6 +191,14 @@ cargo run -p chromaglyph -- build --font crates/chromaglyph-core/tests/fixtures/
     --input examples/hello.rs --output target/demo/chromaglyph-demo.woff --css target/demo/chromaglyph-demo.css
 python3 -m http.server -d target/demo 8143        # 打开 index.html 看明暗双调色板
 ```
+
+## 已知限制
+
+- **源字体必须覆盖代码文本的字符**：无字形的字符（如 JetBrains Mono 之于
+  CJK）经浏览器回退渲染、**无法着色**（着色发生在本字形的替换里）——
+  周围的 ASCII 部分照常着色。构建 warning 会列出具体缺失字符并给出
+  CJK 提示；中文注释/字符串请用带 CJK 的等宽字体（如 Sarasa Mono SC）。
+- 其余见 CHANGELOG 各版本的 known limitations。
 
 ## 尺寸对比（examples/hello.rs，114 字符，双主题）
 

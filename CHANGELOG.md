@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- **build warnings name the uncovered characters**: when a token contains
+  chars with no glyph in the font (CJK comments in a Latin-only font,
+  emoji, …), the warning now lists the actual missing characters and,
+  for CJK ranges, appends a hint that they render via browser fallback
+  and cannot be highlighted — use a CJK-capable monospace font (e.g.
+  Sarasa Mono SC). Previously the warning said "typically trailing
+  newlines", which hid the real cause. Behavior is unchanged (the
+  oracle-verified barrier model); an e2e test locks it.
+
+- **markdown-it: Vue-framework stylesheet injection** — new `style:
+  'inline' | 'link'` option. Vue-template frameworks (VitePress, Nuxt
+  Content) compile the markdown output as a Vue component template, where
+  the previously injected `<style>` tag never reaches the browser: the
+  client compiler rejects side-effect tags (dev serves a 404 for the page)
+  and SSR entity-escapes the CSS text (killing `@font-face`). `style:
+  'link'` injects `<link rel="stylesheet">` instead — an ordinary element
+  that survives both paths (data: URI stylesheet with `embed: true`, a
+  `.css` file next to the woff with `embed: false`). Fences are now also
+  tagged `v-pre` so `{{ }}` inside code is never treated as Vue
+  interpolation. Plain markdown-it pipelines keep the default `'inline'`.
+  Found by running a real VitePress site (`js/vitepress`, new): also
+  documents the two framework switches — `md.options.highlight = null`
+  (Shiki's colored spans would double-highlight against the font palette)
+  and a ~40-line theme shim syncing `font-palette` with VitePress's
+  `html.dark` toggle (pixel-verified in both directions).
+
 ## 0.2.0 (2026-10-17)
 
 - **semantic layer: JS, TS and Python** (`--semantic` /

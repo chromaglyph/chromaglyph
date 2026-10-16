@@ -266,6 +266,8 @@ pub fn compile(
     // contiguous at shaping time and the run continues through them.
     let mut split: Vec<(usize, usize, u16)> = Vec::with_capacity(occurrences.len());
     let mut unmapped_tokens = 0usize;
+    let mut missing: Vec<char> = Vec::new();
+    let mut missing_seen: HashSet<char> = HashSet::new();
     for (start, end, pal) in occurrences {
         let mut run_start: Option<usize> = None;
         let mut had_unmapped = false;
@@ -277,6 +279,9 @@ pub fn compile(
                     split.push((s, i, pal));
                 }
                 cell.pal = None;
+                if missing_seen.insert(cell.ch) {
+                    missing.push(cell.ch);
+                }
                 had_unmapped = true;
             }
         }
@@ -288,11 +293,37 @@ pub fn compile(
         }
     }
     if unmapped_tokens > 0 {
+        // name the actual characters so "why is my comment not
+        // highlighted?" answers itself in the build log
+        let display: String = missing
+            .iter()
+            .take(16)
+            .map(|&c| {
+                if c.is_control() {
+                    format!("U+{:04X} ", c as u32)
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect();
+        let ellipsis = if missing.len() > 16 { "…" } else { "" };
         warnings.push(format!(
-            "{unmapped_tokens} token(s) contain chars with no glyph in the font \
-             (typically trailing newlines); those chars stay uncolored, coloring \
-             continues around them"
+            "{unmapped_tokens} token(s) contain chars with no glyph in the font — those \
+             chars render via the browser's fallback font and stay uncolored (coloring \
+             continues around them). Missing: {display}{ellipsis}",
         ));
+        let cjk = missing.iter().any(|&c| {
+            matches!(c as u32,
+                0x2E80..=0x9FFF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF | 0x20000..=0x2FA1F)
+        });
+        if cjk {
+            warnings.push(
+                "the text includes CJK characters the font does not cover — they will \
+                 render in the fallback font and cannot be highlighted; use a CJK-capable \
+                 monospace font (e.g. Sarasa Mono SC) to color them"
+                    .into(),
+            );
+        }
     }
     let occurrences = split;
 

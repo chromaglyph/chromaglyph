@@ -496,6 +496,46 @@ fn adversarial(spec: &chromaglyph_core::generic::LanguageSpec, samples: &[&str])
     assert!(result.ok, "{}: {:?}", spec.name, result.failures);
 }
 
+/// CJK text in a block: the font has no glyphs for it, so it renders via
+/// browser fallback and cannot be highlighted — but the mapped text
+/// around it (the `//` opener, the trailing newline barrier) keeps
+/// coloring, the oracle stays green, and the build warning names the
+/// actual missing characters plus the CJK hint.
+#[test]
+fn cjk_text_is_a_barrier_and_the_warning_names_it() {
+    let themes = themes();
+    let src: &str = "fn main() {\n    let v = 0.2;   // 数字状态：小数点\n}\n";
+    let out = build(&BuildInput {
+        font_bytes: FONT,
+        themes: &themes,
+        blocks: &blocks(src),
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+    })
+    .expect("CJK sample builds and verifies");
+    assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
+    assert!(
+        out.report.colored_cells > 0,
+        "the mapped parts around the barrier keep coloring"
+    );
+    let cjk_warning = out
+        .report
+        .warnings
+        .iter()
+        .find(|w| w.contains("CJK"))
+        .expect("a CJK hint is attached");
+    assert!(cjk_warning.contains("fallback"), "{cjk_warning}");
+    let missing = out
+        .report
+        .warnings
+        .iter()
+        .find(|w| w.contains("Missing:"))
+        .expect("the missing characters are listed");
+    assert!(missing.contains('\u{6570}'), "the actual CJK chars appear: {missing}");
+}
+
 /// The semantic hook: spans of (byte range, dotted scope) overlay the
 /// syntactic colors. A fake producer stands in for chromaglyph-treesitter
 /// (core stays free of C dependencies); the real crate runs the same hook.
