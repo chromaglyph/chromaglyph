@@ -97,24 +97,28 @@ import { buildFont } from '@chromaglyph/node'
 import { buildCssAssets } from '@chromaglyph/node/css'
 
 const samples = {
-  rust: `// a comment
+  rust: `use std::fmt; // NOTE: "use" at buffer start stays plain (no glyph to anchor on)
+// a comment
 /* multi
    line
    block */
 fn main() {
     let s = "fn // let";
     let n = 3.14;
+    let m = 1.max(2);
 }`,
   javascript: `// config
 const name = 'chromaglyph';
 let tmpl = \`multi
 line \${name}\`;
+let empty = ""; let mixed = 'a"b';
 if ($use) return 42;`,
   python: `"""Module docstring
 spans lines."""
 def main():
     # comment
     s = f"hi {x}"
+    t = '''single triple "with dq" inside'''
     return 3.14`,
 }
 
