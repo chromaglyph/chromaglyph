@@ -25,5 +25,9 @@
   },
   "engines": {
     "node": ">= 18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
   }
 }

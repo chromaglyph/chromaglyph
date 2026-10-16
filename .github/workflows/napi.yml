@@ -96,11 +96,11 @@ jobs:
           mkdir -p "$PKG"
           cp "crates/chromaglyph-node/chromaglyph.${{ matrix.platform }}.node" "$PKG/"
 
-      # no registry token: npm authenticates via trusted publishing
-      # (GitHub Actions OIDC); requires the id-token permission above
       - name: Publish (release tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           PKG="npm/@chromaglyph/node-${{ matrix.platform }}"
           NAME="@chromaglyph/node-${{ matrix.platform }}"
@@ -156,6 +156,8 @@ jobs:
         run: pnpm --filter @chromaglyph/node exec napi build --release --platform
 
       - name: Publish @chromaglyph/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           VERSION=$(node -p "require('./crates/chromaglyph-node/package.json').version")
           if npm view "@chromaglyph/node@$VERSION" version >/dev/null 2>&1; then
@@ -187,9 +189,9 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      # pnpm pack resolves the workspace:* dependency into the tarball;
-      # npm publish then authenticates via trusted publishing (OIDC)
       - name: Publish @chromaglyph/remark and @chromaglyph/markdown-it
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for pkg in remark markdown-it; do
             VERSION=$(node -p "require('./js/$pkg/package.json').version")
@@ -197,6 +199,5 @@ jobs:
               echo "@chromaglyph/$pkg@$VERSION already on npm, skipping"
               continue
             fi
-            TARBALL=$(pnpm --filter "@chromaglyph/$pkg" pack --pack-destination /tmp 2>/dev/null | tail -1)
-            npm publish "$TARBALL" --access public
+            pnpm --filter "@chromaglyph/$pkg" publish --access public --no-git-checks
           done
