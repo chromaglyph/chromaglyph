@@ -226,6 +226,7 @@ fn build_uncached(opts: &BuildOptions) -> napi::Result<BuildResult> {
         themes: &themes,
         blocks: &blocks,
         run_verify: opts.verify.unwrap_or(true),
+        generic: None,
     })
     .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
 

@@ -33,12 +33,18 @@ enum Command {
         #[arg(long)]
         font: PathBuf,
         /// Input source file whose content is compiled into the font
-        #[arg(long)]
-        input: PathBuf,
+        /// (exactly one of --input / --generic)
+        #[arg(long, conflicts_with = "generic")]
+        input: Option<PathBuf>,
         /// Language of the input: `auto` (detect from --input's extension),
         /// a name (`rust`, `typescript`, …) or an extension (`rs`)
         #[arg(long, default_value = "auto")]
         lang: String,
+        /// Generic mode: build a font that highlights ANY text of this
+        /// language (keywords, line comments, strings) instead of compiling
+        /// --input; currently `rust`
+        #[arg(long, conflicts_with = "input")]
+        generic: Option<String>,
         /// Theme: builtin name (`dark-plus`, `light-plus`) or a path to a
         /// VS Code .json / TextMate .tmTheme file. Repeat for multiple
         /// palettes; the first is the default.
@@ -83,6 +89,7 @@ fn main() -> ExitCode {
             font,
             input,
             lang,
+            generic,
             themes,
             output,
             css,
@@ -90,8 +97,9 @@ fn main() -> ExitCode {
             no_verify,
         } => cmd_build(
             &font,
-            &input,
+            input.as_deref(),
             &lang,
+            generic.as_deref(),
             &themes,
             &output,
             css.as_deref(),
@@ -155,8 +163,9 @@ fn load_themes(args: &[String]) -> Result<Vec<ThemeSpec>, BuildError> {
 #[allow(clippy::too_many_arguments)]
 fn cmd_build(
     font_path: &Path,
-    input_path: &Path,
+    input_path: Option<&Path>,
     lang: &str,
+    generic: Option<&str>,
     theme_args: &[String],
     output: &Path,
     css_path: Option<&Path>,
@@ -164,16 +173,35 @@ fn cmd_build(
     no_verify: bool,
 ) -> Result<(), BuildError> {
     let font_bytes = read_required(font_path)?;
-    let input_bytes = read_required(input_path)?;
-    let lang = resolve_lang(lang, input_path);
-    let block = one_block("main", &lang, &input_bytes)?;
+    let generic_spec = match (generic, input_path) {
+        (Some(name), _) => {
+            println!("generic mode: {name}");
+            Some(chromaglyph_core::generic::spec_by_name(name)?)
+        }
+        (None, Some(_)) => None,
+        (None, None) => {
+            return Err(BuildError::Io(
+                "build needs either --input or --generic".into(),
+            ))
+        }
+    };
+    let input_bytes;
+    let block: Option<Block<'_>> = match input_path {
+        Some(path) => {
+            input_bytes = read_required(path)?;
+            let lang = resolve_lang(lang, path);
+            Some(one_block("main", &lang, &input_bytes)?)
+        }
+        None => None,
+    };
     let themes = load_themes(theme_args)?;
 
     let out = build(&BuildInput {
         font_bytes: &font_bytes,
         themes: &themes,
-        blocks: &[block],
+        blocks: block.as_slice(),
         run_verify: !no_verify,
+        generic: generic_spec.as_ref(),
     })?;
 
     let is_ttf = output.extension().map(|e| e == "ttf").unwrap_or(false);

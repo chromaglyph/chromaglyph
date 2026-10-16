@@ -38,6 +38,7 @@ fn two_themes_one_font() {
         themes: &themes,
         blocks: &blocks(SAMPLE),
         run_verify: true,
+        generic: None,
     })
     .expect("build + inline verify must succeed");
 
@@ -77,6 +78,7 @@ fn single_theme_still_works() {
         themes: &themes,
         blocks: &blocks(SAMPLE),
         run_verify: true,
+        generic: None,
     })
     .expect("single-theme build");
     assert_eq!(out.report.palettes.len(), 1);
@@ -97,6 +99,7 @@ fn rejects_cff_fonts() {
         themes: &themes,
         blocks: &blocks("fn"),
         run_verify: false,
+        generic: None,
     }) {
         Ok(_) => panic!("CFF font must be rejected"),
         Err(err) => err,
@@ -130,6 +133,7 @@ fn cross_language_ambiguity_degrades_not_fails() {
         themes: &themes,
         blocks: &blocks,
         run_verify: true,
+        generic: None,
     })
     .expect("build never fails on ambiguity");
     assert!(
@@ -150,6 +154,7 @@ fn real_tokenization_colors_function_names() {
         themes: &themes,
         blocks: &blocks(SAMPLE),
         run_verify: false,
+        generic: None,
     })
     .unwrap();
     assert!(
@@ -170,6 +175,7 @@ fn emoji_and_variation_selectors_shape_and_color() {
         themes: &themes,
         blocks: &blocks(EMOJI_SAMPLE),
         run_verify: true,
+        generic: None,
     })
     .expect("emoji sample must build + verify");
 
@@ -200,6 +206,7 @@ fn cmap14_variation_sequence_resolves_to_variant_glyph() {
         themes: &themes,
         blocks: &blocks(UVS_SAMPLE),
         run_verify: true,
+        generic: None,
     })
     .expect("UVS sample must build + verify (oracle resolves cmap14)");
     assert!(out.report.verify.ok);
@@ -279,4 +286,94 @@ fn inject_cmap14_uvs(font: &[u8], base: char, selector: char) -> Vec<u8> {
         }
     }
     builder.build()
+}
+
+/// Generic mode: one font that highlights ANY Rust text (content unknown
+/// at build time) — keywords, line comments, strings — verified by the
+/// rustybuzz oracle against the reference lexer on curated + random
+/// samples.
+#[test]
+fn generic_mode_highlights_arbitrary_text() {
+    let themes = themes();
+    let spec = chromaglyph_core::generic::rust();
+    let out = build(&BuildInput {
+        font_bytes: FONT,
+        themes: &themes,
+        blocks: &[],
+        run_verify: true,
+        generic: Some(&spec),
+    })
+    .expect("generic build + oracle over random samples");
+
+    assert!(out.report.rules >= 100, "expected a real rule machine");
+    assert_eq!(out.report.palettes.len(), 2, "one palette per theme");
+    assert!(
+        out.report.alt_glyphs > 1000,
+        "body-state copies for the charset"
+    );
+    assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
+}
+
+/// Adversarial samples beyond the build-time ones: every state transition
+/// order, unterminated states, adjacent states, keyword-boundary soup.
+#[test]
+fn generic_mode_adversarial_samples() {
+    let themes = themes();
+    let spec = chromaglyph_core::generic::rust();
+    let out = build(&BuildInput {
+        font_bytes: FONT,
+        themes: &themes,
+        blocks: &[],
+        run_verify: false,
+        generic: Some(&spec),
+    })
+    .expect("generic build");
+
+    // recover (base, slot) -> alt from the produced font's COLR layers
+    use std::collections::HashMap;
+    let font = read_fonts::FontRef::new(&out.ttf).unwrap();
+    use read_fonts::TableProvider;
+    let colr = font.colr().unwrap();
+    let mut alt_of: HashMap<(u16, u16), u16> = HashMap::new();
+    let layers: Vec<(u16, u16)> = colr
+        .layer_records()
+        .and_then(|r| r.ok())
+        .unwrap_or_default()
+        .iter()
+        .map(|l| (l.glyph_id().to_u16(), l.palette_index()))
+        .collect();
+    for record in colr.base_glyph_records().and_then(|r| r.ok()).unwrap_or_default() {
+        let alt = record.glyph_id().to_u16();
+        if let Some(&(base, slot)) = layers.get(record.first_layer_index() as usize) {
+            alt_of.insert((base, slot), alt);
+        }
+    }
+    let charmap = skrifa::charmap::Charmap::new(&font);
+    let samples: Vec<String> = [
+        "// only comment",
+        "\"only string\"",
+        "fn//c\n\"s\"let",
+        "\"unterminated string let fn",
+        "// unterminated comment let fn",
+        "letletlet let_ let1 1let",
+        "\"a\"\"b\"\"c\"",
+        "///doc\n//!inner\n////",
+        "x = \"//\" / \"/\" // \"/\"\n/=\"\"",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let result = chromaglyph_core::generic::verify_generic(
+        &out.ttf,
+        &spec,
+        &alt_of,
+        &|ch| {
+            charmap
+                .map(ch)
+                .map(|g| g.to_u32() as u16)
+                .filter(|g| *g != 0)
+        },
+        &samples,
+    );
+    assert!(result.ok, "{:?}", result.failures);
 }

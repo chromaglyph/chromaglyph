@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **generic mode** (`--generic rust`): build a font that highlights ANY
+  text of a language — content no longer needs to be known at build time.
+  A state machine is synthesized from a language spec (keywords, `//`
+  line comments, double-quoted strings): propagation rules with
+  state-class backtracks advance the color glyph by glyph, opening quotes
+  enter the string state and closing quotes substitute into a distinct
+  end state that stops propagation. ~100 generated rules replace the
+  reference project's 706 hand-written ones. The oracle checks the font
+  against a reference lexer over curated + 300 deterministic-random
+  samples, modeling the shaper faithfully: states die at unmapped chars
+  (browser font-fallback run breaks), keywords need mapped punctuation
+  glyphs on both sides (buffer edges and quote/slash-adjacent keywords
+  stay plain). v1: Rust, one language per font, no escapes/nested
+  strings; multi-theme still one rule set + one CPAL palette per theme.
 - **variation selectors / cmap14**: rule compilation now works in a shaping
   view that matches the shaper. Variation selectors (and other zero-width
   format controls) are transparent: they no longer split colored runs,

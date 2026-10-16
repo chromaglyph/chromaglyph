@@ -74,7 +74,20 @@ tokenize+theme → compile → fontbuild → verify
     并按其建规则（e2e 用注入 cmap14 的 fixture 字体验证 oracle 全绿）
   - oracle 改为按 cluster 对齐（rustybuzz 会为 VS 多产 glyph、浏览器则删除，
     两者行为不同，cluster 对齐对两种实现都正确）
-- [ ] M4：tree-sitter 语义 token、任意代码的通用模式
+- [x] **M4b** 任意代码的通用模式（`--generic rust`，自动合成状态机）：
+  - **不再要求内容构建期已知**：一个字体高亮该语言的任意文本——关键字、行注释、
+    双引号字符串，纯靠字形替换推进状态（思路即原项目的 706 条手写 calt FSM，
+    这里从语言 spec 自动合成，且只要约 100 条规则）
+  - 机制：传播规则（backtrack=状态类）逐字推进颜色；开引号进「字符串态」、
+    闭引号替换进独立的「结束态」截断传播；`//` 开注释态；`.notdef` 独立成类，
+    无字形字符=屏障（浏览器 fallback 分段，状态死亡）——与 exact 模式同一套
+    整形语义
+  - oracle：参考 lexer + 300 个确定性随机文本做性质测试，浏览器/整形器行为
+    逐 glyph 对齐（含状态在屏障处死亡、关键字边界需要两侧存在已映射标点字形
+    这类 shaper 真实能力）
+  - 多主题依旧一套规则 + 每主题一个 CPAL 调色板
+- [ ] M4 剩余：tree-sitter 语义 token、更多语言与构造（块注释、字符字面量、
+  转义、数字/函数名等着色类别）
 
 ## 用法
 
@@ -84,6 +97,10 @@ chromaglyph build --font JetBrainsMono-Regular.ttf \
     --theme dark-plus --theme light-plus \ # 或 my-theme.json / my.tmTheme，可重复
     --output out.woff --css snippet.css --report report.json
 chromaglyph verify --font out.woff --input examples/hello.rs
+
+# 通用模式：不指定内容，字体高亮任意 Rust 文本（关键字/注释/字符串）
+chromaglyph build --font JetBrainsMono-Regular.ttf --generic rust \
+    --output generic.woff --css generic.css
 ```
 
 生成的 CSS（节选）：

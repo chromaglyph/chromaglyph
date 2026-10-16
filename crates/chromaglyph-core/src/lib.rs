@@ -23,6 +23,7 @@
 pub mod compile;
 pub mod error;
 pub mod fontbuild;
+pub mod generic;
 pub mod gsub;
 pub mod spec;
 pub mod theme;
@@ -35,7 +36,7 @@ pub use spec::{Block, Color};
 pub use theme::ThemeSpec;
 pub use verify::VerifyResult;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use compile::PreparedBlock;
 use syntect::parsing::SyntaxSet;
@@ -50,6 +51,9 @@ pub struct BuildInput<'a> {
     pub blocks: &'a [Block<'a>],
     /// Run the rustybuzz oracle and fail the build on mismatch (default on).
     pub run_verify: bool,
+    /// Generic mode: synthesize rules that highlight **any** text of this
+    /// language (keywords, line comments, strings); `blocks` are ignored.
+    pub generic: Option<&'a generic::LanguageSpec>,
 }
 
 /// Build artifacts.
@@ -87,44 +91,58 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
         return Err(BuildError::Theme("at least one theme is required".into()));
     }
     let loaded = fontbuild::load(input.font_bytes)?;
-
-    // stage 1+2: tokenize + resolve colors under each theme
-    let ss = SyntaxSet::load_defaults_newlines();
-    let prepared: Vec<PreparedBlock<'_>> = input
-        .blocks
-        .iter()
-        .map(|block| {
-            Ok(PreparedBlock {
-                id: block.id.clone(),
-                text: block.text,
-                colors: tokenize::colorize_block(block, input.themes, &ss)?,
-            })
-        })
-        .collect::<Result<_, BuildError>>()?;
+    let charmap = skrifa::charmap::Charmap::new(&loaded.font);
     let theme_fgs: Vec<Color> = input.themes.iter().map(|t| t.foreground).collect();
 
-    // stage 3: compile to rules (slot model)
-    let charmap = skrifa::charmap::Charmap::new(&loaded.font);
-    let plan = compile::compile(
-        &prepared,
-        &|ch, vs| {
-            // base + variation selector: resolve through cmap14 when the
-            // font carries a non-default UVS mapping for the sequence
-            if let Some(vs) = vs {
-                if let Some(skrifa::charmap::MapVariant::Variant(g)) =
-                    charmap.map_variant(ch, vs)
-                {
-                    return Some(g.to_u32() as u16).filter(|g| *g != 0);
-                }
-            }
-            charmap
-                .map(ch)
-                .map(|g| g.to_u32() as u16)
-                .filter(|g| *g != 0)
-        },
-        loaded.num_glyphs,
-        &theme_fgs,
-    )?;
+    // stages 1–3: tokenize + compile (exact mode), or synthesize the
+    // generic-mode state machine
+    let mut prepared: Vec<PreparedBlock<'_>> = Vec::new();
+    let plan = match input.generic {
+        Some(spec) => {
+            let mappings: Vec<(u32, u16)> = charmap
+                .mappings()
+                .map(|(cp, gid)| (cp, gid.to_u32() as u16))
+                .collect();
+            generic::synthesize(spec, &mappings, loaded.num_glyphs, input.themes)?
+        }
+        None => {
+            // stage 1+2: tokenize + resolve colors under each theme
+            let ss = SyntaxSet::load_defaults_newlines();
+            prepared = input
+                .blocks
+                .iter()
+                .map(|block| {
+                    Ok(PreparedBlock {
+                        id: block.id.clone(),
+                        text: block.text,
+                        colors: tokenize::colorize_block(block, input.themes, &ss)?,
+                    })
+                })
+                .collect::<Result<_, BuildError>>()?;
+
+            // stage 3: compile to rules (slot model)
+            compile::compile(
+                &prepared,
+                &|ch, vs| {
+                    // base + variation selector: resolve through cmap14 when
+                    // the font carries a non-default UVS mapping
+                    if let Some(vs) = vs {
+                        if let Some(skrifa::charmap::MapVariant::Variant(g)) =
+                            charmap.map_variant(ch, vs)
+                        {
+                            return Some(g.to_u32() as u16).filter(|g| *g != 0);
+                        }
+                    }
+                    charmap
+                        .map(ch)
+                        .map(|g| g.to_u32() as u16)
+                        .filter(|g| *g != 0)
+                },
+                loaded.num_glyphs,
+                &theme_fgs,
+            )?
+        }
+    };
 
     // stage 4: assemble font
     let gsub = gsub::build_gsub(&plan);
@@ -132,7 +150,30 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
 
     // stage 5: verify (default on)
     let verify_result = if input.run_verify {
-        let result = verify::verify_plan(&ttf, &prepared, &plan);
+        let result = match input.generic {
+            Some(spec) => {
+                let alt_of: HashMap<(u16, u16), u16> = plan
+                    .alt_glyphs
+                    .iter()
+                    .map(|&(base, pal, alt)| ((base, pal), alt))
+                    .collect();
+                let mut result = generic::verify_generic(
+                    &ttf,
+                    spec,
+                    &alt_of,
+                    &|ch| {
+                        charmap
+                            .map(ch)
+                            .map(|g| g.to_u32() as u16)
+                            .filter(|g| *g != 0)
+                    },
+                    &generic::sample_texts(spec),
+                );
+                verify::verify_palettes(&ttf, &plan, &mut result);
+                result
+            }
+            None => verify::verify_plan(&ttf, &prepared, &plan),
+        };
         if !result.ok {
             return Err(BuildError::VerifyFailed(result.failures));
         }

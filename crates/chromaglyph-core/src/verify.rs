@@ -38,7 +38,7 @@ impl VerifyResult {
         }
     }
 
-    fn fail(&mut self, msg: String) {
+    pub(crate) fn fail(&mut self, msg: String) {
         self.ok = false;
         self.failures.push(msg);
     }
@@ -137,7 +137,7 @@ pub fn verify_plan(ttf: &[u8], blocks: &[PreparedBlock<'_>], plan: &GlyphPlan) -
 
 /// Read COLR/CPAL back from the produced font and check every colored copy
 /// under every palette (theme).
-fn verify_palettes(ttf: &[u8], plan: &GlyphPlan, result: &mut VerifyResult) {
+pub(crate) fn verify_palettes(ttf: &[u8], plan: &GlyphPlan, result: &mut VerifyResult) {
     let font = match FontRef::new(ttf) {
         Ok(font) => font,
         Err(e) => {

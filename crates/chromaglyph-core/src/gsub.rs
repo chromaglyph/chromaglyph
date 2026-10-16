@@ -69,18 +69,25 @@ pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
     let chain_lookup_index = num_palettes;
 
     // ---- shared class material -------------------------------------------
-    // One class per base glyph; alt copies share their base's class.
+    // Classes may lump many glyphs (generic mode partitions the whole
+    // charset), so coverage must enumerate every base glyph of a class:
+    // the first input glyph's coverage entry selects its class's rule set.
+    // In exact mode classes are 1:1 with glyphs, so this is one each.
     let mut class_glyphs: Vec<(u16, u16)> = plan
         .class_of
         .iter()
         .map(|(&gid, &class)| (gid, class))
         .collect();
     class_glyphs.sort_unstable();
-    let base_gid_of_class: HashMap<u16, u16> = class_glyphs
-        .iter()
-        .filter(|&(gid, _)| *gid < plan.num_source_glyphs)
-        .map(|&(gid, class)| (class, gid))
-        .collect();
+    let glyphs_of_class: HashMap<u16, Vec<u16>> = {
+        let mut map: HashMap<u16, Vec<u16>> = HashMap::new();
+        for &(gid, class) in &class_glyphs {
+            if gid < plan.num_source_glyphs {
+                map.entry(class).or_default().push(gid);
+            }
+        }
+        map
+    };
 
     // ---- chunk rules into subtable-sized groups ---------------------------
     // Grouped by first input class; classes themselves may be split.
@@ -122,8 +129,10 @@ pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
                 .map(|r| to_chain_rule(r, chain_lookup_index))
                 .collect();
             sets[class as usize] = Some(ChainedClassSequenceRuleSet::new(seq_rules));
-            if let Some(&gid) = base_gid_of_class.get(&class) {
-                coverage.add(GlyphId16::new(gid));
+            if let Some(gids) = glyphs_of_class.get(&class) {
+                for &gid in gids {
+                    coverage.add(GlyphId16::new(gid));
+                }
             }
         }
         let ranges: Vec<ClassRangeRecord> = class_glyphs
