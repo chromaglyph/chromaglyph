@@ -39,6 +39,11 @@ pub use verify::VerifyResult;
 use std::collections::{BTreeMap, HashMap};
 
 use compile::PreparedBlock;
+
+/// A semantic-layer producer: per block, `(byte_start, byte_end, scope)`
+/// spans (dotted TextMate scope) that override the syntactic colors
+/// wherever a theme colors the scope.
+pub type SemanticLayer<'a> = &'a dyn Fn(&Block<'_>) -> Vec<(usize, usize, String)>;
 use syntect::parsing::SyntaxSet;
 
 /// Build request.
@@ -58,6 +63,11 @@ pub struct BuildInput<'a> {
     /// CSS's `@font-face` src); `None` keeps the historical default
     /// `chromaglyph.woff`.
     pub font_name: Option<&'a str>,
+    /// Optional semantic layer (exact mode): per block, byte ranges with
+    /// dotted TextMate scopes that override the syntactic colors wherever
+    /// a theme colors the scope — the hook the pure-Rust core stays free
+    /// of tree-sitter while `chromaglyph-treesitter` plugs in.
+    pub semantic: Option<SemanticLayer<'a>>,
 }
 
 /// Build artifacts.
@@ -116,10 +126,15 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
                 .blocks
                 .iter()
                 .map(|block| {
+                    let mut colors = tokenize::colorize_block(block, input.themes, &ss)?;
+                    if let Some(semantic) = input.semantic {
+                        let spans = semantic(block);
+                        tokenize::apply_semantic(&mut colors, block.text, &spans, input.themes);
+                    }
                     Ok(PreparedBlock {
                         id: block.id.clone(),
                         text: block.text,
-                        colors: tokenize::colorize_block(block, input.themes, &ss)?,
+                        colors,
                     })
                 })
                 .collect::<Result<_, BuildError>>()?;

@@ -145,19 +145,19 @@ pub fn synthesize(
     // ---- per-theme colors for the token kinds ----------------------------
     let kw_colors: Vec<Option<Color>> = themes
         .iter()
-        .map(|t| scope_color(t, spec.keyword_scope))
+        .map(|t| t.scope_color(spec.keyword_scope))
         .collect();
     let str_colors: Vec<Option<Color>> = themes
         .iter()
-        .map(|t| scope_color(t, spec.string_scope))
+        .map(|t| t.scope_color(spec.string_scope))
         .collect();
     let cmt_colors: Vec<Option<Color>> = themes
         .iter()
-        .map(|t| scope_color(t, spec.comment_scope))
+        .map(|t| t.scope_color(spec.comment_scope))
         .collect();
     let num_colors: Vec<Option<Color>> = themes
         .iter()
-        .map(|t| scope_color(t, spec.number_scope))
+        .map(|t| t.scope_color(spec.number_scope))
         .collect();
     let slots: Vec<Vec<Option<Color>>> = vec![
         kw_colors,
@@ -591,22 +591,6 @@ fn char_gid(mappings: &[(u32, u16)], ch: char) -> Option<u16> {
         .find(|&&(cp, _)| cp == ch as u32)
         .map(|&(_, gid)| gid)
         .filter(|&gid| gid != 0)
-}
-
-/// Resolve a scope's foreground in a theme the way the exact-mode
-/// pipeline would (syntect's selector engine over the theme).
-fn scope_color(theme: &ThemeSpec, scope: &str) -> Option<Color> {
-    let highlighter = syntect::highlighting::Highlighter::new(&theme.theme);
-    let mut stack = syntect::parsing::ScopeStack::new();
-    // one dotted scope = one stack atom; selectors match it hierarchically
-    stack.push(syntect::parsing::Scope::new(scope).ok()?);
-    let modifier = highlighter.style_mod_for_stack(&stack.scopes);
-    modifier.foreground.map(|c| Color {
-        red: c.r,
-        green: c.g,
-        blue: c.b,
-        alpha: c.a,
-    })
 }
 
 // ---- reference lexer + oracle ---------------------------------------------

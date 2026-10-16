@@ -49,6 +49,10 @@ pub struct BuildOptions {
     pub blocks: Vec<JsBlock>,
     /// Run the rustybuzz oracle (default true).
     pub verify: Option<bool>,
+    /// Overlay tree-sitter semantic colors (parameters, types, calls,
+    /// constants) on top of the syntactic highlighting (default false;
+    /// rust only for now).
+    pub semantic: Option<bool>,
     /// Optional on-disk cache directory; enables cross-process caching.
     pub cache_dir: Option<String>,
 }
@@ -220,6 +224,12 @@ fn build_uncached(opts: &BuildOptions) -> napi::Result<BuildResult> {
         })
         .collect();
     let font: Vec<u8> = opts.font.as_ref().to_vec();
+    let semantic_cb = |block: &chromaglyph_core::Block<'_>| -> Vec<(usize, usize, String)> {
+        chromaglyph_treesitter::semantic_spans(&block.lang, block.text)
+            .into_iter()
+            .map(|s| (s.start, s.end, s.scope.to_string()))
+            .collect()
+    };
 
     let out = build(&BuildInput {
         font_bytes: &font,
@@ -228,6 +238,7 @@ fn build_uncached(opts: &BuildOptions) -> napi::Result<BuildResult> {
         run_verify: opts.verify.unwrap_or(true),
         generic: None,
         font_name: None,
+        semantic: opts.semantic.unwrap_or(false).then_some(&semantic_cb),
     })
     .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
 

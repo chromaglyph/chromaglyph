@@ -1,0 +1,10 @@
+[package]
+name = "chromaglyph-treesitter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Optional tree-sitter semantic layer for chromaglyph: parse code into semantic spans that refine the syntactic colors"
+
+[dependencies]
+tree-sitter = "0.25"
+tree-sitter-rust = "0.24"

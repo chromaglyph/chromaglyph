@@ -15,3 +15,4 @@ path = "src/main.rs"
 chromaglyph-core.workspace = true
 clap.workspace = true
 serde_json.workspace = true
+chromaglyph-treesitter = { path = "../chromaglyph-treesitter" }

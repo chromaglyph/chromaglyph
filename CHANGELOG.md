@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **tree-sitter semantic layer** (`--semantic` CLI flag, `semantic: true`
+  in buildFont): an optional `chromaglyph-treesitter` crate (the only one
+  with C dependencies) parses code with tree-sitter and overlays semantic
+  colors — function definitions/calls/methods, parameters, types,
+  constants, enum members, struct fields — on top of the syntactic
+  highlighting, giving the "editor with a language server" look. Core
+  stays pure Rust: it exposes a `SemanticLayer` callback hook
+  (`BuildInput.semantic`), and scopes a theme does not color are skipped,
+  so plain themes are unaffected. Rust only for now.
+
 ## 0.1.1 (2026-10-16)
 
 - **generic mode v1.1** (`--generic rust`): build a font that highlights ANY

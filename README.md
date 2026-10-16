@@ -89,8 +89,15 @@ tokenize+theme → compile → fontbuild → verify
     块注释可跨行）；**数字状态**（`3.14` 用前瞻规则、`1.max` 的点不吞）；
     **块注释 `/* */`**（开/闭规则 + 跨行传播）；cmap 在注入时用源映射重建
   - 多主题依旧一套规则 + 每主题一个 CPAL 调色板
-- [ ] M4 剩余：tree-sitter 语义 token、更多语言与构造（字符字面量、转义、
-  函数名等着色类别、多语言同字体）
+- [x] **M4c** tree-sitter 语义 token（`--semantic` / `buildFont({semantic: true})`）：
+  - 可选 crate `chromaglyph-treesitter`（workspace 里唯一带 C 依赖的 crate，
+    core 保持纯 Rust）；解析代码树 → 语义 span（函数定义/调用/方法、参数、
+    类型、常量、枚举成员、字段）→ 覆盖在 syntect 语法色之上，主题不认识
+    的 scope 自动跳过——看起来像开了语言服务器的编辑器
+  - core 只暴露 `BuildInput.semantic` 回调钩子（`SemanticLayer` 类型），
+    与具体解析器完全解耦；oracle 全链路验证（新颜色→新 slot→新规则）
+- [ ] M4 剩余：更多语言与构造（字符字面量、转义、函数名等着色类别、
+  多语言同字体、tree-sitter 语言扩展）
 
 ## 用法
 

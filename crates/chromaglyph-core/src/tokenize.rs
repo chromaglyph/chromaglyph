@@ -111,6 +111,47 @@ fn syntect_color(c: Color) -> syntect::highlighting::Color {
     }
 }
 
+
+/// Overlay a semantic layer onto the syntactic colors: each span is a
+/// `(byte_start, byte_end, scope)` triple; where a theme colors the scope,
+/// every char of the span takes that color (semantic wins over syntax).
+/// Scopes no theme colors are ignored, so themes without semantic rules
+/// are unaffected.
+pub fn apply_semantic(
+    colors: &mut [Vec<Option<Color>>],
+    text: &str,
+    spans: &[(usize, usize, String)],
+    themes: &[ThemeSpec],
+) {
+    if spans.is_empty() {
+        return;
+    }
+    // byte offset -> char index (spans align to node boundaries = char starts)
+    let char_at: std::collections::HashMap<usize, usize> = text
+        .char_indices()
+        .enumerate()
+        .map(|(ci, (byte, _))| (byte, ci))
+        .collect();
+    let total_chars = text.chars().count();
+    for (start, end, scope) in spans {
+        let resolved: Vec<Option<Color>> =
+            themes.iter().map(|t| t.scope_color(scope)).collect();
+        if resolved.iter().all(|c| c.is_none()) {
+            continue; // no theme knows this scope: keep syntactic colors
+        }
+        let Some(&cs) = char_at.get(start) else { continue };
+        let ce = char_at.get(end).copied().unwrap_or(total_chars);
+        if ce <= cs {
+            continue;
+        }
+        for (row, color) in colors.iter_mut().zip(resolved) {
+            if let Some(color) = color {
+                row[cs..ce].fill(Some(color));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,3 +212,4 @@ mod tests {
         );
     }
 }
+

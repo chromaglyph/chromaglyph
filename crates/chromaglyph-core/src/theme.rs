@@ -51,6 +51,23 @@ impl ThemeSpec {
         Ok(spec)
     }
 
+    /// Resolve a dotted TextMate scope's foreground via syntect's selector
+    /// engine, the way the highlighting pipeline would.
+    pub fn scope_color(&self, scope: &str) -> Option<Color> {
+        let highlighter = syntect::highlighting::Highlighter::new(&self.theme);
+        let mut stack = syntect::parsing::ScopeStack::new();
+        stack.push(syntect::parsing::Scope::new(scope).ok()?);
+        highlighter
+            .style_mod_for_stack(&stack.scopes)
+            .foreground
+            .map(|c| Color {
+                red: c.r,
+                green: c.g,
+                blue: c.b,
+                alpha: c.a,
+            })
+    }
+
     /// Load from a file: `.tmTheme` (TextMate plist) or `.json` (VS Code).
     pub fn load_file(path: &Path) -> Result<ThemeSpec, BuildError> {
         let bytes = std::fs::read(path)

@@ -62,6 +62,11 @@ enum Command {
         /// Skip the built-in rustybuzz verification pass
         #[arg(long)]
         no_verify: bool,
+        /// Overlay tree-sitter semantic colors (parameters, types, calls,
+        /// constants) on top of the syntactic highlighting; requires a
+        /// language tree-sitter knows (currently rust)
+        #[arg(long)]
+        semantic: bool,
     },
     /// Re-check a built font against input content (the rustybuzz oracle).
     Verify {
@@ -95,6 +100,7 @@ fn main() -> ExitCode {
             css,
             report,
             no_verify,
+            semantic,
         } => cmd_build(
             &font,
             input.as_deref(),
@@ -105,6 +111,7 @@ fn main() -> ExitCode {
             css.as_deref(),
             report.as_deref(),
             no_verify,
+            semantic,
         ),
         Command::Verify {
             font,
@@ -171,6 +178,7 @@ fn cmd_build(
     css_path: Option<&Path>,
     report_path: Option<&Path>,
     no_verify: bool,
+    semantic: bool,
 ) -> Result<(), BuildError> {
     let font_bytes = read_required(font_path)?;
     let generic_spec = match (generic, input_path) {
@@ -196,6 +204,13 @@ fn cmd_build(
     };
     let themes = load_themes(theme_args)?;
 
+    let semantic_cb = |block: &Block<'_>| -> Vec<(usize, usize, String)> {
+        chromaglyph_treesitter::semantic_spans(&block.lang, block.text)
+            .into_iter()
+            .map(|s| (s.start, s.end, s.scope.to_string()))
+            .collect()
+    };
+
     let out = build(&BuildInput {
         font_bytes: &font_bytes,
         themes: &themes,
@@ -207,6 +222,7 @@ fn cmd_build(
             .and_then(|n| n.to_str())
             .map(str::to_owned)
             .as_deref(),
+        semantic: semantic.then_some(&semantic_cb as chromaglyph_core::SemanticLayer),
     })?;
 
     let is_ttf = output.extension().map(|e| e == "ttf").unwrap_or(false);

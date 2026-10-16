@@ -40,6 +40,7 @@ fn two_themes_one_font() {
         run_verify: true,
         generic: None,
         font_name: None,
+        semantic: None,
     })
     .expect("build + inline verify must succeed");
 
@@ -81,6 +82,7 @@ fn single_theme_still_works() {
         run_verify: true,
         generic: None,
         font_name: None,
+        semantic: None,
     })
     .expect("single-theme build");
     assert_eq!(out.report.palettes.len(), 1);
@@ -103,6 +105,7 @@ fn rejects_cff_fonts() {
         run_verify: false,
         generic: None,
         font_name: None,
+        semantic: None,
     }) {
         Ok(_) => panic!("CFF font must be rejected"),
         Err(err) => err,
@@ -138,6 +141,7 @@ fn cross_language_ambiguity_degrades_not_fails() {
         run_verify: true,
         generic: None,
         font_name: None,
+        semantic: None,
     })
     .expect("build never fails on ambiguity");
     assert!(
@@ -160,6 +164,7 @@ fn real_tokenization_colors_function_names() {
         run_verify: false,
         generic: None,
         font_name: None,
+        semantic: None,
     })
     .unwrap();
     assert!(
@@ -182,6 +187,7 @@ fn emoji_and_variation_selectors_shape_and_color() {
         run_verify: true,
         generic: None,
         font_name: None,
+        semantic: None,
     })
     .expect("emoji sample must build + verify");
 
@@ -214,6 +220,7 @@ fn cmap14_variation_sequence_resolves_to_variant_glyph() {
         run_verify: true,
         generic: None,
         font_name: None,
+        semantic: None,
     })
     .expect("UVS sample must build + verify (oracle resolves cmap14)");
     assert!(out.report.verify.ok);
@@ -310,6 +317,7 @@ fn generic_mode_highlights_arbitrary_text() {
         run_verify: true,
         generic: Some(&spec),
         font_name: None,
+        semantic: None,
     })
     .expect("generic build + oracle over random samples");
 
@@ -335,6 +343,7 @@ fn generic_mode_adversarial_samples() {
         run_verify: false,
         generic: Some(&spec),
         font_name: None,
+        semantic: None,
     })
     .expect("generic build");
 
@@ -385,4 +394,59 @@ fn generic_mode_adversarial_samples() {
         &samples,
     );
     assert!(result.ok, "{:?}", result.failures);
+}
+
+/// The semantic hook: spans of (byte range, dotted scope) overlay the
+/// syntactic colors. A fake producer stands in for chromaglyph-treesitter
+/// (core stays free of C dependencies); the real crate runs the same hook.
+#[test]
+fn semantic_layer_overlays_syntactic_colors() {
+    let themes = themes();
+    let plain = build(&BuildInput {
+        font_bytes: FONT,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: false,
+        generic: None,
+        font_name: None,
+        semantic: None,
+    })
+    .unwrap();
+    let semantic = |block: &chromaglyph_core::Block<'_>| -> Vec<(usize, usize, String)> {
+        block
+            .text
+            .match_indices("msg")
+            .map(|(pos, found)| (pos, pos + found.len(), "variable.parameter".to_string()))
+            .chain(
+                block
+                    .text
+                    .match_indices("main")
+                    .map(|(pos, found)| (pos, pos + found.len(), "entity.name.function".to_string())),
+            )
+            .collect()
+    };
+    let layered = build(&BuildInput {
+        font_bytes: FONT,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: Some(&semantic),
+    })
+    .expect("layered build + oracle");
+
+    assert!(layered.report.verify.ok);
+    assert!(
+        layered.report.colored_cells > plain.report.colored_cells,
+        "the semantic layer colors chars the syntax layer leaves plain: {} vs {}",
+        layered.report.colored_cells,
+        plain.report.colored_cells
+    );
+    // the parameter blue is a palette entry now
+    assert!(
+        layered.report.palettes[0].iter().any(|c| c == "#9cdcfe"),
+        "{:?}",
+        layered.report.palettes
+    );
 }
