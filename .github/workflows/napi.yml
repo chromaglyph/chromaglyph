@@ -1,0 +1,77 @@
+name: napi build & publish binaries
+
+# Builds @chromaglyph/node platform packages for the full matrix and
+# publishes them on release tags (v*). macOS arm64 is also built here so
+# every platform ships from the same CI.
+
+permissions:
+  contents: write
+  id-token: write
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - os: macos-latest # arm64
+            target: aarch64-apple-darwin
+          - os: macos-latest # x64
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    name: ${{ matrix.settings.target }}
+    runs-on: ${{ matrix.settings.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.settings.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: ${{ matrix.settings.target }}
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @chromaglyph/node exec napi build --release --platform --target ${{ matrix.settings.target }}
+
+      - name: Copy artifacts
+        run: pnpm --filter @chromaglyph/node exec napi artifacts --npm-dir ../../npm
+
+      - name: Publish (release tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cd npm/@chromaglyph/*
+          npm publish --access public --provenance
+        env:
+          NPM_CONFIG_PROVENANCE: true

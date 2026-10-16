@@ -55,6 +55,13 @@ tokenize+theme → compile → fontbuild → verify
     `@font-palette-values`（双主题自动明暗切换）；任何失败静默降级
   - pnpm workspace（crates/chromaglyph-node + js/*）；6 个 JS 测试（unified 真实管线）
   - 浏览器验证：一个字体同时高亮 Rust/JS/Python 三个代码块，prose 内联代码不受影响
+  - `@chromaglyph/markdown-it`（js/markdown-it，VitePress 通道）：wrap `md.render`
+    （只 parse 一次、批处理全部 fence、从已解析 token 渲染）、链式接住已有 fence 规则、
+    嵌套渲染隔离、`md.chromaglyph()` 自省；8 个测试
+  - 共享 CSS 构建器移至 `@chromaglyph/node/css`（两个插件同源）
+- **0.1.0 已发布**：crates.io `chromaglyph-core` / `chromaglyph-cli`；npm
+  `@chromaglyph/node`（+ darwin-arm64 平台包）、`@chromaglyph/remark`、
+  `@chromaglyph/markdown-it`（其余平台二进制走 `.github/workflows/napi.yml` CI 矩阵）
 - [ ] M4：tree-sitter 语义 token、cmap14/variation-selector 路线、任意代码的通用模式
 
 ## 用法
