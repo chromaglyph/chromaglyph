@@ -496,6 +496,37 @@ fn adversarial(spec: &chromaglyph_core::generic::LanguageSpec, samples: &[&str])
     assert!(result.ok, "{}: {:?}", spec.name, result.failures);
 }
 
+/// Exact-mode TypeScript: syntect's default syntax set cannot resolve
+/// `ts` (it silently fell back to plain text — zero coloring, zero
+/// warnings); the two-face superset fixes it. TSX rides along.
+#[test]
+fn exact_mode_highlights_typescript() {
+    let themes = themes();
+    let src: &str = "interface User {\n    readonly id: number\n    name: string\n}\n\nfunction greet(u: User): string {\n    return `hi ${u.name}`\n}\n";
+    for lang in ["ts", "typescript", "tsx"] {
+        let out = build(&BuildInput {
+            font_bytes: FONT,
+            themes: &themes,
+            blocks: &[Block {
+                id: "ts".into(),
+                lang: lang.into(),
+                text: src,
+            }],
+            run_verify: true,
+            generic: None,
+            font_name: None,
+            semantic: None,
+        })
+        .unwrap_or_else(|e| panic!("{lang}: {e}"));
+        assert!(
+            out.report.colored_cells > 40,
+            "{lang}: expected real highlighting, got {} colored cells",
+            out.report.colored_cells
+        );
+        assert!(out.report.verify.ok, "{lang}: {:?}", out.report.verify.failures);
+    }
+}
+
 /// CJK text in a block: the font has no glyphs for it, so it renders via
 /// browser fallback and cannot be highlighted — but the mapped text
 /// around it (the `//` opener, the trailing newline barrier) keeps

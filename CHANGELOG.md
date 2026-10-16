@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **fix: exact mode could not highlight TypeScript** — syntect's default
+  syntax set does not contain a TypeScript grammar, so `ts`/`tsx`
+  fences silently resolved to plain text: zero coloring, zero warnings.
+  The tokenizer now uses the two-face superset (TypeScript, TSX and
+  other missing grammars; `syntect-fancy` backend, still pure Rust, no
+  onig) cached once per process. Verified end-to-end on the VitePress
+  site: interface/readonly/string blue, calls in dark-plus' function
+  yellow. Binaries grow with the larger syntax dump.
+
 - **build warnings name the uncovered characters**: when a token contains
   chars with no glyph in the font (CJK comments in a Latin-only font,
   emoji, …), the warning now lists the actual missing characters and,

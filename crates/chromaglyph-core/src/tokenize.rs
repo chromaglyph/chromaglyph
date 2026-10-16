@@ -39,6 +39,14 @@ const LANG_ALIASES: &[(&str, &str)] = &[
     ("plain", "txt"),
 ];
 
+/// The syntax set: syntect's defaults plus the extras two-face bundles
+/// (TypeScript/TSX among them — the defaults alone cannot resolve `ts`,
+/// which silently fell back to plain text before). Built once per process.
+pub fn syntax_set() -> &'static syntect::parsing::SyntaxSet {
+    static SS: std::sync::OnceLock<syntect::parsing::SyntaxSet> = std::sync::OnceLock::new();
+    SS.get_or_init(two_face::syntax::extra_newlines)
+}
+
 /// Resolve a `--lang` value (alias, extension, or "plain") to a syntect
 /// syntax; unknown values fall back to Plain Text with an error-free life.
 pub fn resolve_syntax<'a>(lang: &str, ss: &'a SyntaxSet) -> &'a syntect::parsing::SyntaxReference {
@@ -162,7 +170,7 @@ mod tests {
 
     #[test]
     fn rust_colors_are_resolved() {
-        let ss = SyntaxSet::load_defaults_newlines();
+        let ss = crate::tokenize::syntax_set().clone();
         let text = "fn main() { let s = \"hi\"; } // done\n";
         let block = Block {
             id: "t".into(),
@@ -186,7 +194,7 @@ mod tests {
 
     #[test]
     fn char_count_matches_for_multibyte() {
-        let ss = SyntaxSet::load_defaults_newlines();
+        let ss = crate::tokenize::syntax_set().clone();
         let text = "// 注释 émoji 🎨 ok\nlet x = \"héllo\";\n";
         let block = Block {
             id: "t".into(),
@@ -199,7 +207,7 @@ mod tests {
 
     #[test]
     fn unknown_lang_falls_back_to_plain() {
-        let ss = SyntaxSet::load_defaults_newlines();
+        let ss = crate::tokenize::syntax_set().clone();
         let block = Block {
             id: "t".into(),
             lang: "definitely-not-a-lang".into(),

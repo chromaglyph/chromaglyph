@@ -12,7 +12,6 @@ use std::collections::HashMap;
 
 use read_fonts::{FontRef, TableProvider};
 use rustybuzz::{Face, UnicodeBuffer};
-use syntect::parsing::SyntaxSet;
 
 use crate::compile::{GlyphPlan, PreparedBlock};
 use crate::error::BuildError;
@@ -272,7 +271,7 @@ pub fn verify_font(
         .checked_sub(num_alts)
         .ok_or_else(|| BuildError::FontParse("more COLR glyphs than total glyphs".into()))?;
 
-    let ss = SyntaxSet::load_defaults_newlines();
+    let ss = crate::tokenize::syntax_set();
     let charmap = skrifa::charmap::Charmap::new(&font);
     let prepared: Vec<PreparedBlock<'_>> = blocks
         .iter()
@@ -280,7 +279,7 @@ pub fn verify_font(
             Ok(PreparedBlock {
                 id: block.id.clone(),
                 text: block.text,
-                colors: crate::tokenize::colorize_block(block, themes, &ss)?,
+                colors: crate::tokenize::colorize_block(block, themes, ss)?,
             })
         })
         .collect::<Result<_, BuildError>>()?;

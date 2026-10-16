@@ -44,7 +44,6 @@ use compile::PreparedBlock;
 /// spans (dotted TextMate scope) that override the syntactic colors
 /// wherever a theme colors the scope.
 pub type SemanticLayer<'a> = &'a dyn Fn(&Block<'_>) -> Vec<(usize, usize, String)>;
-use syntect::parsing::SyntaxSet;
 
 /// Build request.
 pub struct BuildInput<'a> {
@@ -121,12 +120,12 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
         }
         None => {
             // stage 1+2: tokenize + resolve colors under each theme
-            let ss = SyntaxSet::load_defaults_newlines();
+            let ss = tokenize::syntax_set();
             prepared = input
                 .blocks
                 .iter()
                 .map(|block| {
-                    let mut colors = tokenize::colorize_block(block, input.themes, &ss)?;
+                    let mut colors = tokenize::colorize_block(block, input.themes, ss)?;
                     if let Some(semantic) = input.semantic {
                         let spans = semantic(block);
                         tokenize::apply_semantic(&mut colors, block.text, &spans, input.themes);

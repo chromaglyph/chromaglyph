@@ -40,7 +40,9 @@ tokenize+theme → compile → fontbuild → verify
 
 - [x] **M1** walking skeleton（见 git 历史）
 - [x] **M2** CLI 完整化：
-  - syntect tokenizer（Rust/JS/TS/Python/Go/… 全部内置语法，`--lang auto` 按扩展名探测）
+  - syntect tokenizer（`--lang auto` 按扩展名探测；语法集为 syntect
+    defaults + two-face 扩充——仅 defaults 不含 TypeScript，TS/TSX 由
+    two-face 补齐）
   - 主题导入：VS Code `.json`（JSONC + `include` 链）与 `.tmTheme`；内置 `dark-plus` /
     `light-plus`（vendored 自 VS Code `theme-defaults`，MIT）
   - 多主题 = 多调色板 + 生成 `@font-palette-values` CSS（含 `prefers-color-scheme`
