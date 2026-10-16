@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **perf**: the global false-match audit is now backed by a suffix-array
+  index over the flattened glyph sequence (O(m log n) per query, candidate
+  positions cached per occurrence) instead of rescanning every cell on
+  every window-growth step (O(n²)). Output is byte-identical to the
+  previous implementation on all tests and stress inputs; a 126k-char
+  input builds in 0.54s vs 2.18s before.
+- **ci**: release publishing is idempotent (already-published platform
+  versions skip), npm auth is wired via `setup-node` `registry-url`, and
+  the root `@chromaglyph/node` package publishes from CI alongside the
+  platform binaries. Requires the `NPM_TOKEN` repository secret.
+
 ## 0.1.0 (2026-10-16)
 
 First functional release.

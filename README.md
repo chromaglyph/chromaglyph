@@ -106,8 +106,9 @@ python3 -m http.server -d target/demo 8143        # 打开 index.html 看明暗�
 | CPAL | 40 B（2 调色板 × 6 slot） | 50 B（1 调色板） |
 | 规则数 | 9 | 706 |
 
-自我压力测试（`compile.rs` 本身，24469 字符，双主题）：6217 token 级颜色 → 482 条规则、
-7 slot、226 彩色副本，ttf 285 KB / woff 116 KB，构建 3.2s（audit 为 O(n²)，后续可优化）。
+自我压力测试（`compile.rs` 本身，31535 字符，双主题）：622 条规则、7 slot、241 彩色副本，
+构建 0.14s。全局假匹配审计基于字形序列的后缀数组索引（O(n log n) 查询，候选按
+occurrence 缓存），126k 字符输入下构建 0.54s，输出与逐位置扫描版字节级一致。
 
 ## 技术选型
 

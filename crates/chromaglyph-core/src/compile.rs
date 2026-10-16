@@ -29,6 +29,7 @@
 //!    intended, the window is grown until the false match disappears.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::rc::Rc;
 
 use crate::error::BuildError;
 use crate::spec::Color;
@@ -245,21 +246,35 @@ pub fn compile(
         class_of.insert(*gid, (class + 1) as u16);
     }
 
+    // ---- global match index ----------------------------------------------
+    // The audit below asks, per segment, "where else does this glyph
+    // sequence occur in the whole text?". A suffix array over the flattened
+    // glyph sequence answers in O(m log n) instead of rescanning every cell
+    // on every window-growth step (the old audit was O(n²) overall). The
+    // sequence is 1:1 with cells; cross-block matches are filtered out when
+    // candidates are collected.
+    let seq: Vec<i32> = cells.iter().map(|c| i32::from(c.gid.unwrap_or(0))).collect();
+    let matcher = Matcher::new(seq);
+
     // ---- minimal distinguishing contexts + global audit -----------------
     // Unresolvable occurrences degrade to uncolored + warning instead of
     // failing the build; degrading can resolve other occurrences' conflicts,
-    // so the loop runs to a fixed point.
+    // so the loop runs to a fixed point. Sequence matches never change
+    // during the loop (only intended slots do), so each segment's candidate
+    // positions are computed once and reused across iterations.
+    let mut cand_cache: HashMap<(usize, usize), Rc<Vec<u32>>> = HashMap::new();
     let mut active: Vec<(usize, usize, u16)> = occurrences;
     loop {
-        let failures: Vec<usize> = active
-            .iter()
-            .enumerate()
-            .filter(|&(_, &(start, end, pal))| {
-                segments(start, end)
-                    .any(|(s, e)| build_rule(&cells, &block_ranges, &class_of, s, e, pal).is_none())
-            })
-            .map(|(i, _)| i)
-            .collect();
+        let mut failures: Vec<usize> = Vec::new();
+        for (i, &(start, end, pal)) in active.iter().enumerate() {
+            let unresolvable = segments(start, end).any(|(s, e)| {
+                let cands = candidates(&matcher, &mut cand_cache, &cells, s, e);
+                build_rule(&cells, &block_ranges, &class_of, s, e, pal, &cands).is_none()
+            });
+            if unresolvable {
+                failures.push(i);
+            }
+        }
         if failures.is_empty() {
             break;
         }
@@ -284,7 +299,8 @@ pub fn compile(
     let mut rules: Vec<Rule> = Vec::new();
     for &(start, end, pal) in &active {
         for (s, e) in segments(start, end) {
-            if let Some(rule) = build_rule(&cells, &block_ranges, &class_of, s, e, pal) {
+            let cands = candidates(&matcher, &mut cand_cache, &cells, s, e);
+            if let Some(rule) = build_rule(&cells, &block_ranges, &class_of, s, e, pal, &cands) {
                 rules.push(rule);
             }
         }
@@ -349,6 +365,36 @@ fn segments(start: usize, end: usize) -> impl Iterator<Item = (usize, usize)> {
         .map(move |off| (start + off, (start + off + seg).min(end)))
 }
 
+/// Cached candidate positions for the segment `[start, end)`: every other
+/// position carrying the same glyph sequence *within one block* (matches
+/// crossing a block boundary cannot falsely fire — rules never cross
+/// blocks). Sequence matches are independent of the fixed point loop, so
+/// this is computed once per segment.
+fn candidates(
+    matcher: &Matcher,
+    cache: &mut HashMap<(usize, usize), Rc<Vec<u32>>>,
+    cells: &[Cell],
+    start: usize,
+    end: usize,
+) -> Rc<Vec<u32>> {
+    if let Some(rc) = cache.get(&(start, end)) {
+        return rc.clone();
+    }
+    let m = end - start;
+    let rc: Rc<Vec<u32>> = Rc::new(
+        matcher
+            .matches(start, m)
+            .iter()
+            .copied()
+            .map(|p| p as usize)
+            .filter(|&p| p != start && cells[p + m - 1].block == cells[p].block)
+            .map(|p| p as u32)
+            .collect(),
+    );
+    cache.insert((start, end), rc.clone());
+    rc
+}
+
 /// Build one contextual rule for `[start, end)` in slot `pal`: grow the
 /// backtrack/lookahead window minimally until no false match remains, staying
 /// inside the shaper's rule budget. `None` if the occurrence cannot be
@@ -360,6 +406,7 @@ fn build_rule(
     start: usize,
     end: usize,
     pal: u16,
+    cands: &[u32],
 ) -> Option<Rule> {
     let m = end - start;
     debug_assert!(m < SHAPER_MAX_CONTEXT, "segments leave room for context");
@@ -371,7 +418,7 @@ fn build_rule(
     let mut r = 0usize;
     let mut grow_left = true;
     loop {
-        if audit(cells, block_ranges, start, end, pal, l, r).is_some() {
+        if audit(cells, block_ranges, start, end, pal, l, r, cands).is_some() {
             let can_l = l < max_l && l + r < budget;
             let can_r = r < max_r && l + r < budget;
             if can_l && (grow_left || !can_r) {
@@ -405,16 +452,19 @@ fn build_rule(
 }
 
 /// Check whether a rule for occurrence `[start, end)` with window `(l, r)`
-/// would falsely fire at any other position. Returns the first conflicting
+/// would falsely fire at any candidate position. Returns the first conflicting
 /// position (cell index) if so.
 ///
-/// The rule matches at position `p` iff, within `p`'s own block:
+/// `cands` holds every position `p != start` whose glyph sequence equals the
+/// occurrence's within `p`'s own block (see [`Matcher`]). The rule falsely
+/// fires at `p` iff, within `p`'s block:
 ///  - `p >= l` and `p + m + r <= block_end`,
-///  - the glyph sequence at `p` equals the occurrence's, and
-///  - the `l` glyphs before and `r` glyphs after equal the occurrence's.
+///  - the `l` glyphs before and `r` glyphs after equal the occurrence's, and
+///  - some covered glyph was *not* intended to carry this slot.
 ///
 /// Class ids are 1:1 with base glyphs, so comparing base glyph ids at build
 /// time is exactly the class-level match at run time (see invariant 1).
+#[allow(clippy::too_many_arguments)] // independent coordinates of one probe
 fn audit(
     cells: &[Cell],
     block_ranges: &[(usize, usize)],
@@ -423,34 +473,12 @@ fn audit(
     pal: u16,
     l: usize,
     r: usize,
+    cands: &[u32],
 ) -> Option<usize> {
     let m = end - start;
 
-    let first_gid = cells[start].gid.unwrap_or(0);
-    for p in 0..cells.len() {
-        if p == start {
-            continue;
-        }
-        if p + m > cells.len() {
-            break;
-        }
-        if cells[p + m - 1].block != cells[p].block {
-            continue;
-        }
-        if cells[p].gid.unwrap_or(0) != first_gid {
-            continue;
-        }
-        // glyph sequence equality
-        let mut equal = true;
-        for i in 0..m {
-            if cells[p + i].gid.unwrap_or(0) != cells[start + i].gid.unwrap_or(0) {
-                equal = false;
-                break;
-            }
-        }
-        if !equal {
-            continue;
-        }
+    for &p in cands {
+        let p = p as usize;
         // window containment within p's block
         let (p_lo, p_hi) = block_ranges[cells[p].block];
         if p - p_lo < l || p_hi - (p + m) < r {
@@ -492,6 +520,78 @@ fn audit(
         }
     }
     None
+}
+
+/// Suffix-array index over the flattened glyph sequence (1:1 with cells;
+/// unmapped chars use glyph 0). Answers "at which positions does the glyph
+/// sequence starting at `start`, length `m`, also occur?" in O(m log n).
+/// The caller filters matches down to those within a single block.
+struct Matcher {
+    seq: Vec<i32>,
+    sa: Vec<u32>,
+}
+
+impl Matcher {
+    fn new(seq: Vec<i32>) -> Self {
+        let n = seq.len();
+        let mut sa: Vec<u32> = (0..n as u32).collect();
+        if n == 0 {
+            return Self { seq, sa };
+        }
+        // prefix doubling: O(n log² n) with a comparison sort, plenty for
+        // build-time inputs in the tens of thousands of cells
+        let mut rank: Vec<i32> = seq.clone();
+        let mut next: Vec<i32> = vec![0; n];
+        let key = |i: usize, rank: &[i32], k: usize| {
+            // past-end must sort below every in-sequence value, sentinel
+            // included — that is what makes doubling terminate even when one
+            // suffix is a prefix of another
+            let second = if i + k < n { rank[i + k] } else { -2 };
+            (rank[i], second)
+        };
+        let mut k = 1usize;
+        loop {
+            sa.sort_unstable_by(|&a, &b| {
+                key(a as usize, &rank, k).cmp(&key(b as usize, &rank, k))
+            });
+            next[sa[0] as usize] = 0;
+            for w in 1..n {
+                let (prev, cur) = (sa[w - 1] as usize, sa[w] as usize);
+                let same = key(prev, &rank, k) == key(cur, &rank, k);
+                next[cur] = next[prev] + u32::from(!same) as i32;
+            }
+            std::mem::swap(&mut rank, &mut next);
+            if rank[sa[n - 1] as usize] == n as i32 - 1 {
+                break; // all ranks distinct: the suffix array is total
+            }
+            k *= 2;
+        }
+        Self { seq, sa }
+    }
+
+    /// Positions whose next `m` glyphs equal `seq[start..start+m]`, as a
+    /// slice of suffix-array entries (unordered; includes `start` itself).
+    fn matches(&self, start: usize, m: usize) -> &[u32] {
+        let cmp_suffix = |suf: usize| -> std::cmp::Ordering {
+            for j in 0..m {
+                let pv = self.seq[start + j];
+                match self.seq.get(suf + j) {
+                    Some(&sv) if sv == pv => continue,
+                    Some(&sv) => return sv.cmp(&pv),
+                    // suffix ran out: it is a proper prefix of the pattern
+                    None => return std::cmp::Ordering::Less,
+                }
+            }
+            std::cmp::Ordering::Equal
+        };
+        let lo = self
+            .sa
+            .partition_point(|&s| cmp_suffix(s as usize) == std::cmp::Ordering::Less);
+        let hi = lo + self.sa[lo..].partition_point(|&s| {
+            cmp_suffix(s as usize) == std::cmp::Ordering::Equal
+        });
+        &self.sa[lo..hi]
+    }
 }
 
 fn truncate(s: &str, max_chars: usize) -> String {
@@ -660,5 +760,65 @@ mod tests {
         let plan = compile(&blocks, &charmap, 100, &[BLUE, RED]).unwrap();
         assert_eq!(plan.slots.len(), 1, "one slot: (blue, red)");
         assert_eq!(plan.slots[0], vec![Some(BLUE), Some(RED)]);
+    }
+
+    #[test]
+    fn matcher_finds_exact_and_overlapping() {
+        // two "abab"/"ab" texts flattened; the matcher is a pure value
+        // index — block semantics are enforced by `candidates`
+        let seq = vec![1, 2, 1, 2, 1, 2];
+        let m = Matcher::new(seq);
+        let mut found = m.matches(0, 2).to_vec(); // "ab"
+        found.sort_unstable();
+        assert_eq!(found, vec![0, 2, 4]);
+        let mut found = m.matches(1, 2).to_vec(); // "ba"
+        found.sort_unstable();
+        assert_eq!(found, vec![1, 3]);
+        let mut found = m.matches(0, 4).to_vec(); // "abab"
+        found.sort_unstable();
+        assert_eq!(found, vec![0, 2]);
+        assert_eq!(m.matches(0, 6).to_vec(), vec![0]); // whole sequence
+    }
+
+    #[test]
+    fn matcher_all_equal_values_terminates() {
+        // degenerate input: every value equal; one suffix is a prefix of the
+        // next, which must still terminate and match everywhere
+        let m = Matcher::new(vec![-1, -1, -1]);
+        let mut found = m.matches(1, 1).to_vec();
+        found.sort_unstable();
+        assert_eq!(found, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn matcher_matches_brute_force() {
+        // pseudo-random values; the suffix array must agree with a naive
+        // scan for every (start, len) query window
+        let mut x = 12345u64;
+        let mut seq = Vec::new();
+        for i in 0..500 {
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            seq.push(((x >> 33) % 7) as i32);
+            if i % 13 == 0 {
+                seq.push(-1);
+            }
+        }
+        let m = Matcher::new(seq.clone());
+        let n = seq.len();
+        for start in 0..n {
+            for len in 1..=(n - start).min(6) {
+                let pat = seq[start..start + len].to_vec();
+                let mut brute: Vec<u32> = (0..n)
+                    .filter(|&p| p + len <= n && seq[p..p + len] == pat)
+                    .map(|p| p as u32)
+                    .collect();
+                brute.sort_unstable();
+                let mut sa = m.matches(start, len).to_vec();
+                sa.sort_unstable();
+                assert_eq!(sa, brute, "pattern at {start} len {len}");
+            }
+        }
     }
 }
