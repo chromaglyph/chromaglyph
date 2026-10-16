@@ -10,12 +10,15 @@
 //! `--keep-base-features` escape hatch.
 
 use read_fonts::{FontRef, TableProvider};
+use std::collections::BTreeMap;
+
+use write_fonts::tables::cmap::Cmap;
 use write_fonts::tables::colr::{BaseGlyph, Colr, Layer};
 use write_fonts::tables::cpal::{ColorRecord, Cpal};
 use write_fonts::tables::gsub::Gsub;
 use write_fonts::tables::hmtx::{Hmtx, LongMetric};
 use write_fonts::tables::loca::{Loca, LocaFormat};
-use write_fonts::types::{GlyphId16, Tag};
+use write_fonts::types::{GlyphId, GlyphId16, Tag};
 use write_fonts::FontBuilder;
 
 use crate::compile::GlyphPlan;
@@ -140,7 +143,8 @@ pub fn assemble(
     gsub: Option<&Gsub>,
 ) -> Result<Vec<u8>, BuildError> {
     let num_alt = plan.alt_glyphs.len();
-    let total_glyphs = loaded.num_glyphs as usize + num_alt;
+    let num_plain = plan.plain_glyphs.len();
+    let total_glyphs = loaded.num_glyphs as usize + num_alt + num_plain;
 
     // ---- glyf (raw, padded even) + loca (extended with empty glyphs) -----
     let mut glyf = loaded.glyf_data.to_vec();
@@ -149,7 +153,7 @@ pub fn assemble(
     }
     let mut offsets = loaded.loca_offsets.clone();
     let last = *offsets.last().expect("loca is never empty");
-    for _ in 0..num_alt {
+    for _ in 0..(num_alt + num_plain) {
         offsets.push(last);
     }
     let loca = Loca::new(offsets);
@@ -175,6 +179,10 @@ pub fn assemble(
         let (advance, lsb) = loaded.metrics[base_gid as usize];
         h_metrics.push(LongMetric::new(advance, lsb));
     }
+    for _ in 0..num_plain {
+        // injected glyphs are zero-width placeholders (e.g. the newline)
+        h_metrics.push(LongMetric::new(0, 0));
+    }
     let hmtx = Hmtx {
         h_metrics,
         left_side_bearings: Vec::new(),
@@ -182,6 +190,30 @@ pub fn assemble(
 
     // ---- post: synthesized 3.0 (no per-glyph names) ----------------------
     let post = synth_post_v3(loaded);
+
+    // ---- cmap: raw copy, or resynthesized when glyphs were injected ------
+    let cmap = if plan.plain_glyphs.is_empty() {
+        None
+    } else {
+        let mut mappings: BTreeMap<char, GlyphId> = skrifa::charmap::Charmap::new(&loaded.font)
+            .mappings()
+            .filter_map(|(cp, gid)| {
+                Some((
+                    char::from_u32(cp)?,
+                    GlyphId::new(gid.to_u32()),
+                ))
+            })
+            .collect();
+        for &(cp, gid) in &plan.plain_glyphs {
+            if let Some(ch) = char::from_u32(cp) {
+                mappings.insert(ch, GlyphId::new(gid as u32));
+            }
+        }
+        Some(
+            Cmap::from_mappings(mappings)
+                .map_err(|e| BuildError::TableWrite(e.to_string()))?,
+        )
+    };
 
     // ---- COLR v0 + CPAL ----------------------------------------------------
     let mut base_glyphs: Vec<BaseGlyph> = Vec::with_capacity(num_alt);
@@ -226,6 +258,11 @@ pub fn assemble(
     add(&mut builder, Tag::new(b"hhea"), hhea);
     add(&mut builder, Tag::new(b"maxp"), maxp);
     add(&mut builder, Tag::new(b"post"), post);
+    if let Some(cmap) = cmap {
+        builder
+            .add_table(&cmap)
+            .map_err(|e| BuildError::TableWrite(e.to_string()))?;
+    }
     add(&mut builder, Tag::new(b"glyf"), glyf);
     builder
         .add_table(&loca)

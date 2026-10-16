@@ -80,6 +80,12 @@ pub struct GlyphPlan {
     pub theme_fgs: Vec<Color>,
     /// Glyph count of the source font (alt glyph ids start here).
     pub num_source_glyphs: u16,
+    /// Plain (uncolored) glyphs appended after the alt copies, each with a
+    /// cmap mapping — generic mode injects a newline glyph this way so
+    /// shaping runs do not break at line ends (keyword boundaries and
+    /// block-comment states then survive line breaks). Empty (exact mode):
+    /// the source cmap is copied byte-for-byte instead.
+    pub plain_glyphs: Vec<(u32, u16)>,
     /// Per-block cell ranges into the concatenated cell vector.
     pub block_ranges: Vec<(usize, usize)>,
     /// Number of cells not colored in any theme.
@@ -408,6 +414,7 @@ pub fn compile(
         slots,
         theme_fgs: theme_fgs.to_vec(),
         num_source_glyphs,
+        plain_glyphs: Vec::new(),
         block_ranges,
         uncolored_cells,
         warnings,

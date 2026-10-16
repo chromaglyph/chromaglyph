@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **generic mode** (`--generic rust`): build a font that highlights ANY
+- **generic mode v1.1** (`--generic rust`): build a font that highlights ANY
   text of a language — content no longer needs to be known at build time.
   A state machine is synthesized from a language spec (keywords, `//`
   line comments, double-quoted strings): propagation rules with
@@ -13,8 +13,12 @@
   against a reference lexer over curated + 300 deterministic-random
   samples, modeling the shaper faithfully: states die at unmapped chars
   (browser font-fallback run breaks), keywords need mapped punctuation
-  glyphs on both sides (buffer edges and quote/slash-adjacent keywords
-  stay plain). v1: Rust, one language per font, no escapes/nested
+  glyphs on both sides (buffer-edge and quote/slash-adjacent keywords
+  stay plain). v1.1 adds: an injected zero-width newline glyph so shaping
+  runs survive line ends (line-start keywords color; the cmap is
+  resynthesized from the source mappings), a number state (`3.14` via a
+  lookahead rule, `1.max` does not swallow `max`), and block comments
+  `/* */` spanning lines. Rust, one language per font, no escapes/nested
   strings; multi-theme still one rule set + one CPAL palette per theme.
 - **variation selectors / cmap14**: rule compilation now works in a shaping
   view that matches the shaper. Variation selectors (and other zero-width
