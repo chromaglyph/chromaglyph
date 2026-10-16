@@ -107,7 +107,16 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
     let charmap = skrifa::charmap::Charmap::new(&loaded.font);
     let plan = compile::compile(
         &prepared,
-        &|ch| {
+        &|ch, vs| {
+            // base + variation selector: resolve through cmap14 when the
+            // font carries a non-default UVS mapping for the sequence
+            if let Some(vs) = vs {
+                if let Some(skrifa::charmap::MapVariant::Variant(g)) =
+                    charmap.map_variant(ch, vs)
+                {
+                    return Some(g.to_u32() as u16).filter(|g| *g != 0);
+                }
+            }
             charmap
                 .map(ch)
                 .map(|g| g.to_u32() as u16)

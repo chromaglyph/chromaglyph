@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **variation selectors / cmap14**: rule compilation now works in a shaping
+  view that matches the shaper. Variation selectors (and other zero-width
+  format controls) are transparent: they no longer split colored runs,
+  occupy no rule-window position, and stop producing false "no glyph"
+  warnings. Unmapped chars (newlines, emoji) are hard barriers — rule
+  contexts never cross them, fixing rules that verified green against the
+  rustybuzz oracle but could never fire in a browser (font fallback moves
+  such chars out of this font's shaping run). Source fonts with a cmap
+  format 14 (UVS) subtable pass through untouched, and `base + VS`
+  sequences resolve to their variant glyph. The verify oracle now aligns
+  shaped glyphs by cluster (rustybuzz emits an extra glyph for unresolved
+  VS while browsers delete it — cluster alignment is correct for both).
 - **perf**: the global false-match audit is now backed by a suffix-array
   index over the flattened glyph sequence (O(m log n) per query, candidate
   positions cached per occurrence) instead of rescanning every cell on

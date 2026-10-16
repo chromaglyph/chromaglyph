@@ -68,40 +68,52 @@ pub fn verify_plan(ttf: &[u8], blocks: &[PreparedBlock<'_>], plan: &GlyphPlan) -
         let shaped = rustybuzz::shape(&face, &[], buffer);
 
         let infos = shaped.glyph_infos();
-        let cells = &plan.cells[lo..hi];
-        if infos.len() != cells.len() {
-            result.fail(format!(
-                "block '{}': shaped {} glyphs for {} chars",
-                block.id,
-                infos.len(),
-                cells.len()
-            ));
-        }
-        let expected: Vec<u16> = cells
+        // The shaper produces no glyph for hidden controls in browsers
+        // (variation selectors unresolved by cmap14 get deleted), but
+        // rustybuzz emits an extra glyph for them — alignment therefore
+        // walks clusters, skipping glyphs whose cluster belongs to a
+        // hidden cell. Each non-hidden cell must line up with exactly one
+        // glyph at its own byte offset.
+        let cells: Vec<&crate::compile::Cell> = plan.cells[lo..hi]
             .iter()
-            .map(|cell| expected_gid(cell, &alt_of))
+            .filter(|c| !crate::compile::is_shaper_hidden(c.ch))
             .collect();
-        for (i, cell) in cells.iter().enumerate() {
+        let mut next_cell = cells.iter().copied();
+        let mut expected_cell = next_cell.next();
+        for info in infos {
+            let cluster = info.cluster as usize;
+            let Some(cell) = expected_cell else {
+                result.fail(format!(
+                    "block '{}': glyph at cluster {cluster} has no char left to match",
+                    block.id
+                ));
+                break;
+            };
+            if cluster < cell.byte_start {
+                // artifact of a hidden control (own or merged cluster)
+                continue;
+            }
+            if cluster > cell.byte_start {
+                result.fail(format!(
+                    "block '{}': byte {} ({:?}) produced no glyph",
+                    block.id, cell.byte_start, cell.ch
+                ));
+                break;
+            }
             result.glyphs_checked += 1;
             if cell.pal.is_some() {
                 result.colored_glyphs += 1;
             }
-            let Some(info) = infos.get(i) else { continue };
-            if info.cluster as usize != cell.byte_start {
-                result.fail(format!(
-                    "block '{}' byte {}: cluster {} != {}",
-                    block.id, cell.byte_start, info.cluster, cell.byte_start
-                ));
-            }
+            let expected = expected_gid(cell, &alt_of);
             let got = info.glyph_id as u16;
-            if got != expected[i] {
+            if got != expected {
                 result.fail(format!(
                     "block '{}' byte {} ({:?}): got glyph {}, expected {} ({})",
                     block.id,
                     cell.byte_start,
                     cell.ch,
                     got,
-                    expected[i],
+                    expected,
                     if cell.pal.is_some() {
                         "colored copy"
                     } else {
@@ -109,6 +121,13 @@ pub fn verify_plan(ttf: &[u8], blocks: &[PreparedBlock<'_>], plan: &GlyphPlan) -
                     }
                 ));
             }
+            expected_cell = next_cell.next();
+        }
+        if let Some(cell) = expected_cell {
+            result.fail(format!(
+                "block '{}': byte {} ({:?}) produced no glyph",
+                block.id, cell.byte_start, cell.ch
+            ));
         }
     }
 
@@ -268,7 +287,13 @@ pub fn verify_font(
     let theme_fgs: Vec<crate::spec::Color> = themes.iter().map(|t| t.foreground).collect();
     let plan = crate::compile::compile(
         &prepared,
-        &|ch| {
+        &|ch, vs| {
+            if let Some(vs) = vs {
+                if let Some(skrifa::charmap::MapVariant::Variant(g)) = charmap.map_variant(ch, vs)
+                {
+                    return Some(g.to_u32() as u16).filter(|g| *g != 0);
+                }
+            }
             charmap
                 .map(ch)
                 .map(|g| g.to_u32() as u16)

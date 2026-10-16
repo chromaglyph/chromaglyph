@@ -19,9 +19,12 @@ tokenize+theme → compile → fontbuild → verify
    TextMate 语法解析，再在**每个主题**下把每个字符解析成具体颜色（颜色 == 主题默认前景色
    视为「未着色」）。主题支持 VS Code JSON（含 JSONC、`include` 链合并）与 `.tmTheme`。
 2. **compile**（核心创新，slot 模型）：一个 **slot** = 一个去重后的「逐主题颜色向量」；
-   字符只要在任一主题下着色就属于联合结构。每个着色 run 生成一条链式上下文替换规则
-   （GSUB ChainContext format 2），上下文取**恰好能唯一锚定该出现位置的最小窗口**，
-   并在全部块的全局范围内做假匹配审计：
+   字符只要在任一主题下着色就属于联合结构。编译在**整形视图**上进行——变体选择符
+   （emoji 后缀 FE0F 等）对整形器不可见，视为透明、不切断 run；无字形字符（换行、
+   emoji）是硬屏障，规则上下文永不跨越（浏览器 fallback 会把它们移出本字体的整形
+   run）；`base+VS` 可经源字体 cmap14（UVS）解析为变体字形。每个着色 run 生成一条
+   链式上下文替换规则（GSUB ChainContext format 2），上下文取**恰好能唯一锚定该
+   出现位置的最小窗口**，并在全部块的全局范围内做假匹配审计：
    - 上下文类别（class）同时包含基础字形和全部彩色副本 → 规则与替换顺序无关；
    - 长 token（注释、字符串）按 64 字形的整形器上下文预算切段，链式接力；
    - 含无字形字符的 token（行尾换行、emoji）在断点切开，周围继续染色；
@@ -62,7 +65,16 @@ tokenize+theme → compile → fontbuild → verify
 - **0.1.0 已发布**：crates.io `chromaglyph-core` / `chromaglyph-cli`；npm
   `@chromaglyph/node`（+ darwin-arm64 平台包）、`@chromaglyph/remark`、
   `@chromaglyph/markdown-it`（其余平台二进制走 `.github/workflows/napi.yml` CI 矩阵）
-- [ ] M4：tree-sitter 语义 token、cmap14/variation-selector 路线、任意代码的通用模式
+- [x] **M4a** cmap14 / variation selector：
+  - 整形视图：变体选择符（FE00–FE0F、180B–180F、E0100–E01EF）与零宽控制符
+    （200B–200F）透明——不切断着色 run、不占规则窗口位置、不再误报 warning
+  - 无字形字符是硬屏障：规则上下文（backtrack/lookahead）永不跨越（浏览器
+    fallback 分段语义；此前跨屏障窗口「oracle 绿但浏览器不命中」的隐患修复）
+  - cmap14（UVS）：源字体带 format 14 子表时原样透传，`base+VS` 解析为变体字形
+    并按其建规则（e2e 用注入 cmap14 的 fixture 字体验证 oracle 全绿）
+  - oracle 改为按 cluster 对齐（rustybuzz 会为 VS 多产 glyph、浏览器则删除，
+    两者行为不同，cluster 对齐对两种实现都正确）
+- [ ] M4：tree-sitter 语义 token、任意代码的通用模式
 
 ## 用法
 

@@ -105,12 +105,14 @@ const SEGMENT_MAX_INPUT: usize = 48;
 
 /// Compile colorized blocks into a glyph plan.
 ///
-/// `charmap` resolves chars to base glyph ids; `num_source_glyphs` is where
+/// `charmap` resolves chars to base glyph ids; when the next char is a
+/// variation selector it is passed along so the closure can resolve the
+/// sequence through the font's cmap14 (UVS). `num_source_glyphs` is where
 /// alt glyph ids start; `theme_fgs` backs the CPAL palette fallback color
 /// (one entry per theme, parallel to `PreparedBlock::colors`).
 pub fn compile(
     blocks: &[PreparedBlock<'_>],
-    charmap: &dyn Fn(char) -> Option<u16>,
+    charmap: &dyn Fn(char, Option<char>) -> Option<u16>,
     num_source_glyphs: u16,
     theme_fgs: &[Color],
 ) -> Result<GlyphPlan, BuildError> {
@@ -157,10 +159,23 @@ pub fn compile(
                     next
                 }))
             };
+            // a following variation selector may remap this char through
+            // the font's cmap14 (UVS); hidden controls themselves produce
+            // no glyph — the shaper drops them
+            let next_vs = block
+                .text
+                .get(byte + ch.len_utf8()..)
+                .and_then(|rest| rest.chars().next())
+                .filter(|&next| is_variation_selector(next));
+            let gid = if is_shaper_hidden(ch) {
+                None
+            } else {
+                charmap(ch, next_vs)
+            };
             cells.push(Cell {
                 byte_start: byte,
                 ch,
-                gid: charmap(ch),
+                gid,
                 block: block_idx,
                 pal,
             });
@@ -177,6 +192,41 @@ pub fn compile(
         block_ranges.push((start, end));
     }
     let uncolored_cells = cells.iter().filter(|c| c.pal.is_none()).count();
+
+    // ---- shaping view -----------------------------------------------------
+    // How the shaper of *this* font turns cells into glyphs: hidden
+    // controls (variation selectors, zero-width format controls) produce no
+    // glyph at all; unmapped chars produce .notdef and, in a browser, leave
+    // this font's shaping run entirely (font fallback itemization), so they
+    // are hard separators for rule contexts. `seq` models exactly that
+    // adjacency: one entry per mapped cell, `-1` at every unmapped cell and
+    // block boundary. Rules and their contexts live in this space; `-1`
+    // never enters a rule because windows stop at separators.
+    // `cell_at` is aligned with `seq` positions (u32::MAX at separators,
+    // never dereferenced — matches cover only real glyph positions).
+    let mut shaped_pos: Vec<i32> = vec![-1; cells.len()];
+    let mut cell_at: Vec<u32> = Vec::new();
+    let mut seq: Vec<i32> = Vec::new();
+    for &(lo, hi) in &block_ranges {
+        for i in lo..hi {
+            if is_shaper_hidden(cells[i].ch) {
+                continue;
+            }
+            match cells[i].gid {
+                Some(gid) => {
+                    shaped_pos[i] = seq.len() as i32;
+                    cell_at.push(i as u32);
+                    seq.push(i32::from(gid));
+                }
+                None => {
+                    cell_at.push(u32::MAX);
+                    seq.push(-1);
+                }
+            }
+        }
+        cell_at.push(u32::MAX);
+        seq.push(-1); // matches never cross block boundaries
+    }
 
     // ---- occurrences: maximal runs of cells with the same slot -----------
     // Adjacent same-slot tokens merge; rules operate on glyph runs.
@@ -198,18 +248,22 @@ pub fn compile(
     }
 
     // ---- split occurrences at unmapped chars ------------------------------
-    // A char with no cmap entry shapes to .notdef, which has no colored
-    // copy. Grammars often scope such chars into tokens (a trailing newline
-    // in a line comment, an emoji inside a string), so instead of degrading
-    // the whole token we cut the run at every unmapped cell: the unmapped
-    // cell stays on the base foreground, its mapped neighbors keep coloring.
+    // A char with no cmap entry and no shaper-side hiding is a barrier: it
+    // shapes to .notdef here, and in a browser it moves to a fallback font,
+    // breaking the shaping run. Grammars often scope such chars into tokens
+    // (a trailing newline in a line comment, an emoji inside a string), so
+    // instead of degrading the whole token we cut the run at every barrier:
+    // the barrier cell stays on the base foreground, its mapped neighbors
+    // keep coloring. Hidden controls (variation selectors) are *not*
+    // barriers — the shaper drops them, so the mapped text around them is
+    // contiguous at shaping time and the run continues through them.
     let mut split: Vec<(usize, usize, u16)> = Vec::with_capacity(occurrences.len());
     let mut unmapped_tokens = 0usize;
     for (start, end, pal) in occurrences {
         let mut run_start: Option<usize> = None;
         let mut had_unmapped = false;
         for (i, cell) in cells.iter_mut().enumerate().take(end).skip(start) {
-            if cell.gid.is_some() {
+            if cell.gid.is_some() || is_shaper_hidden(cell.ch) {
                 run_start.get_or_insert(i);
             } else {
                 if let Some(s) = run_start.take() {
@@ -247,14 +301,10 @@ pub fn compile(
     }
 
     // ---- global match index ----------------------------------------------
-    // The audit below asks, per segment, "where else does this glyph
-    // sequence occur in the whole text?". A suffix array over the flattened
-    // glyph sequence answers in O(m log n) instead of rescanning every cell
-    // on every window-growth step (the old audit was O(n²) overall). The
-    // sequence is 1:1 with cells; cross-block matches are filtered out when
-    // candidates are collected.
-    let seq: Vec<i32> = cells.iter().map(|c| i32::from(c.gid.unwrap_or(0))).collect();
-    let matcher = Matcher::new(seq);
+    // A suffix array over `seq` answers "where else does this glyph
+    // sequence occur?" in O(m log n) instead of rescanning every cell on
+    // every window-growth step.
+    let matcher = Matcher::new(seq.clone());
 
     // ---- minimal distinguishing contexts + global audit -----------------
     // Unresolvable occurrences degrade to uncolored + warning instead of
@@ -267,9 +317,12 @@ pub fn compile(
     loop {
         let mut failures: Vec<usize> = Vec::new();
         for (i, &(start, end, pal)) in active.iter().enumerate() {
-            let unresolvable = segments(start, end).any(|(s, e)| {
-                let cands = candidates(&matcher, &mut cand_cache, &cells, s, e);
-                build_rule(&cells, &block_ranges, &class_of, s, e, pal, &cands).is_none()
+            let Some((s, e)) = shaped_span(&shaped_pos, start, end) else {
+                continue; // no glyph to color (only hidden controls)
+            };
+            let unresolvable = segments(s, e).any(|(ss, se)| {
+                let cands = candidates(&matcher, &mut cand_cache, ss, se);
+                build_rule(&seq, &cells, &cell_at, &class_of, ss, se, pal, &cands).is_none()
             });
             if unresolvable {
                 failures.push(i);
@@ -298,9 +351,13 @@ pub fn compile(
     }
     let mut rules: Vec<Rule> = Vec::new();
     for &(start, end, pal) in &active {
-        for (s, e) in segments(start, end) {
-            let cands = candidates(&matcher, &mut cand_cache, &cells, s, e);
-            if let Some(rule) = build_rule(&cells, &block_ranges, &class_of, s, e, pal, &cands) {
+        let Some((s, e)) = shaped_span(&shaped_pos, start, end) else {
+            continue;
+        };
+        for (ss, se) in segments(s, e) {
+            let cands = candidates(&matcher, &mut cand_cache, ss, se);
+            if let Some(rule) = build_rule(&seq, &cells, &cell_at, &class_of, ss, se, pal, &cands)
+            {
                 rules.push(rule);
             }
         }
@@ -325,8 +382,10 @@ pub fn compile(
     // ---- alt glyphs: one colored copy per (base glyph, slot) -------------
     let mut pairs: HashSet<(u16, u16)> = HashSet::new();
     for &(start, end, pal) in &active {
-        for cell in &cells[start..end] {
-            pairs.insert((cell.gid.expect("active occurrences are mapped"), pal));
+        if let Some((s, e)) = shaped_span(&shaped_pos, start, end) {
+            for &g in &seq[s..e] {
+                pairs.insert((g as u16, pal));
+            }
         }
     }
     let mut pairs: Vec<(u16, u16)> = pairs.into_iter().collect();
@@ -365,60 +424,103 @@ fn segments(start: usize, end: usize) -> impl Iterator<Item = (usize, usize)> {
         .map(move |off| (start + off, (start + off + seg).min(end)))
 }
 
-/// Cached candidate positions for the segment `[start, end)`: every other
-/// position carrying the same glyph sequence *within one block* (matches
-/// crossing a block boundary cannot falsely fire — rules never cross
-/// blocks). Sequence matches are independent of the fixed point loop, so
-/// this is computed once per segment.
+/// Shaped span `[s, e)` of a cell-range occurrence: the shaped positions
+/// of its mapped cells (contiguous in `seq`: hidden controls contribute
+/// nothing and occurrences contain no barriers after splitting). `None`
+/// when the occurrence has no mapped cell at all.
+fn shaped_span(shaped_pos: &[i32], start: usize, end: usize) -> Option<(usize, usize)> {
+    let mut s = None;
+    let mut e = 0;
+    for &i in &shaped_pos[start..end] {
+        if i >= 0 {
+            let p = i as usize;
+            s.get_or_insert(p);
+            e = p + 1;
+        }
+    }
+    s.map(|s| (s, e))
+}
+
+/// Chars the shaper hides entirely (produces no glyph for) when the font
+/// does not map them: variation selectors plus zero-width/bidi format
+/// controls. These are transparent to rule building: they never split an
+/// occurrence and occupy no position in the shaping view.
+pub(crate) fn is_shaper_hidden(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{FE00}'..='\u{FE0F}'      // variation selectors 1–16
+            | '\u{180B}'..='\u{180F}' // Mongolian selectors + FVS4
+            | '\u{E0100}'..='\u{E01EF}' // ideographic selectors
+            | '\u{200B}'..='\u{200F}' // ZWSP/ZWNJ/ZWJ/LRM/RLM
+    )
+}
+
+/// Variation selectors proper — a preceding char may be remapped through
+/// the font's cmap14 when followed by one of these.
+fn is_variation_selector(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{FE00}'..='\u{FE0F}' | '\u{180B}'..='\u{180F}' | '\u{E0100}'..='\u{E01EF}'
+    )
+}
+
+/// Cached candidate positions for the segment `[s, e)` in shaping space:
+/// every other shaped position carrying the same glyph run (separators in
+/// `seq` keep matches inside one block and one barrier-free run). Sequence
+/// matches are independent of the fixed point loop, so this is computed
+/// once per segment.
 fn candidates(
     matcher: &Matcher,
     cache: &mut HashMap<(usize, usize), Rc<Vec<u32>>>,
-    cells: &[Cell],
-    start: usize,
-    end: usize,
+    s: usize,
+    e: usize,
 ) -> Rc<Vec<u32>> {
-    if let Some(rc) = cache.get(&(start, end)) {
+    if let Some(rc) = cache.get(&(s, e)) {
         return rc.clone();
     }
-    let m = end - start;
     let rc: Rc<Vec<u32>> = Rc::new(
         matcher
-            .matches(start, m)
+            .matches(s, e - s)
             .iter()
             .copied()
-            .map(|p| p as usize)
-            .filter(|&p| p != start && cells[p + m - 1].block == cells[p].block)
-            .map(|p| p as u32)
+            .filter(|&q| q as usize != s)
             .collect(),
     );
-    cache.insert((start, end), rc.clone());
+    cache.insert((s, e), rc.clone());
     rc
 }
 
-/// Build one contextual rule for `[start, end)` in slot `pal`: grow the
-/// backtrack/lookahead window minimally until no false match remains, staying
-/// inside the shaper's rule budget. `None` if the occurrence cannot be
-/// uniquely pinned (caller degrades it to uncolored).
+/// Build one contextual rule for the shaped segment `[s, e)` in slot
+/// `pal`: grow the backtrack/lookahead window minimally until no false
+/// match remains, staying inside the shaper's rule budget. `None` if the
+/// occurrence cannot be uniquely pinned (caller degrades it to uncolored).
+#[allow(clippy::too_many_arguments)] // independent coordinates of one probe
 fn build_rule(
+    seq: &[i32],
     cells: &[Cell],
-    block_ranges: &[(usize, usize)],
+    cell_at: &[u32],
     class_of: &HashMap<u16, u16>,
-    start: usize,
-    end: usize,
+    s: usize,
+    e: usize,
     pal: u16,
     cands: &[u32],
 ) -> Option<Rule> {
-    let m = end - start;
+    let m = e - s;
     debug_assert!(m < SHAPER_MAX_CONTEXT, "segments leave room for context");
     let budget = SHAPER_MAX_CONTEXT - m; // max backtrack + lookahead combined
-    let (block_start, block_end) = block_ranges[cells[start].block];
-    let max_l = (start - block_start).min(budget);
-    let max_r = (block_end - end).min(budget);
+    // windows stop at separators: contexts never legitimately cross an
+    // unmapped char (font fallback moves it out of this font's run) or a
+    // block boundary
+    let max_l = (0..s).rev().take_while(|&k| seq[k] >= 0).count().min(budget);
+    let max_r = (e..seq.len())
+        .take_while(|&k| seq[k] >= 0)
+        .count()
+        .min(budget);
     let mut l = 0usize;
     let mut r = 0usize;
     let mut grow_left = true;
     loop {
-        if audit(cells, block_ranges, start, end, pal, l, r, cands).is_some() {
+        if audit(seq, cells, cell_at, s, e, pal, l, r, cands).is_some() {
             let can_l = l < max_l && l + r < budget;
             let can_r = r < max_r && l + r < budget;
             if can_l && (grow_left || !can_r) {
@@ -431,15 +533,10 @@ fn build_rule(
                 return None; // unresolvable within the 64-glyph budget
             }
         } else {
-            let backtrack = (1..=l)
-                .map(|k| class_of[&cells[start - k].gid.unwrap_or(0)])
-                .collect();
-            let input = cells[start..end]
-                .iter()
-                .map(|c| class_of[&c.gid.expect("occurrence cells are mapped")])
-                .collect();
+            let backtrack = (1..=l).map(|k| class_of[&(seq[s - k] as u16)]).collect();
+            let input = seq[s..e].iter().map(|&g| class_of[&(g as u16)]).collect();
             let lookahead = (1..=r)
-                .map(|k| class_of[&cells[end + k - 1].gid.unwrap_or(0)])
+                .map(|k| class_of[&(seq[e + k - 1] as u16)])
                 .collect();
             return Some(Rule {
                 backtrack,
@@ -451,43 +548,45 @@ fn build_rule(
     }
 }
 
-/// Check whether a rule for occurrence `[start, end)` with window `(l, r)`
-/// would falsely fire at any candidate position. Returns the first conflicting
-/// position (cell index) if so.
+/// Check whether a rule for the shaped segment `[s, e)` with window `(l, r)`
+/// would falsely fire at any candidate position. Returns the first
+/// conflicting position (shaped index) if so.
 ///
-/// `cands` holds every position `p != start` whose glyph sequence equals the
-/// occurrence's within `p`'s own block (see [`Matcher`]). The rule falsely
-/// fires at `p` iff, within `p`'s block:
-///  - `p >= l` and `p + m + r <= block_end`,
-///  - the `l` glyphs before and `r` glyphs after equal the occurrence's, and
-///  - some covered glyph was *not* intended to carry this slot.
+/// A candidate `q` falsely fires iff its glyph run equals the occurrence's
+/// and the `l` glyphs before and `r` glyphs after also match. Comparisons
+/// happen in `seq` space, so a window crossing a separator (`-1`) can never
+/// equal a window of real glyph ids — barrier and block clamping fall out
+/// of the equality itself. A firing is harmless iff every covered cell
+/// already intends this slot.
 ///
-/// Class ids are 1:1 with base glyphs, so comparing base glyph ids at build
-/// time is exactly the class-level match at run time (see invariant 1).
+/// Class ids are 1:1 with base glyphs, so comparing glyph ids at build time
+/// is exactly the class-level match at run time (see invariant 1).
 #[allow(clippy::too_many_arguments)] // independent coordinates of one probe
 fn audit(
+    seq: &[i32],
     cells: &[Cell],
-    block_ranges: &[(usize, usize)],
-    start: usize,
-    end: usize,
+    cell_at: &[u32],
+    s: usize,
+    e: usize,
     pal: u16,
     l: usize,
     r: usize,
     cands: &[u32],
 ) -> Option<usize> {
-    let m = end - start;
+    let m = e - s;
 
-    for &p in cands {
-        let p = p as usize;
-        // window containment within p's block
-        let (p_lo, p_hi) = block_ranges[cells[p].block];
-        if p - p_lo < l || p_hi - (p + m) < r {
+    for &q in cands {
+        let q = q as usize;
+        // the rule cannot fire where its window does not physically fit
+        // (start/end of the whole glyph stream); inside it, separators
+        // reject crossings by mere inequality
+        if q < l || q + m + r > seq.len() {
             continue;
         }
-        // backtrack equality
+        // backtrack equality (a `-1` separator never equals a glyph id)
         let mut equal = true;
         for k in 1..=l {
-            if cells[p - k].gid.unwrap_or(0) != cells[start - k].gid.unwrap_or(0) {
+            if seq[q - k] != seq[s - k] {
                 equal = false;
                 break;
             }
@@ -498,7 +597,7 @@ fn audit(
         // lookahead equality
         let mut equal = true;
         for k in 1..=r {
-            if cells[p + m + k - 1].gid.unwrap_or(0) != cells[end + k - 1].gid.unwrap_or(0) {
+            if seq[q + m + k - 1] != seq[e + k - 1] {
                 equal = false;
                 break;
             }
@@ -506,17 +605,13 @@ fn audit(
         if !equal {
             continue;
         }
-        // The rule would fire at p. Harmless iff every covered cell is
-        // already intended to carry this slot.
-        let mut differs = false;
-        for i in 0..m {
-            if cells[p + i].pal != Some(pal) {
-                differs = true;
-                break;
-            }
-        }
-        if differs {
-            return Some(p);
+        // The rule would fire at q. Harmless iff every covered cell —
+        // including hidden controls inside the span — is already intended
+        // to carry this slot.
+        let lo = cell_at[q] as usize;
+        let hi = cell_at[q + m - 1] as usize + 1;
+        if cells[lo..hi].iter().any(|c| c.pal != Some(pal)) {
+            return Some(q);
         }
     }
     None
@@ -625,7 +720,7 @@ mod tests {
         _extra: &[&[(usize, usize, Option<Color>)]],
         _extra_fgs: &[Color],
     ) -> GlyphPlan {
-        let charmap = |ch: char| -> Option<u16> {
+        let charmap = |ch: char, _vs: Option<char>| -> Option<u16> {
             match ch {
                 'a'..='z' => Some(10 + (ch as u16 - 'a' as u16)),
                 ' ' => Some(2),
@@ -705,7 +800,9 @@ mod tests {
     fn cross_block_identical_colors_degrade_not_fail() {
         // same text, different colors in two single-cell blocks: any rule
         // would fire in both, so both degrade with warnings
-        let charmap = |ch: char| -> Option<u16> { Some(10 + (ch as u16 - 'a' as u16)) };
+        let charmap = |ch: char, _vs: Option<char>| -> Option<u16> {
+            Some(10 + (ch as u16 - 'a' as u16))
+        };
         let mk = |color: Option<Color>| PreparedBlock {
             id: "b".into(),
             text: "ab",
@@ -750,7 +847,9 @@ mod tests {
     #[test]
     fn slots_dedupe_color_vectors() {
         // two themes, same structure -> slots count == distinct color pairs
-        let charmap = |ch: char| -> Option<u16> { Some(10 + (ch as u16 - 'a' as u16)) };
+        let charmap = |ch: char, _vs: Option<char>| -> Option<u16> {
+            Some(10 + (ch as u16 - 'a' as u16))
+        };
         let row = |color: Option<Color>, n: usize| vec![color; n];
         let blocks = vec![PreparedBlock {
             id: "b".into(),
@@ -763,9 +862,72 @@ mod tests {
     }
 
     #[test]
+    fn variation_selectors_are_transparent() {
+        // "a" + VS16 + "b" in one colored run: the VS has no glyph and must
+        // not split the run — one rule covering both sides, no warnings
+        let plan = plan_for(&[("a\u{FE0F}b", &[(0, 3, Some(BLUE))])]);
+        assert_eq!(plan.warnings.len(), 0);
+        assert_eq!(plan.rules.len(), 1);
+        assert_eq!(plan.rules[0].input.len(), 2, "input covers a and b only");
+        assert_eq!(plan.alt_glyphs.len(), 2);
+    }
+
+    #[test]
+    fn contexts_never_cross_unmapped_barriers() {
+        // "aa" blue | X (no glyph) | "aa" red: distinguishing the two "aa"
+        // would require a context across X, which browsers never honor
+        // (font fallback moves X out of this font's shaping run) — both
+        // occurrences degrade with warnings instead
+        let charmap = |ch: char, _vs: Option<char>| -> Option<u16> {
+            match ch {
+                'a' => Some(10),
+                _ => None,
+            }
+        };
+        let blocks = vec![PreparedBlock {
+            id: "b".into(),
+            text: "aaXaa",
+            colors: vec![vec![Some(BLUE), Some(BLUE), None, Some(RED), Some(RED)]],
+        }];
+        let plan = compile(&blocks, &charmap, 100, &[Color::rgb(0xd4, 0xd4, 0xd4)]).unwrap();
+        assert!(!plan.warnings.is_empty());
+        assert!(
+            plan.cells.iter().all(|c| c.pal.is_none() || c.gid.is_none()),
+            "ambiguous occurrences must degrade"
+        );
+        assert!(plan.rules.is_empty());
+    }
+
+    #[test]
+    fn uvs_sequence_uses_variant_glyph() {
+        // base + VS16 resolved through cmap14: the base cell carries the
+        // variant glyph id and the VS itself is transparent
+        let charmap = |ch: char, vs: Option<char>| -> Option<u16> {
+            match (ch, vs) {
+                ('x', Some('\u{FE0F}')) => Some(42), // the UVS glyph
+                (c, _) => match c {
+                    'a'..='z' => Some(10 + (c as u16 - 'a' as u16)),
+                    _ => Some(3),
+                },
+            }
+        };
+        let blocks = vec![PreparedBlock {
+            id: "b".into(),
+            text: "x\u{FE0F}",
+            colors: vec![vec![Some(BLUE), Some(BLUE)]],
+        }];
+        let plan = compile(&blocks, &charmap, 100, &[Color::rgb(0xd4, 0xd4, 0xd4)]).unwrap();
+        assert_eq!(plan.cells[0].gid, Some(42));
+        assert_eq!(plan.alt_glyphs.len(), 1);
+        assert_eq!(plan.alt_glyphs[0].0, 42, "colored copy of the UVS glyph");
+        assert_eq!(plan.rules.len(), 1);
+        assert_eq!(plan.rules[0].input.len(), 1);
+    }
+
+    #[test]
     fn matcher_finds_exact_and_overlapping() {
         // two "abab"/"ab" texts flattened; the matcher is a pure value
-        // index — block semantics are enforced by `candidates`
+        // index — block semantics are enforced by the separators in seq
         let seq = vec![1, 2, 1, 2, 1, 2];
         let m = Matcher::new(seq);
         let mut found = m.matches(0, 2).to_vec(); // "ab"
