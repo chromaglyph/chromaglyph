@@ -9,3 +9,5 @@ minimumReleaseAgeExclude:
   - '@chromaglyph/node-linux-x64-gnu@0.2.0'
   - '@chromaglyph/node-linux-x64-musl@0.2.0'
   - '@chromaglyph/node-win32-x64-msvc@0.2.0'
+allowBuilds:
+  esbuild: true
