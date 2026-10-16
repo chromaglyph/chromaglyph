@@ -55,9 +55,12 @@ jobs:
         with:
           version: 12
 
+      # registry-url writes ~/.npmrc wiring NODE_AUTH_TOKEN into npm for the
+      # publish step (npm itself never reads the env var directly)
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          registry-url: https://registry.npmjs.org
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -100,7 +103,14 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           PKG="npm/@chromaglyph/node-${{ matrix.platform }}"
+          NAME="@chromaglyph/node-${{ matrix.platform }}"
           VERSION=$(node -p "require('./crates/chromaglyph-node/package.json').version")
+          # idempotent: a platform already published (e.g. manually, or a
+          # re-pushed tag) skips instead of failing the whole run
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION already on npm, skipping"
+            exit 0
+          fi
           node -e "
             const fs = require('fs');
             const p = process.argv[1];
@@ -109,4 +119,50 @@ jobs:
             fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
           " "$PKG/package.json" "$VERSION"
           cd "$PKG"
+          npm publish --access public --provenance
+
+  # The matrix above only ships the platform binaries; the root
+  # @chromaglyph/node package (loader + types + css.mjs) is published here so
+  # a release tag produces the complete set without manual steps.
+  publish-root:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: publish-root
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      # host build regenerates index.js / index.d.ts (gitignored) so the
+      # root package ships its loader entrypoints
+      - name: Build
+        run: pnpm --filter @chromaglyph/node exec napi build --release --platform
+
+      - name: Publish @chromaglyph/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./crates/chromaglyph-node/package.json').version")
+          if npm view "@chromaglyph/node@$VERSION" version >/dev/null 2>&1; then
+            echo "@chromaglyph/node@$VERSION already on npm, skipping"
+            exit 0
+          fi
+          cd crates/chromaglyph-node
           npm publish --access public --provenance
