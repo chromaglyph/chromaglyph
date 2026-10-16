@@ -19,15 +19,32 @@ const file = await unified()
   .process(markdown)
 ```
 
-- **批处理合并**：all fenced code blocks of a document batch into ONE font
-  (multi-language global disambiguation included)
-- **零配置**：the font is inlined as a data: URI in an injected `<style>`
-  (set `embed: false` + `outDir` to emit files instead)
-- **静默降级**：any build failure renders the document unhighlighted — your
-  site build never breaks
-- **缓存**：content-hash cache (in-process + optional on-disk `cacheDir`)
-- Scopes `font-family` to `[data-chromaglyph]` so prose is never affected;
-  themes become `@font-palette-values` (dark/light auto-switching when two
-  themes are given)
+- **One font per document**: every fenced code block batches into a
+  single font, with cross-language disambiguation handled globally.
+- **Zero config**: the font is inlined as a data: URI in an injected
+  `<style>` (set `embed: false` plus `outDir` to emit files instead).
+- **Silent degradation**: any build failure renders the document
+  unhighlighted — your site build never breaks.
+- **Cached**: content-hash cache (in-process, plus an optional on-disk
+  `cacheDir`).
+- `font-family` is scoped to `[data-chromaglyph]` so prose is never
+  affected; themes become `@font-palette-values` (dark/light
+  auto-switching when two themes are given).
 
 Inspect `file.data.chromaglyph` for `{ cached, contentHash, css, warnings }`.
+
+## Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `font` | — | **Required.** Path or buffer of a static TrueType font (e.g. JetBrains Mono). |
+| `themes` | `['dark-plus', 'light-plus']` | Builtin theme names or paths to VS Code `.json` / TextMate `.tmTheme` files. |
+| `langs` | `null` | Filter fences by language (`['rust', 'ts']`); `null` takes every fenced block. |
+| `embed` | `true` | Inline the font as a data: URI; `false` emits files into `outDir`. |
+| `outDir` | `'chromaglyph-out'` | Where emitted font/CSS assets go (`embed: false`). |
+| `verify` | `true` | Run the rustybuzz oracle over the produced font before shipping it. |
+| `cacheDir` | — | Optional on-disk cache directory for incremental site builds. |
+
+## License
+
+Apache-2.0

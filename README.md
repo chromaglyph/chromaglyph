@@ -182,7 +182,7 @@ WOFF2 编码器（需要 Brotli + woff2 变换栈），v1 先退 WOFF1，浏览�
 
 ```sh
 cargo build --release
-cargo test                                        # 52 tests（含 4 语言 generic oracle）
+cargo test                                        # 61 tests（含 6 语言 generic oracle + 4 语言语义层）
 cargo run -p chromaglyph -- build --font crates/chromaglyph-core/tests/fixtures/JetBrainsMono-Regular.ttf \
     --input examples/hello.rs --output target/demo/chromaglyph-demo.woff --css target/demo/chromaglyph-demo.css
 python3 -m http.server -d target/demo 8143        # 打开 index.html 看明暗双调色板
