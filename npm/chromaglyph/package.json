@@ -1,6 +1,6 @@
 {
   "name": "chromaglyph",
-  "version": "0.0.1",
+  "version": "0.1.3",
   "description": "Chromaglyph compiles syntax highlighting into OpenType color fonts (COLR + CPAL + exact-mode GSUB). This is a name reservation; the npm-distributed CLI is coming.",
   "license": "Apache-2.0",
   "repository": {

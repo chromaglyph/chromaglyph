@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.3 (2026-10-17)
+
 - **generic mode v1.2 — more languages** (`--generic js | ts | python`
   alongside `rust`): the language spec model is generalized from one
     quote character to multiple string kinds (JS `"`, `'` and `` ` ``
