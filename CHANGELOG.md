@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 (2026-10-17)
+
 - **semantic layer: JS, TS and Python** (`--semantic` /
   `buildFont({semantic: true})`): the tree-sitter overlay now covers
   function/method definitions and calls, parameters (including TS
