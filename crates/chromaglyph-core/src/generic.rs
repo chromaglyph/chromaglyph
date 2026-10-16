@@ -14,7 +14,10 @@
 //! - **strings**: any number of single-character quote kinds (JS `"`
 //!   `'` `` ` ``); the opening quote enters the string state, the closing
 //!   quote substitutes into a distinct *end* class so propagation stops
-//!   right after it.
+//!   right after it. **Escapes**: `\` plus any one glyph substitute to
+//!   body as a pair, so `\"` cannot close the string and `\\` leaves the
+//!   state running (the escaped quote leaves the quote class before the
+//!   close rule can see it).
 //! - **spans**: multi-character delimited states — line comments, block
 //!   comments, Python-style triple-quoted strings. A `"""` opener beats
 //!   the simple `"` string because openers match longest-first.
@@ -57,11 +60,12 @@
 //! same rule set under every theme; `@font-palette-values` flips themes
 //! with no re-shaping.
 //!
-//! v1.2 scope: keyword groups, multiple quote kinds per language,
-//! line/block comments, triple-quoted strings, numbers — all
-//! **line-scoped**; no escapes, no nested interpolation (`${…}` is
-//! colored as string body); a single language per font. Built-in specs:
-//! Rust, JavaScript, TypeScript, Python.
+//! v1.2 scope: keyword groups, multiple quote kinds per language with
+//! escape pairs, line/block comments, triple-quoted strings, numbers —
+//! all **line-scoped**; no nested interpolation (`${…}` is colored as
+//! string body; triple-quoted spans do not process escapes, so a `\"""`
+//! edge there closes textually); a single language per font. Built-in
+//! specs: Rust, JavaScript, TypeScript, Python.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -581,6 +585,15 @@ pub fn synthesize(
         id
     });
     let c_dot = *c_dot;
+    // the escape char drives two-glyph pair rules inside strings, so it
+    // needs its own class too (it stops being a plain keyword boundary,
+    // like the dot)
+    let c_esc = char_class.entry('\\').or_insert_with(|| {
+        let id = next_class;
+        next_class += 1;
+        id
+    });
+    let c_esc = *c_esc;
     let c_nl = next_class;
     next_class += 1;
     // .notdef is its own class, referenced by no rule: an unmapped char in
@@ -734,9 +747,10 @@ pub fn synthesize(
             }
         }
     }
-    // string delimiters + bodies (body copies only for classes a rule can
-    // actually propagate over — the close rule owns the quote glyph)
-    for (k, s) in spec.strings.iter().enumerate() {
+    // string delimiters + bodies (every mapped glyph gets a body copy,
+    // including the quote itself — the escape pair rule substitutes an
+    // escaped quote to body; a plain quote still closes via rule order)
+    for (k, _s) in spec.strings.iter().enumerate() {
         let Some(q) = quote_gid[k] else { continue };
         push_alt(
             &mut next_new,
@@ -754,10 +768,12 @@ pub fn synthesize(
             c_end_state,
             &mut class_of,
         );
-        let quote_class = char_class[&s.quote];
         for &gid in &gids {
             let class = class_of[&gid];
-            let body = class != quote_class && class != c_notdef && class != c_nl;
+            // the quote glyph gets a body copy too: an ESCAPED quote is
+            // substituted by the pair rule and must leave the quote class
+            // (a plain quote still closes — that is rule order, not alts)
+            let body = class != c_notdef && class != c_nl;
             if body {
                 push_alt(
                     &mut next_new,
@@ -970,6 +986,31 @@ pub fn synthesize(
                 .or_default()
                 .extend(rules.iter().cloned());
         }
+        // escape pairs: inside a string, `\` plus ANY one glyph substitute
+        // to body in a single rule. The shaper then walks past an escaped
+        // quote that has already left the quote class, so `\"` cannot
+        // close the string and `\\` leaves the state running. Must precede
+        // the single-glyph propagation below so the pair wins at the
+        // backslash; spans (comments, triple quotes) get no pairs —
+        // backslash has no meaning there and would suppress real closers
+        if class == c_esc {
+            for (k, _s) in spec.strings.iter().enumerate() {
+                if quote_gid[k].is_none() {
+                    continue;
+                }
+                for &x in &present {
+                    if x == c_notdef || x == c_nl {
+                        continue;
+                    }
+                    by_class.entry(class).or_default().push(Rule {
+                        backtrack: vec![str_state[k]],
+                        input: vec![c_esc, x],
+                        lookahead: vec![],
+                        pal: layout.str_body[k],
+                    });
+                }
+            }
+        }
         for (j, _span) in spec.spans.iter().enumerate() {
             // every span dies at the newline — line-scoped by browser
             // necessity, line comment and block comment alike
@@ -1105,7 +1146,7 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
     let mut out = vec![Tok::Plain; chars.len()];
     // a word boundary glyph: mapped, not an identifier char, not a
     // newline, and not one of the delimiter chars that live in their own
-    // classes
+    // classes (quotes, span delimiters, the dot, the escape char)
     let boundary = |c: char| {
         mapped(c)
             && c != '\n'
@@ -1117,6 +1158,7 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                 .iter()
                 .any(|s| s.open.contains(c) || s.close.contains(c))
             && c != '.'
+            && c != '\\'
     };
     let starts = |i: usize, delim: &str| -> bool {
         let cs: Vec<char> = delim.chars().collect();
@@ -1180,6 +1222,21 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                     out[i] = Tok::StrClose(k);
                     i += 1;
                     break;
+                }
+                // escape pair: `\` + any mapped non-newline glyph becomes
+                // body in one step (mirrors the font's pair rule), so the
+                // escaped quote never closes and `\\` keeps the state
+                if c == '\\'
+                    && mapped(c)
+                    && i + 1 < chars.len()
+                    && mapped(chars[i + 1])
+                    && chars[i + 1] != '\n'
+                    && chars[i + 1] != '\r'
+                {
+                    out[i] = Tok::StrBody(k);
+                    out[i + 1] = Tok::StrBody(k);
+                    i += 2;
+                    continue;
                 }
                 if !mapped(c) || c == '\n' || c == '\r' {
                     break; // barrier or line end: state dies
@@ -1296,7 +1353,13 @@ pub fn sample_texts(spec: &LanguageSpec) -> Vec<String> {
         pieces.push(s.quote.to_string());
         pieces.push(format!("{}ab{}", s.quote, s.quote));
         pieces.push(format!("{}a\nb{}", s.quote, s.quote));
+        // escape pairs: `\"` must not close, `\\` must not eat the closer
+        pieces.push(format!("{}a\\\"b{}", s.quote, s.quote));
+        pieces.push(format!("{}\\\\{}", s.quote, s.quote));
+        pieces.push(format!("{}x\\", s.quote)); // dangling escape
     }
+    pieces.push("\\".into());
+    pieces.push("\\\\".into());
     for sp in spec.spans {
         pieces.push(sp.open.to_string());
         if sp.close.is_empty() {
@@ -1332,7 +1395,9 @@ fn curated(name: &str) -> Vec<String> {
             "const s = 'fn // let';",
             "// 'quoted' comment\nlet y;",
             "let s = \"a'b`c\";",
+            "let q = 'it\\'s'; let r = \"a\\\"b\";",
             "let t = `x ${y} z`;",
+            "let u = `tick \\` inside`;",
             "`multi\nline\ntemplate`",
             "'' \"\" ``",
             "'a\"b' \"c'd\" `e\"f'g`",
@@ -1385,6 +1450,7 @@ fn curated(name: &str) -> Vec<String> {
             "# comment\ndef main():\n    pass",
             "s = \"fn # let\"",
             "s = 'single # \"q\"'",
+            "t = 'it\\'s'; u = 'a\\\\b'",
             "\"\"\"triple\nline\nstring\"\"\"",
             "'''single triple with \" inside'''",
             "\"\"\"a\"\"b\"\"\"",
@@ -1423,6 +1489,7 @@ fn curated(name: &str) -> Vec<String> {
             "a\"b\"c\"d",
             "/\n// x\n/",
             "let s = \"\";",
+            "let esc = \"quote: \\\" back: \\\\\";",
             "struct S; impl S { fn f() -> Self { Self } }",
             "/* block */ let x;",
             "/* multi\nline\ncomment */ let y;",
@@ -1620,6 +1687,53 @@ mod tests {
         assert_eq!(t[4], Tok::Plain); // coloring died with the run break
         assert_eq!(t[5], Tok::StrOpen(0)); // fresh string
         assert_eq!(t[6], Tok::StrBody(0));
+    }
+
+    // ---- escapes --------------------------------------------------------
+
+    #[test]
+    fn lex_string_escapes_do_not_close() {
+        // `\"` is body: the string survives past it and closes at the end
+        let t = toks("a = \"x\\\"y\";");
+        assert_eq!(t[4], Tok::StrOpen(0));
+        assert_eq!(&t[5..9], &[Tok::StrBody(0); 4], "x, \\, \" and y are body");
+        assert_eq!(t[9], Tok::StrClose(0), "the real closing quote closes");
+        // `\\` is a body pair; the following quote still closes
+        let t = toks("\"a\\\\\"");
+        assert_eq!(t[0], Tok::StrOpen(0));
+        assert_eq!(&t[1..4], &[Tok::StrBody(0); 3], "a and the escaped backslash");
+        assert_eq!(t[4], Tok::StrClose(0));
+        // escaped quote at the very start, then a real close
+        let t = toks("\"\\\"\"");
+        assert_eq!(t[0], Tok::StrOpen(0));
+        assert_eq!(&t[1..3], &[Tok::StrBody(0); 2]);
+        assert_eq!(t[3], Tok::StrClose(0));
+        // dangling escape at the line end: pair cannot form, the lone
+        // backslash is body and the state dies at the newline
+        let t = toks("\"x\\\nlet y");
+        assert_eq!(t[2], Tok::StrBody(0), "the lone backslash is body");
+        assert_eq!(t[3], Tok::Plain, "the newline");
+        assert_eq!(&t[4..7], &[Tok::Plain; 3]);
+    }
+
+    #[test]
+    fn lex_escapes_in_every_quote_kind() {
+        // js: single-quoted with \' and a template with \`
+        let spec = javascript();
+        let t = lex(&spec, "'it\\'s'", &|_| true);
+        assert_eq!(t[0], Tok::StrOpen(1));
+        assert_eq!(&t[1..6], &[Tok::StrBody(1); 5]);
+        assert_eq!(t[6], Tok::StrClose(1));
+        let t = lex(&spec, "`a\\`b`", &|_| true);
+        assert_eq!(t[0], Tok::StrOpen(2));
+        assert_eq!(&t[1..5], &[Tok::StrBody(2); 4], "escaped backtick is body");
+        assert_eq!(t[5], Tok::StrClose(2));
+        // python f-string with escapes behaves like any string
+        let spec = python();
+        let t = lex(&spec, "f\"a\\\"b\"", &|_| true);
+        assert_eq!(t[1], Tok::StrOpen(0));
+        assert_eq!(&t[2..6], &[Tok::StrBody(0); 4]);
+        assert_eq!(t[6], Tok::StrClose(0));
     }
 
     // ---- JavaScript -----------------------------------------------------

@@ -16,6 +16,16 @@
     deterministic-random samples per language (generated from the spec
     itself) plus adversarial suites: quote interleaving, unterminated
     states, keyword glue, barrier emoji.
+- **string escapes** (all languages): `\` plus any one glyph substitute
+  to string body as a two-glyph pair rule, so the shaper walks past an
+  escaped quote that has already left the quote class — `\"` no longer
+  closes the string early, `\\` does not swallow the closer, and a
+  dangling `\` at the line end dies with the state. Verified
+  token-by-token with pixel statistics in a real browser (escaped-quote
+  content stays string-colored; the following line highlights normally,
+  proving correct closure). Backslash has no meaning inside comments and
+  triple-quoted spans, which close textually (a `\"""` edge there is a
+  documented limitation).
 - **model correction, browser-verified**: browsers shape each source
   line of a `pre` as its own run — the `\n` is consumed as the forced
   line break, so contextual rules cannot cross it even when the font

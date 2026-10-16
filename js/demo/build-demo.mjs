@@ -101,6 +101,7 @@ const samples = {
 // a comment
 /* one-line block */ fn demo() { // fn AFTER a space anchors fine
     let s = "fn // let";
+    let esc = "quote: \\" backslash: \\\\";
     let n = 3.14;
     let m = 1.max(2);
     /* multi-line comments color
@@ -111,6 +112,7 @@ function demo() {
     const name = 'chromaglyph';
     let tmpl = \`one-line template \${name}\`;
     let empty = ""; let mixed = 'a"b';
+    let q = 'it\\'s'; let r = "a\\"b";
     if ($use) return 42;
     let multi = \`line one only,
 plain after the newline\`;
@@ -120,6 +122,7 @@ def main(): # def at line start: no anchor
     msg = "hi"
     # comment
     s = f"interp {x}"
+    u = "esc: \\" ok"
     t = '''single triple "with dq" inside'''
     return 3.14`,
 }
