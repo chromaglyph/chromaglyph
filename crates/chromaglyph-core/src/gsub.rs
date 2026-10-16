@@ -79,10 +79,14 @@ pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
         .map(|(&gid, &class)| (gid, class))
         .collect();
     class_glyphs.sort_unstable();
+    // coverage lists every glyph a rule can START on: base glyphs and
+    // injected plain glyphs (the generic-mode newline), never alt copies
+    let alt_gids: std::collections::HashSet<u16> =
+        plan.alt_glyphs.iter().map(|&(_, _, alt)| alt).collect();
     let glyphs_of_class: HashMap<u16, Vec<u16>> = {
         let mut map: HashMap<u16, Vec<u16>> = HashMap::new();
         for &(gid, class) in &class_glyphs {
-            if gid < plan.num_source_glyphs {
+            if !alt_gids.contains(&gid) {
                 map.entry(class).or_default().push(gid);
             }
         }

@@ -9,46 +9,56 @@
 //!
 //! - **keywords**: rules per keyword over 1:1 letter classes, word
 //!   boundaries via the "not an identifier char" class (plus the newline
-//!   class, so keywords at a line start color).
-//! - **line comments**: an opening rule substitutes the `//` into the
-//!   comment state; *propagation* rules (backtrack = state class, input =
-//!   one class per glyph partition) carry the color glyph by glyph; the
-//!   state ends at the newline, which has no line-comment copy.
-//! - **block comments**: string-like open/close rules around `/*` `*/`,
-//!   and the state *spans* newlines.
-//! - **strings**: the opening quote enters the string state; the closing
+//!   class, so keywords at a line start color). Keyword *groups* let one
+//!   language color `keyword.control` and `storage.type` words
+//!   differently, like a real grammar.
+//! - **strings**: any number of single-character quote kinds (JS `"`
+//!   `'` `` ` ``); the opening quote enters the string state, the closing
 //!   quote substitutes into a distinct *end* class so propagation stops
-//!   right after it. (Open/close get separate identically-colored slots
-//!   because a nested lookup maps a glyph to exactly one substitute.)
+//!   right after it. Each kind decides whether literals span newlines
+//!   (template literals do, ordinary quotes do not).
+//! - **spans**: multi-character delimited states — line comments (end at
+//!   the newline), block comments, Python-style triple-quoted strings
+//!   (both survive newlines). A `"""` opener beats the simple `"` string
+//!   because openers match longest-first.
 //! - **numbers**: a digit after a word boundary opens a number state that
 //!   propagates over identifier classes; `.` continues the state only
-//!   when a digit follows (`3.14` colors, `1.max` does not swallow `max`).
+//!   when a digit follows (`3.14` colors, `1.max` does not swallow
+//!   `max`).
 //!
 //! A newline glyph is **injected** into the output font (empty, zero
-//! width, plain — see `plain_glyphs`) so shaping runs do not break at
-//! line ends in browsers: keyword boundaries can anchor on it and block
-//! comments survive it. Unmapped chars (emoji, …) still break runs —
-//! states die there, in browsers and in the oracle alike.
+//! width, plain — see `plain_glyphs`) whenever the source font does not
+//! map `\n`, so shaping runs do not break at line ends in browsers:
+//! keyword boundaries can anchor on it and spanning states (block
+//! comments, template literals, triple-quoted strings) survive it.
+//! Unmapped chars (emoji, …) still break runs — states die there, in
+//! browsers and in the oracle alike.
 //!
-//! Two mechanisms make the states work under real shapers (which apply a
-//! contextual lookup left to right, seeing earlier substitutions in the
-//! same pass):
+//! Three mechanisms make the states work under real shapers (which apply
+//! a contextual lookup left to right, seeing earlier substitutions in
+//! the same pass):
 //!
-//! 1. **Rule order within each first-glyph rule set**: state propagation
-//!    before state terminators before state openings before keywords, so
-//!    `//` inside a string stays a string and `fn` inside a comment stays
-//!    a comment.
+//! 1. **Rule order within each first-glyph rule set**: state terminators
+//!    before state propagation before state openings (longest input
+//!    first) before keywords, so `//` inside a string stays a string and
+//!    `"""` wins over `"` at the same position.
 //! 2. **Exclusive state classes**: propagation backtracks match only
-//!    colored copies, never plain glyphs, so a state always starts at its
-//!    delimiter and always ends at its terminator.
+//!    colored copies, never plain glyphs, so a state always starts at
+//!    its delimiter and always ends at its terminator. Because at most
+//!    one state can own the glyph before the cursor, the relative order
+//!    of *different* states' rules never matters.
+//! 3. **Substituted glyphs leave their class**: a rule cannot re-fire
+//!    over glyphs it (or an earlier rule) already recolored.
 //!
 //! Everything stays slot-based: one CPAL palette per theme colors the
 //! same rule set under every theme; `@font-palette-values` flips themes
 //! with no re-shaping.
 //!
-//! v1.1 scope: keywords, `//` and `/* */` comments, one non-nested
-//! double-quoted string (no escapes, per-language newline spanning),
-//! numbers; a single language per font.
+//! v1.2 scope: keyword groups, multiple quote kinds per language
+//! (including newline-spanning template literals), line/block comments,
+//! triple-quoted strings, numbers; no escapes, no nested interpolation
+//! (`${…}` is colored as string body); a single language per font.
+//! Built-in specs: Rust, JavaScript, TypeScript, Python.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -58,47 +68,356 @@ use crate::spec::Color;
 use crate::theme::ThemeSpec;
 use crate::verify::VerifyResult;
 
+// ---- language specs --------------------------------------------------------
+
+/// A keyword group: one TextMate scope, many words. Groups let a language
+/// color control flow and declarations differently (VS Code grammars use
+/// `keyword.control` vs `storage.type`).
+pub struct KeywordGroup {
+    pub scope: &'static str,
+    pub words: &'static [&'static str],
+}
+
+/// A single-character-quote string kind.
+pub struct StringKind {
+    pub quote: char,
+    /// Whether literals may span newlines (JS template literals: yes).
+    pub spans_newlines: bool,
+    pub scope: &'static str,
+}
+
+/// A multi-character delimited span: line comments (empty `close`),
+/// block comments, Python-style triple-quoted strings.
+pub struct SpanKind {
+    pub open: &'static str,
+    /// Empty → the span runs to the next newline.
+    pub close: &'static str,
+    pub scope: &'static str,
+}
+
 /// What a language looks like to the rule synthesizer. Colors come from
-/// the themes by resolving `*_scope` like a syntect highlighter would.
+/// the themes by resolving `scope` like a syntect highlighter would.
 pub struct LanguageSpec {
     pub name: &'static str,
-    pub keywords: &'static [&'static str],
-    /// Line comment opener, e.g. `"//"`; runs to the next `\n`.
-    pub line_comment: Option<&'static str>,
-    /// Block comment delimiters, e.g. `Some(("/*", "*/"))`; may span
-    /// lines (the injected newline glyph keeps the run intact).
-    pub block_comment: Option<(&'static str, &'static str)>,
-    /// String delimiter, e.g. `'"'`; runs to the next occurrence.
-    pub string_quote: Option<char>,
+    pub keywords: &'static [KeywordGroup],
+    pub strings: &'static [StringKind],
+    pub spans: &'static [SpanKind],
     /// Color `42`, `3.14`, `0x1F` … as numbers.
     pub numbers: bool,
-    /// Whether string literals may span newlines (comments always may).
-    pub strings_span_newlines: bool,
-    pub keyword_scope: &'static str,
-    pub string_scope: &'static str,
-    pub comment_scope: &'static str,
     pub number_scope: &'static str,
+    /// Identifier characters beyond ASCII alphanumerics and `_` (JS: `$`).
+    pub ident_extra: &'static [char],
+}
+
+fn is_ident(ch: char, extra: &[char]) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_' || extra.contains(&ch)
 }
 
 /// Built-in Rust spec: keywords per the reference (2018 edition) grammar.
 pub fn rust() -> LanguageSpec {
     LanguageSpec {
         name: "rust",
-        keywords: &[
-            "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum",
-            "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod",
-            "move", "mut", "pub", "ref", "return", "self", "static", "struct", "super", "trait",
-            "true", "type", "unsafe", "use", "where", "while",
+        keywords: &[KeywordGroup {
+            scope: "keyword.other.rust",
+            words: &[
+                "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else",
+                "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match",
+                "mod", "move", "mut", "pub", "ref", "return", "self", "static", "struct", "super",
+                "trait", "true", "type", "unsafe", "use", "where", "while",
+            ],
+        }],
+        strings: &[StringKind {
+            quote: '"',
+            spans_newlines: false,
+            scope: "string.quoted.double.rust",
+        }],
+        spans: &[
+            SpanKind {
+                open: "//",
+                close: "",
+                scope: "comment.line.double-slash.rust",
+            },
+            SpanKind {
+                open: "/*",
+                close: "*/",
+                scope: "comment.line.double-slash.rust",
+            },
         ],
-        line_comment: Some("//"),
-        block_comment: Some(("/*", "*/")),
-        string_quote: Some('"'),
         numbers: true,
-        strings_span_newlines: false,
-        keyword_scope: "keyword.other.rust",
-        string_scope: "string.quoted.double.rust",
-        comment_scope: "comment.line.double-slash.rust",
         number_scope: "constant.numeric.rust",
+        ident_extra: &[],
+    }
+}
+
+/// Built-in JavaScript spec (covers JSX; TSX users want [`typescript`]).
+pub fn javascript() -> LanguageSpec {
+    LanguageSpec {
+        name: "javascript",
+        keywords: &[
+            KeywordGroup {
+                scope: "keyword.control.js",
+                words: &[
+                    "as",
+                    "await",
+                    "break",
+                    "case",
+                    "catch",
+                    "continue",
+                    "default",
+                    "delete",
+                    "do",
+                    "else",
+                    "export",
+                    "finally",
+                    "for",
+                    "from",
+                    "if",
+                    "import",
+                    "in",
+                    "instanceof",
+                    "new",
+                    "return",
+                    "switch",
+                    "throw",
+                    "try",
+                    "typeof",
+                    "while",
+                    "with",
+                    "debugger",
+                    "yield",
+                ],
+            },
+            KeywordGroup {
+                scope: "storage.type.js",
+                words: &[
+                    "var", "let", "const", "function", "class", "extends", "super", "static",
+                    "get", "set", "async", "of",
+                ],
+            },
+            KeywordGroup {
+                scope: "constant.language.js",
+                words: &["true", "false", "null", "undefined", "this"],
+            },
+        ],
+        strings: &[
+            StringKind {
+                quote: '"',
+                spans_newlines: false,
+                scope: "string.quoted.double.js",
+            },
+            StringKind {
+                quote: '\'',
+                spans_newlines: false,
+                scope: "string.quoted.single.js",
+            },
+            StringKind {
+                quote: '`',
+                spans_newlines: true,
+                scope: "string.template.js",
+            },
+        ],
+        spans: &[
+            SpanKind {
+                open: "//",
+                close: "",
+                scope: "comment.line.double-slash.js",
+            },
+            SpanKind {
+                open: "/*",
+                close: "*/",
+                scope: "comment.block.js",
+            },
+        ],
+        numbers: true,
+        number_scope: "constant.numeric.js",
+        ident_extra: &['$'],
+    }
+}
+
+/// Built-in TypeScript spec: JavaScript plus its type/declaration words.
+pub fn typescript() -> LanguageSpec {
+    LanguageSpec {
+        name: "typescript",
+        keywords: &[
+            KeywordGroup {
+                scope: "keyword.control.ts",
+                words: &[
+                    "as",
+                    "await",
+                    "break",
+                    "case",
+                    "catch",
+                    "continue",
+                    "default",
+                    "delete",
+                    "do",
+                    "else",
+                    "export",
+                    "finally",
+                    "for",
+                    "from",
+                    "if",
+                    "import",
+                    "in",
+                    "instanceof",
+                    "new",
+                    "return",
+                    "satisfies",
+                    "switch",
+                    "throw",
+                    "try",
+                    "typeof",
+                    "while",
+                    "with",
+                    "debugger",
+                    "yield",
+                ],
+            },
+            KeywordGroup {
+                scope: "storage.type.ts",
+                words: &[
+                    "var",
+                    "let",
+                    "const",
+                    "function",
+                    "class",
+                    "extends",
+                    "super",
+                    "static",
+                    "get",
+                    "set",
+                    "async",
+                    "of",
+                    "interface",
+                    "type",
+                    "enum",
+                    "implements",
+                    "private",
+                    "public",
+                    "protected",
+                    "readonly",
+                    "namespace",
+                    "declare",
+                    "abstract",
+                    "keyof",
+                    "infer",
+                    "is",
+                    "asserts",
+                    "override",
+                    "module",
+                    "any",
+                    "boolean",
+                    "number",
+                    "string",
+                    "symbol",
+                    "object",
+                    "never",
+                    "unknown",
+                    "bigint",
+                    "void",
+                ],
+            },
+            KeywordGroup {
+                scope: "constant.language.ts",
+                words: &["true", "false", "null", "undefined", "this"],
+            },
+        ],
+        strings: &[
+            StringKind {
+                quote: '"',
+                spans_newlines: false,
+                scope: "string.quoted.double.ts",
+            },
+            StringKind {
+                quote: '\'',
+                spans_newlines: false,
+                scope: "string.quoted.single.ts",
+            },
+            StringKind {
+                quote: '`',
+                spans_newlines: true,
+                scope: "string.template.ts",
+            },
+        ],
+        spans: &[
+            SpanKind {
+                open: "//",
+                close: "",
+                scope: "comment.line.double-slash.ts",
+            },
+            SpanKind {
+                open: "/*",
+                close: "*/",
+                scope: "comment.block.ts",
+            },
+        ],
+        numbers: true,
+        number_scope: "constant.numeric.ts",
+        ident_extra: &['$'],
+    }
+}
+
+/// Built-in Python spec: `#` comments, both quote kinds, triple-quoted
+/// strings that span lines (docstrings), f-string prefixes stay plain.
+pub fn python() -> LanguageSpec {
+    LanguageSpec {
+        name: "python",
+        keywords: &[
+            KeywordGroup {
+                scope: "keyword.control.python",
+                words: &[
+                    "assert", "await", "break", "case", "continue", "del", "elif", "else",
+                    "except", "finally", "for", "if", "match", "pass", "raise", "return", "try",
+                    "while", "with", "yield",
+                ],
+            },
+            KeywordGroup {
+                scope: "storage.type.function.python",
+                words: &["def", "lambda"],
+            },
+            KeywordGroup {
+                scope: "storage.type.class.python",
+                words: &["class"],
+            },
+            KeywordGroup {
+                scope: "keyword.other.python",
+                words: &[
+                    "and", "as", "async", "from", "global", "in", "is", "nonlocal", "not", "or",
+                ],
+            },
+        ],
+        strings: &[
+            StringKind {
+                quote: '"',
+                spans_newlines: false,
+                scope: "string.quoted.double.python",
+            },
+            StringKind {
+                quote: '\'',
+                spans_newlines: false,
+                scope: "string.quoted.single.python",
+            },
+        ],
+        spans: &[
+            SpanKind {
+                open: "\"\"\"",
+                close: "\"\"\"",
+                scope: "string.quoted.double.block.python",
+            },
+            SpanKind {
+                open: "'''",
+                close: "'''",
+                scope: "string.quoted.single.block.python",
+            },
+            SpanKind {
+                open: "#",
+                close: "",
+                scope: "comment.line.number-sign.python",
+            },
+        ],
+        numbers: true,
+        number_scope: "constant.numeric.python",
+        ident_extra: &[],
     }
 }
 
@@ -106,31 +425,97 @@ pub fn rust() -> LanguageSpec {
 pub fn spec_by_name(name: &str) -> Result<LanguageSpec, BuildError> {
     match name {
         "rust" | "rs" => Ok(rust()),
+        "js" | "javascript" | "jsx" | "mjs" | "cjs" => Ok(javascript()),
+        "ts" | "typescript" | "tsx" => Ok(typescript()),
+        "py" | "python" => Ok(python()),
         other => Err(BuildError::Tokenize(format!(
-            "unknown generic language {other:?}; available: rust"
+            "unknown generic language {other:?}; available: rust, js, ts, python"
         ))),
     }
 }
 
-// ---- slot layout ---------------------------------------------------------
+// ---- slot layout ----------------------------------------------------------
 // Slots are palette entries AND nested-lookup indices (see gsub). Opening
 // and closing delimiters use distinct slots because a nested single-subst
 // lookup maps a glyph to exactly one substitute, but both paint the same
-// color. Body states need a copy of (nearly) every glyph.
-const KW: u16 = 0; // keyword letters
-const S_OPEN: u16 = 1; // opening quote
-const S_BODY: u16 = 2; // string body glyphs
-const S_CLOSE: u16 = 3; // closing quote
-const C_OPEN: u16 = 4; // line-comment slashes
-const C_BODY: u16 = 5; // line-comment body glyphs
-const NUM: u16 = 6; // number glyphs (digits, letters, dot)
-const BC_OPEN: u16 = 7; // block-comment `/*`
-const BC_BODY: u16 = 8; // block-comment body glyphs
-const BC_CLOSE: u16 = 9; // block-comment `*/`
-
-fn is_ident(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_'
+// color. State-bearing slots are never shared between kinds: the state
+// class lives on the alt glyphs, so merging (say) a line comment with a
+// block comment would also merge their newline semantics.
+struct Layout {
+    /// slot per keyword group
+    kw: Vec<u16>,
+    /// slot per string kind (body states need a copy of nearly every glyph)
+    str_open: Vec<u16>,
+    str_body: Vec<u16>,
+    str_close: Vec<u16>,
+    num: u16,
+    /// slot per span kind (only spans with a close use `span_close`)
+    span_open: Vec<u16>,
+    span_body: Vec<u16>,
+    span_close: Vec<u16>,
+    n_slots: u16,
 }
+
+fn layout(spec: &LanguageSpec) -> Layout {
+    let mut next = 0u16;
+    let mut kw = Vec::with_capacity(spec.keywords.len());
+    for _ in spec.keywords {
+        kw.push(next);
+        next += 1;
+    }
+    let mut str_open = Vec::with_capacity(spec.strings.len());
+    let mut str_body = Vec::with_capacity(spec.strings.len());
+    let mut str_close = Vec::with_capacity(spec.strings.len());
+    for _ in spec.strings {
+        str_open.push(next);
+        str_body.push(next + 1);
+        str_close.push(next + 2);
+        next += 3;
+    }
+    let num = next;
+    next += 1;
+    let mut span_open = Vec::with_capacity(spec.spans.len());
+    let mut span_body = Vec::with_capacity(spec.spans.len());
+    let mut span_close = vec![0u16; spec.spans.len()];
+    for (j, span) in spec.spans.iter().enumerate() {
+        span_open.push(next);
+        span_body.push(next + 1);
+        next += 2;
+        if !span.close.is_empty() {
+            span_close[j] = next;
+            next += 1;
+        }
+    }
+    Layout {
+        kw,
+        str_open,
+        str_body,
+        str_close,
+        num,
+        span_open,
+        span_body,
+        span_close,
+        n_slots: next,
+    }
+}
+
+impl Layout {
+    fn tok_slot(&self, tok: Tok) -> Option<u16> {
+        Some(match tok {
+            Tok::Plain => return None,
+            Tok::Keyword(g) => self.kw[g],
+            Tok::Number => self.num,
+            Tok::StrOpen(k) => self.str_open[k],
+            Tok::StrBody(k) => self.str_body[k],
+            Tok::StrClose(k) => self.str_close[k],
+            Tok::SpanOpen(j) => self.span_open[j],
+            Tok::SpanBody(j) => self.span_body[j],
+            Tok::SpanClose(j) => self.span_close[j],
+        })
+    }
+}
+
+// ---- synthesis -------------------------------------------------------------
 
 /// Synthesize a plan for arbitrary text of `spec`.
 ///
@@ -142,96 +527,113 @@ pub fn synthesize(
     num_source_glyphs: u16,
     themes: &[ThemeSpec],
 ) -> Result<GlyphPlan, BuildError> {
+    let layout = layout(spec);
+
     // ---- per-theme colors for the token kinds ----------------------------
-    let kw_colors: Vec<Option<Color>> = themes
-        .iter()
-        .map(|t| t.scope_color(spec.keyword_scope))
-        .collect();
-    let str_colors: Vec<Option<Color>> = themes
-        .iter()
-        .map(|t| t.scope_color(spec.string_scope))
-        .collect();
-    let cmt_colors: Vec<Option<Color>> = themes
-        .iter()
-        .map(|t| t.scope_color(spec.comment_scope))
-        .collect();
-    let num_colors: Vec<Option<Color>> = themes
+    let mut slots: Vec<Vec<Option<Color>>> = vec![Vec::new(); layout.n_slots as usize];
+    for (g, group) in spec.keywords.iter().enumerate() {
+        slots[layout.kw[g] as usize] = themes.iter().map(|t| t.scope_color(group.scope)).collect();
+    }
+    for (k, s) in spec.strings.iter().enumerate() {
+        let colors: Vec<Option<Color>> = themes.iter().map(|t| t.scope_color(s.scope)).collect();
+        slots[layout.str_open[k] as usize] = colors.clone();
+        slots[layout.str_body[k] as usize] = colors.clone();
+        slots[layout.str_close[k] as usize] = colors;
+    }
+    slots[layout.num as usize] = themes
         .iter()
         .map(|t| t.scope_color(spec.number_scope))
         .collect();
-    let slots: Vec<Vec<Option<Color>>> = vec![
-        kw_colors,
-        str_colors.clone(),
-        str_colors.clone(),
-        str_colors,
-        cmt_colors.clone(),
-        cmt_colors.clone(),
-        num_colors,
-        cmt_colors.clone(),
-        cmt_colors.clone(),
-        cmt_colors,
-    ];
+    for (j, span) in spec.spans.iter().enumerate() {
+        let colors: Vec<Option<Color>> = themes.iter().map(|t| t.scope_color(span.scope)).collect();
+        slots[layout.span_open[j] as usize] = colors.clone();
+        slots[layout.span_body[j] as usize] = colors.clone();
+        if !span.close.is_empty() {
+            slots[layout.span_close[j] as usize] = colors;
+        }
+    }
     let theme_fgs: Vec<Color> = themes.iter().map(|t| t.foreground).collect();
 
     // ---- glyph classes ----------------------------------------------------
     // Every mapped glyph is partitioned by the role of its character:
-    // delimiters with rules of their own (quote, slash, star, dot, newline)
-    // get 1:1 classes, keyword letters get 1:1 classes (keyword inputs),
-    // digits get one class (number inputs), other identifier chars share a
+    // delimiter chars (quotes, span open/close chars, the dot) get 1:1
+    // classes, keyword letters get 1:1 classes (keyword inputs), digits
+    // get one class (number inputs), other identifier chars share a
     // class, and the rest (including .notdef) is the "not a word char"
     // class used for keyword boundaries.
-    let quote = spec.string_quote;
-    let line_comment: Vec<char> = spec
-        .line_comment
-        .map(|s| s.chars().collect())
-        .unwrap_or_default();
-    let comment_first = line_comment.first().copied();
-    let (bc_open, bc_close): (Vec<char>, Vec<char>) = spec
-        .block_comment
-        .map(|(o, c)| {
-            (
-                o.chars().collect::<Vec<_>>(),
-                c.chars().collect::<Vec<_>>(),
-            )
-        })
-        .unwrap_or_default();
-    let bc_chars: HashSet<char> = bc_open.iter().chain(&bc_close).copied().collect();
+    let mut char_class: HashMap<char, u16> = HashMap::new();
+    let mut next_class: u16 = 3; // 1 = not-a-word, 2 = identifier (below)
+    for s in spec.strings {
+        char_class.entry(s.quote).or_insert_with(|| {
+            let id = next_class;
+            next_class += 1;
+            id
+        });
+    }
+    for span in spec.spans {
+        for ch in span.open.chars().chain(span.close.chars()) {
+            char_class.entry(ch).or_insert_with(|| {
+                let id = next_class;
+                next_class += 1;
+                id
+            });
+        }
+    }
+    let c_dot = char_class.entry('.').or_insert_with(|| {
+        let id = next_class;
+        next_class += 1;
+        id
+    });
+    let c_dot = *c_dot;
+    let c_nl = next_class;
+    next_class += 1;
+    // .notdef is its own class, referenced by no rule: an unmapped char in
+    // the oracle (and a font-fallback run break in browsers) must NOT count
+    // as a word boundary a keyword could anchor on
+    let c_notdef = next_class;
+    next_class += 1;
+    let c_digit = next_class;
+    next_class += 1;
     let keyword_letters: Vec<char> = {
         let mut set: Vec<char> = spec
             .keywords
             .iter()
-            .flat_map(|k| k.chars())
+            .flat_map(|g| g.words.iter())
+            .flat_map(|w| w.chars())
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();
         set.sort_unstable();
         set
     };
-
-    let c_notword: u16 = 1;
-    let c_ident: u16 = 2;
-    let c_quote: u16 = 3;
-    let c_slash: u16 = 4;
-    let c_nl: u16 = 5;
-    // .notdef is its own class, referenced by no rule: an unmapped char in
-    // the oracle (and a font-fallback run break in browsers) must NOT count
-    // as a word boundary a keyword could anchor on
-    let c_notdef: u16 = 6;
-    let c_digit: u16 = 7;
-    let c_dot: u16 = 8;
-    let c_star: u16 = 9;
-    let first_letter_class: u16 = 10;
+    let first_letter_class = next_class;
     let letter_class: HashMap<char, u16> = keyword_letters
         .iter()
         .enumerate()
         .map(|(i, &c)| (c, first_letter_class + i as u16))
         .collect();
+    next_class += keyword_letters.len() as u16;
     // state classes (exclusive sets of colored copies)
-    let c_str_state: u16 = first_letter_class + keyword_letters.len() as u16;
-    let c_cmt_state: u16 = c_str_state + 1;
-    let c_bcmt_state: u16 = c_cmt_state + 1;
-    let c_num_state: u16 = c_bcmt_state + 1;
-    let c_end_state: u16 = c_num_state + 1;
+    let str_state: Vec<u16> = (0..spec.strings.len())
+        .map(|_| {
+            let id = next_class;
+            next_class += 1;
+            id
+        })
+        .collect();
+    let span_state: Vec<u16> = (0..spec.spans.len())
+        .map(|_| {
+            let id = next_class;
+            next_class += 1;
+            id
+        })
+        .collect();
+    let c_num_state = next_class;
+    next_class += 1;
+    let c_end_state = next_class;
+
+    const C_NOTWORD: u16 = 1;
+    const C_IDENT: u16 = 2;
 
     let mut class_of: HashMap<u16, u16> = HashMap::new();
     class_of.insert(0, c_notdef); // .notdef: never a context, never substituted
@@ -239,7 +641,9 @@ pub fn synthesize(
     sorted.sort_unstable();
     let mut newline_gid: Option<u16> = None;
     for &(cp, gid) in &sorted {
-        let Some(ch) = char::from_u32(cp) else { continue };
+        let Some(ch) = char::from_u32(cp) else {
+            continue;
+        };
         if ch == '\n' || ch == '\r' {
             if newline_gid.is_none() {
                 class_of.insert(gid, c_nl);
@@ -250,28 +654,33 @@ pub fn synthesize(
         if class_of.contains_key(&gid) {
             continue; // first mapping of a glyph decides its class
         }
-        let class = if Some(ch) == quote {
-            c_quote
-        } else if ch == '*' {
-            c_star // block-comment close partner, rules target it directly
-        } else if Some(ch) == comment_first || bc_chars.contains(&ch) {
-            c_slash // '/' opens/closes both comment kinds
-        } else if ch == '.' {
-            c_dot
+        let class = if let Some(&id) = char_class.get(&ch) {
+            id
         } else if ch.is_ascii_digit() {
             c_digit
-        } else if is_ident(ch) {
-            letter_class.get(&ch).copied().unwrap_or(c_ident)
+        } else if is_ident(ch, spec.ident_extra) {
+            letter_class.get(&ch).copied().unwrap_or(C_IDENT)
         } else {
-            c_notword
+            C_NOTWORD
         };
         class_of.insert(gid, class);
     }
-    let quote_gid = quote.and_then(|q| char_gid(mappings, q));
-    let slash_gid = comment_first
-        .or_else(|| bc_open.first().copied())
-        .and_then(|c| char_gid(mappings, c));
-    let star_gid = char_gid(mappings, '*');
+    let quote_gid: Vec<Option<u16>> = spec
+        .strings
+        .iter()
+        .map(|s| char_gid(mappings, s.quote))
+        .collect();
+    let span_delim_gids: Vec<Vec<Option<u16>>> = spec
+        .spans
+        .iter()
+        .map(|span| {
+            span.open
+                .chars()
+                .chain(span.close.chars())
+                .map(|c| char_gid(mappings, c))
+                .collect()
+        })
+        .collect();
     let digit_gid = char_gid(mappings, '0');
 
     // ---- alt glyphs -------------------------------------------------------
@@ -300,102 +709,208 @@ pub fn synthesize(
         class_of.insert(alt, class);
         alt
     }
-    // keyword letters (keyword copies share the base class so keyword
-    // rules stay form-insensitive)
-    for &c in &keyword_letters {
-        if let Some(gid) = char_gid(mappings, c) {
+    // keyword letters (keyword copies keep the base class so keyword
+    // rules stay form-insensitive); a letter used by several groups gets
+    // one alt per group slot
+    for (g, group) in spec.keywords.iter().enumerate() {
+        let letters: Vec<char> = {
+            let mut v: Vec<char> = group
+                .words
+                .iter()
+                .flat_map(|w| w.chars())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        for c in letters {
+            if let Some(gid) = char_gid(mappings, c) {
+                let class = class_of[&gid];
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.kw[g],
+                    class,
+                    &mut class_of,
+                );
+            }
+        }
+    }
+    // string delimiters + bodies (body copies only for classes a rule can
+    // actually propagate over — the close rule owns the quote glyph)
+    for (k, s) in spec.strings.iter().enumerate() {
+        let Some(q) = quote_gid[k] else { continue };
+        push_alt(
+            &mut next_new,
+            &mut alt_glyphs,
+            q,
+            layout.str_open[k],
+            str_state[k],
+            &mut class_of,
+        );
+        push_alt(
+            &mut next_new,
+            &mut alt_glyphs,
+            q,
+            layout.str_close[k],
+            c_end_state,
+            &mut class_of,
+        );
+        let quote_class = char_class[&s.quote];
+        for &gid in &gids {
             let class = class_of[&gid];
-            push_alt(&mut next_new, &mut alt_glyphs, gid, KW, class, &mut class_of);
+            let body =
+                class != quote_class && class != c_notdef && (s.spans_newlines || class != c_nl);
+            if body {
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.str_body[k],
+                    str_state[k],
+                    &mut class_of,
+                );
+            }
+        }
+    }
+    // span delimiters + bodies (openers deduplicated per glyph — `"""`
+    // opens over the same quote glyph three times)
+    for (j, span) in spec.spans.iter().enumerate() {
+        let mut seen: HashSet<u16> = HashSet::new();
+        for gid in span_delim_gids[j]
+            .iter()
+            .take(span.open.chars().count())
+            .copied()
+            .flatten()
+        {
+            if seen.insert(gid) {
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.span_open[j],
+                    span_state[j],
+                    &mut class_of,
+                );
+            }
+        }
+        if !span.close.is_empty() {
+            let open_len = span.open.chars().count();
+            let mut seen_close: HashSet<u16> = HashSet::new();
+            for gid in span_delim_gids[j][open_len..].iter().copied().flatten() {
+                if seen_close.insert(gid) {
+                    push_alt(
+                        &mut next_new,
+                        &mut alt_glyphs,
+                        gid,
+                        layout.span_close[j],
+                        c_end_state,
+                        &mut class_of,
+                    );
+                }
+            }
+        }
+        let line = span.close.is_empty();
+        for &gid in &gids {
+            let class = class_of[&gid];
+            if class != c_notdef && (!line || class != c_nl) {
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.span_body[j],
+                    span_state[j],
+                    &mut class_of,
+                );
+            }
         }
     }
     // number glyphs: digits, identifier chars, letters, dot
-    let num_glyphs: Vec<u16> = gids
-        .iter()
-        .copied()
-        .filter(|&g| class_of[&g] != c_notword && class_of[&g] != c_nl)
-        .filter(|&g| Some(g) != quote_gid)
-        .collect();
-    // string delimiters
-    if let Some(q) = quote_gid {
-        push_alt(&mut next_new, &mut alt_glyphs, q, S_OPEN, c_str_state, &mut class_of);
-        push_alt(&mut next_new, &mut alt_glyphs, q, S_CLOSE, c_end_state, &mut class_of);
-    }
-    // line comment opener
-    if let Some(s) = slash_gid {
-        if line_comment.len() >= 2 {
-            push_alt(&mut next_new, &mut alt_glyphs, s, C_OPEN, c_cmt_state, &mut class_of);
-        }
-    }
-    // block comment delimiters
-    if !bc_open.is_empty() {
-        if let Some(s) = slash_gid {
-            push_alt(&mut next_new, &mut alt_glyphs, s, BC_OPEN, c_bcmt_state, &mut class_of);
-        }
-        if let Some(st) = star_gid {
-            push_alt(&mut next_new, &mut alt_glyphs, st, BC_OPEN, c_bcmt_state, &mut class_of);
-        }
-        if let Some(st) = star_gid {
-            push_alt(&mut next_new, &mut alt_glyphs, st, BC_CLOSE, c_end_state, &mut class_of);
-        }
-        if let Some(s) = slash_gid {
-            push_alt(&mut next_new, &mut alt_glyphs, s, BC_CLOSE, c_end_state, &mut class_of);
-        }
-    }
     if spec.numbers && digit_gid.is_some() {
-        for &g in &num_glyphs {
-            push_alt(&mut next_new, &mut alt_glyphs, g, NUM, c_num_state, &mut class_of);
-        }
-    }
-    // string body: everything except the quote (the close rule owns it)
-    if quote_gid.is_some() {
         for &gid in &gids {
-            if Some(gid) != quote_gid {
-                push_alt(&mut next_new, &mut alt_glyphs, gid, S_BODY, c_str_state, &mut class_of);
+            let class = class_of[&gid];
+            let wordish = class == c_digit
+                || class == C_IDENT
+                || class == c_dot
+                || (class >= first_letter_class
+                    && class < first_letter_class + keyword_letters.len() as u16);
+            if wordish {
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.num,
+                    c_num_state,
+                    &mut class_of,
+                );
             }
-        }
-    }
-    // line-comment body: everything except the newline (slashes and stars
-    // inside a comment are body — coverage misses would break the chain)
-    if line_comment.len() >= 2 {
-        for &gid in &gids {
-            if class_of[&gid] != c_nl {
-                push_alt(&mut next_new, &mut alt_glyphs, gid, C_BODY, c_cmt_state, &mut class_of);
-            }
-        }
-    }
-    // block-comment body: everything (newlines included — the state spans)
-    if !bc_open.is_empty() {
-        for &gid in &gids {
-            push_alt(&mut next_new, &mut alt_glyphs, gid, BC_BODY, c_bcmt_state, &mut class_of);
         }
     }
 
     // ---- injected newline glyph -------------------------------------------
-    // The source font almost never maps '\n'; without a glyph the browser
-    // sends it to a fallback font, breaking the shaping run — killing
-    // keyword boundaries at line starts and any state that should span
-    // lines. An empty zero-width glyph mapped to \n and \r keeps runs
-    // whole. It is plain (uncolored), class c_nl: no line-comment or
-    // number propagation references that class, so line comments still
-    // end at newlines and numbers do not span them.
+    // Browsers shape one run per font; a `\n` with no glyph in this font
+    // falls back and breaks the run — killing keyword boundaries at line
+    // starts and any state that should span lines. An empty zero-width
+    // glyph mapped to `\n` keeps runs whole. It is plain (uncolored),
+    // class c_nl: no line-comment or number propagation references that
+    // class, so line comments still end at newlines and numbers do not
+    // span them. (The source font may map `\r` but not `\n` — only `\n`
+    // decides the injection.)
     let mut plain_glyphs: Vec<(u32, u16)> = Vec::new();
-    if newline_gid.is_none() {
+    let lf_gid = char_gid(mappings, '\n');
+    if lf_gid.is_none() {
         let gid = next_new;
         next_new += 1;
         class_of.insert(gid, c_nl);
         plain_glyphs.push(('\n' as u32, gid));
-        plain_glyphs.push(('\r' as u32, gid));
-        // block comments span newlines, so the glyph needs a body copy
-        if !bc_open.is_empty() {
-            push_alt(&mut next_new, &mut alt_glyphs, gid, BC_BODY, c_bcmt_state, &mut class_of);
+        if char_gid(mappings, '\r').is_none() {
+            plain_glyphs.push(('\r' as u32, gid));
+        }
+        // every state whose body includes the newline class needs a body
+        // copy of the injected glyph: block comments, triple-quoted
+        // strings, template literals
+        for (j, span) in spec.spans.iter().enumerate() {
+            if !span.close.is_empty() {
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.span_body[j],
+                    span_state[j],
+                    &mut class_of,
+                );
+            }
+        }
+        for (k, s) in spec.strings.iter().enumerate() {
+            if s.spans_newlines {
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.str_body[k],
+                    str_state[k],
+                    &mut class_of,
+                );
+            }
         }
     }
 
     // ---- rules ------------------------------------------------------------
     // Order inside a first-glyph rule set decides who wins at a position:
-    // state propagation, state terminators, state openings, keywords.
+    // state terminators (longest input first), state propagation, state
+    // openings (longest input first, so `"""` beats `"`), number opens,
+    // keywords. Different states' rules never conflict: the backtrack
+    // glyph belongs to exactly one state class.
     let mut by_class: BTreeMap<u16, Vec<Rule>> = BTreeMap::new();
-    fn prop(by_class: &mut BTreeMap<u16, Vec<Rule>>, class: u16, state: u16, pal: u16, lookahead: Vec<u16>) {
+    fn prop(
+        by_class: &mut BTreeMap<u16, Vec<Rule>>,
+        class: u16,
+        state: u16,
+        pal: u16,
+        lookahead: Vec<u16>,
+    ) {
         by_class.entry(class).or_default().push(Rule {
             backtrack: vec![state],
             input: vec![class],
@@ -403,168 +918,174 @@ pub fn synthesize(
             pal,
         });
     }
+
+    // terminators, precomputed per first class, longest input first
+    let mut terminators: HashMap<u16, Vec<Rule>> = HashMap::new();
+    for (j, span) in spec.spans.iter().enumerate() {
+        if span.close.is_empty() {
+            continue;
+        }
+        let Some(&class) = span.close.chars().next().and_then(|c| char_class.get(&c)) else {
+            continue;
+        };
+        let input: Vec<u16> = span.close.chars().map(|c| char_class[&c]).collect();
+        terminators.entry(class).or_default().push(Rule {
+            backtrack: vec![span_state[j]],
+            input,
+            lookahead: vec![],
+            pal: layout.span_close[j],
+        });
+    }
+    for (k, s) in spec.strings.iter().enumerate() {
+        let Some(&class) = char_class.get(&s.quote) else {
+            continue;
+        };
+        terminators.entry(class).or_default().push(Rule {
+            backtrack: vec![str_state[k]],
+            input: vec![class],
+            lookahead: vec![],
+            pal: layout.str_close[k],
+        });
+    }
+    for rules in terminators.values_mut() {
+        rules.sort_by_key(|r| std::cmp::Reverse(r.input.len()));
+    }
+
+    // openings, precomputed per first class, longest input first
+    let mut openers: HashMap<u16, Vec<Rule>> = HashMap::new();
+    for (j, span) in spec.spans.iter().enumerate() {
+        let Some(&class) = span.open.chars().next().and_then(|c| char_class.get(&c)) else {
+            continue;
+        };
+        let input: Vec<u16> = span.open.chars().map(|c| char_class[&c]).collect();
+        openers.entry(class).or_default().push(Rule {
+            backtrack: vec![],
+            input,
+            lookahead: vec![],
+            pal: layout.span_open[j],
+        });
+    }
+    for (k, s) in spec.strings.iter().enumerate() {
+        let Some(&class) = char_class.get(&s.quote) else {
+            continue;
+        };
+        openers.entry(class).or_default().push(Rule {
+            backtrack: vec![],
+            input: vec![class],
+            lookahead: vec![],
+            pal: layout.str_open[k],
+        });
+    }
+    for rules in openers.values_mut() {
+        rules.sort_by_key(|r| std::cmp::Reverse(r.input.len()));
+    }
+
     let present: Vec<u16> = {
-        let mut v: Vec<u16> = class_of.values().copied().collect::<HashSet<_>>().into_iter().collect();
+        let mut v: Vec<u16> = class_of
+            .values()
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
         v.sort_unstable();
         v
     };
-    // body class sets per state
-    let str_body = |class: u16| -> bool {
-        quote_gid.is_some() && class != c_quote && class != c_notdef &&
-            (spec.strings_span_newlines || class != c_nl)
-    };
-    let line_cmt_body = |class: u16| -> bool {
-        line_comment.len() >= 2 && class != c_nl && class != c_notdef
-    };
-    let block_cmt_body = |class: u16| -> bool { !bc_open.is_empty() && class != c_notdef };
+    // number propagation covers exactly the word-ish classes: digits,
+    // identifier chars, keyword letters, dot (with a digit lookahead).
+    // Delimiter classes have no number rule — the number state dies at a
+    // quote or comment delimiter, which then opens its own state.
     let num_body = |class: u16| -> bool {
         spec.numbers
             && digit_gid.is_some()
-            && class != c_notword
-            && class != c_nl
-            && class != c_notdef
-            && class != c_quote
+            && (class == c_digit
+                || class == C_IDENT
+                || (class >= first_letter_class
+                    && class < first_letter_class + keyword_letters.len() as u16))
     };
     // keyword boundary classes: plain punctuation or the (now mapped)
     // newline — both exist as glyphs the shaper can anchor on
-    let boundaries = [c_notword, c_nl];
+    let boundaries = [C_NOTWORD, c_nl];
 
     for &class in &present {
-        if class == c_quote {
-            if quote_gid.is_some() {
-                by_class.entry(class).or_default().push(Rule {
-                    backtrack: vec![c_str_state],
-                    input: vec![c_quote],
-                    lookahead: vec![],
-                    pal: S_CLOSE,
-                });
+        if let Some(rules) = terminators.get(&class) {
+            by_class
+                .entry(class)
+                .or_default()
+                .extend(rules.iter().cloned());
+        }
+        for (j, span) in spec.spans.iter().enumerate() {
+            let line = span.close.is_empty();
+            if class != c_notdef && (!line || class != c_nl) {
+                prop(
+                    &mut by_class,
+                    class,
+                    span_state[j],
+                    layout.span_body[j],
+                    vec![],
+                );
             }
-            if block_cmt_body(c_quote) {
-                prop(&mut by_class, c_quote, c_bcmt_state, BC_BODY, vec![]);
+        }
+        for (k, s) in spec.strings.iter().enumerate() {
+            let Some(&quote_class) = char_class.get(&s.quote) else {
+                continue;
+            };
+            if class != quote_class && class != c_notdef && (s.spans_newlines || class != c_nl) {
+                prop(
+                    &mut by_class,
+                    class,
+                    str_state[k],
+                    layout.str_body[k],
+                    vec![],
+                );
             }
-            if line_cmt_body(c_quote) {
-                prop(&mut by_class, c_quote, c_cmt_state, C_BODY, vec![]);
-            }
-            if quote_gid.is_some() {
-                by_class.entry(class).or_default().push(Rule {
-                    backtrack: vec![],
-                    input: vec![c_quote],
-                    lookahead: vec![],
-                    pal: S_OPEN,
-                });
-            }
-        } else if class == c_slash {
-            if str_body(c_slash) {
-                prop(&mut by_class, c_slash, c_str_state, S_BODY, vec![]);
-            }
-            if block_cmt_body(c_slash) {
-                prop(&mut by_class, c_slash, c_bcmt_state, BC_BODY, vec![]);
-            }
-            if line_cmt_body(c_slash) {
-                prop(&mut by_class, c_slash, c_cmt_state, C_BODY, vec![]);
-            }
-            let rules = by_class.entry(class).or_default();
-            if line_comment.len() >= 2 {
-                rules.push(Rule {
-                    backtrack: vec![],
-                    input: vec![c_slash, c_slash],
-                    lookahead: vec![],
-                    pal: C_OPEN,
-                });
-            }
-            if !bc_open.is_empty() && star_gid.is_some() {
-                rules.push(Rule {
-                    backtrack: vec![],
-                    input: vec![c_slash, c_star],
-                    lookahead: vec![],
-                    pal: BC_OPEN,
-                });
-            }
-        } else if class == c_star && !bc_open.is_empty() {
-            // close: `*/` returns to plain text
-            if star_gid.is_some() {
-                by_class.entry(class).or_default().push(Rule {
-                    backtrack: vec![c_bcmt_state],
-                    input: vec![c_star, c_slash],
-                    lookahead: vec![],
-                    pal: BC_CLOSE,
-                });
-            }
-            if block_cmt_body(c_star) {
-                prop(&mut by_class, c_star, c_bcmt_state, BC_BODY, vec![]);
-            }
-            if str_body(c_star) {
-                prop(&mut by_class, c_star, c_str_state, S_BODY, vec![]);
-            }
-            if line_cmt_body(c_star) {
-                prop(&mut by_class, c_star, c_cmt_state, C_BODY, vec![]);
-            }
-        } else if class == c_dot && spec.numbers {
-            if str_body(c_dot) {
-                prop(&mut by_class, c_dot, c_str_state, S_BODY, vec![]);
-            }
-            if block_cmt_body(c_dot) {
-                prop(&mut by_class, c_dot, c_bcmt_state, BC_BODY, vec![]);
-            }
-            if line_cmt_body(c_dot) {
-                prop(&mut by_class, c_dot, c_cmt_state, C_BODY, vec![]);
-            }
+        }
+        if spec.numbers && class == c_dot {
             // `.` continues a number only when a digit follows: 3.14 yes,
             // 1.max stops before the dot
-            prop(&mut by_class, c_dot, c_num_state, NUM, vec![c_digit]);
-        } else if class == c_digit && spec.numbers {
-            if str_body(c_digit) {
-                prop(&mut by_class, c_digit, c_str_state, S_BODY, vec![]);
-            }
-            if block_cmt_body(c_digit) {
-                prop(&mut by_class, c_digit, c_bcmt_state, BC_BODY, vec![]);
-            }
-            if line_cmt_body(c_digit) {
-                prop(&mut by_class, c_digit, c_cmt_state, C_BODY, vec![]);
-            }
-            if num_body(c_digit) {
-                prop(&mut by_class, c_digit, c_num_state, NUM, vec![]);
-            }
-            // a number opens after a word boundary (or at a line start)
+            prop(&mut by_class, class, c_num_state, layout.num, vec![c_digit]);
+        }
+        if num_body(class) {
+            prop(&mut by_class, class, c_num_state, layout.num, vec![]);
+        }
+        if let Some(rules) = openers.get(&class) {
+            by_class
+                .entry(class)
+                .or_default()
+                .extend(rules.iter().cloned());
+        }
+        // a number opens after a word boundary (or at a line start)
+        if class == c_digit && spec.numbers {
             for &bt in &boundaries {
                 by_class.entry(class).or_default().push(Rule {
                     backtrack: vec![bt],
                     input: vec![c_digit],
                     lookahead: vec![],
-                    pal: NUM,
+                    pal: layout.num,
                 });
-            }
-        } else {
-            if str_body(class) {
-                prop(&mut by_class, class, c_str_state, S_BODY, vec![]);
-            }
-            if block_cmt_body(class) {
-                prop(&mut by_class, class, c_bcmt_state, BC_BODY, vec![]);
-            }
-            if line_cmt_body(class) {
-                prop(&mut by_class, class, c_cmt_state, C_BODY, vec![]);
-            }
-            if num_body(class) {
-                prop(&mut by_class, class, c_num_state, NUM, vec![]);
             }
         }
-    }
-    // keywords, attached to the rule set of their first letter's class:
-    // four boundary combinations (plain punctuation / newline on each side)
-    for kw in spec.keywords {
-        let Some(first) = kw.chars().next() else { continue };
-        let Some(&class) = letter_class.get(&first) else {
-            continue;
-        };
-        let input: Vec<u16> = kw.chars().map(|c| letter_class[&c]).collect();
-        for &bt in &boundaries {
-            for &la in &boundaries {
-                by_class.entry(class).or_default().push(Rule {
-                    backtrack: vec![bt],
-                    input: input.clone(),
-                    lookahead: vec![la],
-                    pal: KW,
-                });
+        // keywords, attached to the rule set of their first letter's
+        // class: four boundary combinations (plain punctuation / newline
+        // on each side)
+        for (g, group) in spec.keywords.iter().enumerate() {
+            for kw in group.words {
+                let Some(first) = kw.chars().next() else {
+                    continue;
+                };
+                if letter_class.get(&first) != Some(&class) {
+                    continue;
+                }
+                let input: Vec<u16> = kw.chars().map(|c| letter_class[&c]).collect();
+                for &bt in &boundaries {
+                    for &la in &boundaries {
+                        by_class.entry(class).or_default().push(Rule {
+                            backtrack: vec![bt],
+                            input: input.clone(),
+                            lookahead: vec![la],
+                            pal: layout.kw[g],
+                        });
+                    }
+                }
             }
         }
     }
@@ -600,32 +1121,17 @@ fn char_gid(mappings: &[(u32, u16)], ch: char) -> Option<u16> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tok {
     Plain,
-    Keyword,
+    /// group index within `LanguageSpec::keywords`
+    Keyword(usize),
     Number,
-    StrOpen,
-    StrBody,
-    StrClose,
-    CmtOpen,
-    CmtBody,
-    BCmtOpen,
-    BCmtBody,
-    BCmtClose,
-}
-
-fn slot_of(tok: Tok) -> Option<u16> {
-    Some(match tok {
-        Tok::Plain => return None,
-        Tok::Keyword => KW,
-        Tok::Number => NUM,
-        Tok::StrOpen => S_OPEN,
-        Tok::StrBody => S_BODY,
-        Tok::StrClose => S_CLOSE,
-        Tok::CmtOpen => C_OPEN,
-        Tok::CmtBody => C_BODY,
-        Tok::BCmtOpen => BC_OPEN,
-        Tok::BCmtBody => BC_BODY,
-        Tok::BCmtClose => BC_CLOSE,
-    })
+    /// string kind index within `LanguageSpec::strings`
+    StrOpen(usize),
+    StrBody(usize),
+    StrClose(usize),
+    /// span kind index within `LanguageSpec::spans`
+    SpanOpen(usize),
+    SpanBody(usize),
+    SpanClose(usize),
 }
 
 /// Highlight `text` per the spec, one [`Tok`] per char.
@@ -634,8 +1140,8 @@ fn slot_of(tok: Tok) -> Option<u16> {
 /// models the shaper's real capabilities. States die at unmapped chars
 /// (browsers send those to a fallback font, breaking the shaping run).
 /// Keywords and numbers open only after a mapped plain-punctuation or
-/// newline glyph; string literals stop at newlines unless
-/// `strings_span_newlines` (the font mirrors this exactly).
+/// newline glyph; string literals stop at newlines unless their kind
+/// spans; span openers match longest-first, so `"""` beats `"`.
 pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Vec<Tok> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = vec![Tok::Plain; chars.len()];
@@ -643,89 +1149,95 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
     // of the delimiter chars that live in their own classes
     let boundary = |c: char| {
         mapped(c)
-            && !is_ident(c)
-            && Some(c) != spec.string_quote
-            && Some(c) != spec.line_comment.and_then(|s| s.chars().next())
+            && !is_ident(c, spec.ident_extra)
+            && !spec.strings.iter().any(|s| s.quote == c)
+            && !spec
+                .spans
+                .iter()
+                .any(|s| s.open.contains(c) || s.close.contains(c))
             && c != '.'
-            && c != '*'
     };
+    let starts = |i: usize, delim: &str| -> bool {
+        let cs: Vec<char> = delim.chars().collect();
+        chars[i..].starts_with(&cs)
+    };
+    let all_mapped = |s: &str| s.chars().all(mapped);
+    // longest opener first: `"""` must win over `"` at the same position
+    let mut span_order: Vec<usize> = (0..spec.spans.len()).collect();
+    span_order.sort_by_key(|&j| std::cmp::Reverse(spec.spans[j].open.chars().count()));
+
     let mut i = 0;
-    while i < chars.len() {
-        if let Some(comment) = spec.line_comment {
-            let cs: Vec<char> = comment.chars().collect();
-            if chars[i..].starts_with(&cs) {
-                for tok in out.iter_mut().take(i + cs.len()).skip(i) {
-                    *tok = Tok::CmtOpen;
-                }
-                i += cs.len();
+    'outer: while i < chars.len() {
+        for &j in &span_order {
+            let span = &spec.spans[j];
+            if !starts(i, span.open) || !all_mapped(span.open) {
+                continue;
+            }
+            let n = span.open.chars().count();
+            for tok in out.iter_mut().take(i + n).skip(i) {
+                *tok = Tok::SpanOpen(j);
+            }
+            i += n;
+            if span.close.is_empty() {
                 while i < chars.len() {
                     let c = chars[i];
                     if c == '\n' || c == '\r' || !mapped(c) {
                         break;
                     }
-                    out[i] = Tok::CmtBody;
+                    out[i] = Tok::SpanBody(j);
                     i += 1;
                 }
-                continue;
-            }
-        }
-        if let Some((open, close)) = spec.block_comment {
-            let open: Vec<char> = open.chars().collect();
-            let close: Vec<char> = close.chars().collect();
-            if chars[i..].starts_with(&open) {
-                let n = open.len();
-                for tok in out.iter_mut().take(i + n).skip(i) {
-                    *tok = Tok::BCmtOpen;
-                }
-                i += n;
+            } else {
                 while i < chars.len() {
-                    if chars[i..].starts_with(&close) {
-                        for k in 0..close.len() {
-                            out[i + k] = Tok::BCmtClose;
+                    if starts(i, span.close) && all_mapped(span.close) {
+                        let n = span.close.chars().count();
+                        for tok in out.iter_mut().take(i + n).skip(i) {
+                            *tok = Tok::SpanClose(j);
                         }
-                        i += close.len();
+                        i += n;
                         break;
                     }
                     if !mapped(chars[i]) {
                         break; // barrier: state dies, plain scan resumes
                     }
-                    out[i] = Tok::BCmtBody;
+                    out[i] = Tok::SpanBody(j);
                     i += 1;
                 }
+            }
+            continue 'outer;
+        }
+        for (k, s) in spec.strings.iter().enumerate() {
+            if chars[i] != s.quote || !mapped(s.quote) {
                 continue;
             }
-        }
-        if let Some(q) = spec.string_quote {
-            if chars[i] == q {
-                out[i] = Tok::StrOpen;
+            out[i] = Tok::StrOpen(k);
+            i += 1;
+            while i < chars.len() {
+                let c = chars[i];
+                if c == s.quote && mapped(c) {
+                    out[i] = Tok::StrClose(k);
+                    i += 1;
+                    break;
+                }
+                if !mapped(c) || (!s.spans_newlines && (c == '\n' || c == '\r')) {
+                    break; // barrier or line end: state dies
+                }
+                out[i] = Tok::StrBody(k);
                 i += 1;
-                while i < chars.len() {
-                    if chars[i] == q {
-                        out[i] = Tok::StrClose;
-                        i += 1;
-                        break;
-                    }
-                    let c = chars[i];
-                    if !mapped(c) || (!spec.strings_span_newlines && (c == '\n' || c == '\r')) {
-                        break; // barrier or line end: state dies
-                    }
-                    out[i] = Tok::StrBody;
-                    i += 1;
-                }
-                continue;
             }
+            continue 'outer;
         }
-        if spec.numbers && chars[i].is_ascii_digit() {
+        if spec.numbers && chars[i].is_ascii_digit() && mapped(chars[i]) {
             let start = i;
             if start > 0 && boundary(chars[start - 1]) {
-                while i < chars.len() && is_ident(chars[i]) {
+                while i < chars.len() && is_ident(chars[i], spec.ident_extra) {
                     out[i] = Tok::Number;
                     i += 1;
                 }
                 // fractional part: a dot continues the number only when
                 // a digit follows it (mirrors the font's lookahead rule)
                 while i < chars.len() {
-                    let continues = is_ident(chars[i])
+                    let continues = is_ident(chars[i], spec.ident_extra)
                         || (chars[i] == '.'
                             && i + 1 < chars.len()
                             && chars[i + 1].is_ascii_digit());
@@ -740,20 +1252,26 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
             }
             continue;
         }
-        if is_ident(chars[i]) {
+        if is_ident(chars[i], spec.ident_extra) {
             let start = i;
-            while i < chars.len() && is_ident(chars[i]) {
+            while i < chars.len() && is_ident(chars[i], spec.ident_extra) {
                 i += 1;
             }
             let word: String = chars[start..i].iter().collect();
-            if spec.keywords.contains(&word.as_str())
-                && start > 0
-                && boundary(chars[start - 1])
-                && i < chars.len()
-                && boundary(chars[i])
-            {
-                for tok in out.iter_mut().take(i).skip(start) {
-                    *tok = Tok::Keyword;
+            let group = spec
+                .keywords
+                .iter()
+                .position(|g| g.words.contains(&word.as_str()));
+            if let Some(g) = group {
+                if start > 0
+                    && boundary(chars[start - 1])
+                    && i < chars.len()
+                    && boundary(chars[i])
+                    && word.chars().all(mapped)
+                {
+                    for tok in out.iter_mut().take(i).skip(start) {
+                        *tok = Tok::Keyword(g);
+                    }
                 }
             }
             continue;
@@ -763,35 +1281,70 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
     out
 }
 
-/// Curated plus deterministic-random texts; the oracle must hold on all.
-pub fn sample_texts(_spec: &LanguageSpec) -> Vec<String> {
-    let mut samples = vec![
-        "let x = 1;".to_string(),
-        "// comment\nfn main() {}".to_string(),
-        "let s = \"fn // let\";".to_string(),
-        "// \"quoted\" comment\nlet y;".to_string(),
-        "\"\"\"".to_string(),
-        "//////".to_string(),
-        "fnfn fn fnx xfn _fn fn_".to_string(),
-        "a\"b\"c\"d".to_string(),
-        "/\n// x\n/".to_string(),
-        "let s = \"\";".to_string(),
-        "struct S; impl S { fn f() -> Self { Self } }".to_string(),
-        "/* block */ let x;".to_string(),
-        "/* multi\nline\ncomment */ let y;".to_string(),
-        "/* unterminated block let fn".to_string(),
-        "a/*b\"c*/d\"e".to_string(),
-        "*/*/*/**/".to_string(),
-        "let a = 42; let b = 3.14; let c = 0x1F_ff_u32; let d = 1_000;".to_string(),
-        "1.max(2).min(3)".to_string(),
-        "x1 12x a1b2 0b1010 1e5 1.2.3 42.".to_string(),
-        "\nfn at_line_start\nlet at_line_start\n42 at_line_start".to_string(),
+/// Curated texts per language, plus structural samples derived from the
+/// spec and deterministic-random assemblies; the oracle must hold on all.
+pub fn sample_texts(spec: &LanguageSpec) -> Vec<String> {
+    let mut samples = curated(spec.name);
+    let words: Vec<&str> = spec
+        .keywords
+        .iter()
+        .flat_map(|g| g.words.iter().copied())
+        .collect();
+    // keyword glue and boundaries with the first two words of the spec
+    if let (Some(&a), Some(&b)) = (words.first(), words.get(1)) {
+        samples.push(format!("{a}{a} {a}x x{a} _{a} {a}_ {b}{a} a {a} b"));
+        samples.push(format!("{a}\n{b} {a}{b}\n{a} at_line_start\nplain {a}"));
+    }
+    // delimiter soup: quote runs and every opener/close adjacency
+    let mut soup = String::new();
+    for s in spec.strings {
+        for _ in 0..3 {
+            soup.push(s.quote);
+        }
+    }
+    for sp in spec.spans {
+        soup.push_str(sp.open);
+        soup.push_str(sp.close);
+    }
+    samples.push(soup);
+    // an unmapped char (emoji) breaks the shaping run: the string dies
+    // there and a later quote opens a fresh one
+    if let Some(q) = spec.strings.first().map(|s| s.quote) {
+        samples.push(format!("a{q}b\u{1F680}c{q}d{q}"));
+    }
+
+    // deterministic-random assembly from spec-derived pieces
+    let mut pieces: Vec<String> = vec![
+        " ".into(),
+        "\n".into(),
+        "=".into(),
+        ";".into(),
+        "x".into(),
+        "_y1".into(),
+        "42".into(),
+        "3.14".into(),
+        "0x1F".into(),
+        ".".into(),
+        "e\u{1F680}f".into(),
     ];
-    let pieces = [
-        "fn", "let", "\"ab\"", "\"fn\"", "// c\n", "/", "x", "_y1", " ", "=", ";", "\"", "//",
-        "\"str // inner\"", "mut", "pub", "\n", "s", "use", "42", "3.14", "0x1F", "/* b */",
-        "/*", "*/", "1.max", ".", "*", "2",
-    ];
+    for w in &words {
+        pieces.push((*w).to_string());
+    }
+    for s in spec.strings {
+        pieces.push(s.quote.to_string());
+        pieces.push(format!("{}ab{}", s.quote, s.quote));
+        pieces.push(format!("{}a\nb{}", s.quote, s.quote));
+    }
+    for sp in spec.spans {
+        pieces.push(sp.open.to_string());
+        if sp.close.is_empty() {
+            pieces.push(format!("{} c\n", sp.open));
+        } else {
+            pieces.push(sp.close.to_string());
+            pieces.push(format!("{} b {}", sp.open, sp.close));
+            pieces.push(format!("{}a\nb{}", sp.open, sp.close));
+        }
+    }
     let mut x = 0x9E37_79B9_7F4A_7C15u64;
     let mut next = move || {
         x ^= x << 13;
@@ -802,11 +1355,127 @@ pub fn sample_texts(_spec: &LanguageSpec) -> Vec<String> {
     for _ in 0..400 {
         let n = 4 + (next() as usize % 24);
         let s: String = (0..n)
-            .map(|_| pieces[next() as usize % pieces.len()])
+            .map(|_| pieces[next() as usize % pieces.len()].clone())
             .collect();
         samples.push(s);
     }
     samples
+}
+
+fn curated(name: &str) -> Vec<String> {
+    match name {
+        "javascript" => [
+            "let x = 1;",
+            "// comment\nfunction f() {}",
+            "const s = 'fn // let';",
+            "// 'quoted' comment\nlet y;",
+            "let s = \"a'b`c\";",
+            "let t = `x ${y} z`;",
+            "`multi\nline\ntemplate`",
+            "'' \"\" ``",
+            "'a\"b' \"c'd\" `e\"f'g`",
+            "''''''",
+            "//////",
+            "/* block */ let x;",
+            "/* multi\nline\ncomment */ const y;",
+            "/* unterminated block let function",
+            "a/*b'c*/d'e",
+            "*/*/*/**/",
+            "let a = 42; let b = 3.14; let c = 0x1F; let d = 1e5;",
+            "1..toString() x1 12x 0b101 1_000",
+            "letletlet let_ let1 1let",
+            "async function* gen() { yield await x; }",
+            "class A extends B { static m() { return this; } }",
+            "import { a } from 'mod'; export default A;",
+            "null undefined true false this",
+            "\nfunction at_line_start\nlet at_line_start\n42 at_line_start",
+            "let $x = $require('y'); $let let$ $let$",
+            "let s = '\"' // '\"\n`//` \"'`",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+        "typescript" => [
+            "interface I { x: number; }",
+            "type T = Array<string>;",
+            "const x: Array<number> = [1, 2];",
+            "enum E { A, B }",
+            "abstract class C implements I { private readonly x?: string; }",
+            "function f<T extends object>(v: T): T { return v; }",
+            "declare module 'm' { export const x: 1; }",
+            "const y = x as unknown as string;",
+            "const z = w satisfies T;",
+            "let a: any = null; let b: void; let c: unknown;",
+            "type K = keyof O;",
+            "is x string? asserts v is T: infer U;",
+            "// comment\nconst s: string = `t ${x}`;",
+            "/* multi\nline */ let t: boolean;",
+            "x = 42; y = 3.14; z = 0xFF;",
+            "namespace N { export function g(): never { throw 1; } }",
+            "class D extends C implements I { override m() {} }",
+            "\ninterface at_line_start\nconst at_line_start\n42 at_line_start",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+        "python" => [
+            "x = 1",
+            "# comment\ndef main():\n    pass",
+            "s = \"fn # let\"",
+            "s = 'single # \"q\"'",
+            "\"\"\"triple\nline\nstring\"\"\"",
+            "'''single triple with \" inside'''",
+            "\"\"\"a\"\"b\"\"\"",
+            "''''''",
+            "'''''",
+            "f\"interp {x} end\"",
+            "def f():\n    \"\"\"Docstring.\"\"\"\n    return 1",
+            "'''unterminated triple",
+            "\"unterminated string def class",
+            "# unterminated comment def if",
+            "\"\"\"\"quoted\"\"\"\"",
+            "x = 42; y = 3.14; z = 0x1F; w = 1_000",
+            "class C(Base):\n    def m(self):\n        return self",
+            "if x and not y or z in w is v:\n    pass",
+            "g = lambda x: x + 1",
+            "import os.path as p\nfrom x import (a, b)",
+            "async def f():\n    await g()",
+            "match x:\n    case 1:\n        pass",
+            "global g; nonlocal n; del x; assert y",
+            "\ndef at_line_start\nx = at_line_start\n42 at_line_start",
+            "a#b'c\"d'''e",
+            "deffn def defx xdef _def def_",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+        // rust keeps the v1.1 curated set verbatim
+        _ => [
+            "let x = 1;",
+            "// comment\nfn main() {}",
+            "let s = \"fn // let\";",
+            "// \"quoted\" comment\nlet y;",
+            "\"\"\"",
+            "//////",
+            "fnfn fn fnx xfn _fn fn_",
+            "a\"b\"c\"d",
+            "/\n// x\n/",
+            "let s = \"\";",
+            "struct S; impl S { fn f() -> Self { Self } }",
+            "/* block */ let x;",
+            "/* multi\nline\ncomment */ let y;",
+            "/* unterminated block let fn",
+            "a/*b\"c*/d\"e",
+            "*/*/*/**/",
+            "let a = 42; let b = 3.14; let c = 0x1F_ff_u32; let d = 1_000;",
+            "1.max(2).min(3)",
+            "x1 12x a1b2 0b1010 1e5 1.2.3 42.",
+            "\nfn at_line_start\nlet at_line_start\n42 at_line_start",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+    }
 }
 
 /// The generic-mode oracle: shape every sample with the produced font and
@@ -818,6 +1487,7 @@ pub fn verify_generic(
     charmap: &dyn Fn(char) -> Option<u16>,
     samples: &[String],
 ) -> VerifyResult {
+    let layout = layout(spec);
     let mut result = VerifyResult::ok();
     let Some(face) = rustybuzz::Face::from_slice(ttf, 0) else {
         result.fail("rustybuzz cannot parse the produced font".into());
@@ -831,7 +1501,7 @@ pub fn verify_generic(
             .zip(&toks)
             .map(|((byte, ch), &tok)| {
                 let gid = charmap(ch).unwrap_or(0);
-                let want = match slot_of(tok) {
+                let want = match layout.tok_slot(tok) {
                     None => gid,
                     Some(pal) => alt_of.get(&(gid, pal)).copied().unwrap_or(gid),
                 };
@@ -889,7 +1559,7 @@ mod tests {
         // keyword between punctuation colors; at text start it cannot
         // (no glyph exists for the shaper to backtrack on)
         let t = toks("a let b");
-        assert_eq!(&t[2..5], &[Tok::Keyword; 3]);
+        assert_eq!(&t[2..5], &[Tok::Keyword(0); 3]);
         let t = toks("let x");
         assert_eq!(&t[0..3], &[Tok::Plain; 3], "text-start keyword stays plain");
         // inside an identifier it is never a keyword
@@ -906,22 +1576,22 @@ mod tests {
         // with '\n' mapped (the injected glyph), a keyword after a newline
         // anchors on it and colors
         let t = lex(&rust(), "a\nfn b", &|_| true);
-        assert_eq!(&t[2..4], &[Tok::Keyword; 2]);
+        assert_eq!(&t[2..4], &[Tok::Keyword(0); 2]);
     }
 
     #[test]
     fn lex_strings_and_comments() {
         let t = toks("a \"b // c\" d");
-        assert_eq!(t[2], Tok::StrOpen);
-        assert_eq!(&t[3..9], &[Tok::StrBody; 6]); // `//` inside a string stays string
-        assert_eq!(t[9], Tok::StrClose);
+        assert_eq!(t[2], Tok::StrOpen(0));
+        assert_eq!(&t[3..9], &[Tok::StrBody(0); 6]); // `//` inside a string stays string
+        assert_eq!(t[9], Tok::StrClose(0));
         let t = toks("// \"q\" x\nfn y");
-        assert_eq!(&t[0..2], &[Tok::CmtOpen; 2]);
-        assert_eq!(&t[2..8], &[Tok::CmtBody; 6]); // quote inside a comment stays comment
+        assert_eq!(&t[0..2], &[Tok::SpanOpen(0); 2]);
+        assert_eq!(&t[2..8], &[Tok::SpanBody(0); 6]); // quote inside a comment stays comment
         assert_eq!(t[8], Tok::Plain); // newline ends the comment
         assert_eq!(
             &t[9..11],
-            &[Tok::Keyword; 2],
+            &[Tok::Keyword(0); 2],
             "the injected newline glyph anchors line-start keywords"
         );
     }
@@ -929,17 +1599,17 @@ mod tests {
     #[test]
     fn lex_block_comments() {
         let t = toks("a /* b\n c */ d");
-        assert_eq!(&t[2..4], &[Tok::BCmtOpen; 2]);
-        assert_eq!(t[8], Tok::BCmtBody, "block comments span newlines");
-        assert_eq!(&t[10..12], &[Tok::BCmtClose; 2]);
+        assert_eq!(&t[2..4], &[Tok::SpanOpen(1); 2]);
+        assert_eq!(t[8], Tok::SpanBody(1), "block comments span newlines");
+        assert_eq!(&t[10..12], &[Tok::SpanClose(1); 2]);
         // unterminated block comment runs to the barrier/end
         let t = toks("x /* let fn");
-        assert_eq!(&t[2..4], &[Tok::BCmtOpen; 2]);
-        assert_eq!(&t[5..11], &[Tok::BCmtBody; 6]);
+        assert_eq!(&t[2..4], &[Tok::SpanOpen(1); 2]);
+        assert_eq!(&t[5..11], &[Tok::SpanBody(1); 6]);
         // `*` alone is body, only `*/` closes
         let t = toks("/* a*b */");
-        assert_eq!(t[5], Tok::BCmtBody);
-        assert_eq!(&t[7..9], &[Tok::BCmtClose; 2]);
+        assert_eq!(t[5], Tok::SpanBody(1));
+        assert_eq!(&t[7..9], &[Tok::SpanClose(1); 2]);
     }
 
     #[test]
@@ -966,16 +1636,143 @@ mod tests {
     fn lex_barrier_kills_states() {
         // an unmapped char (here: the emoji) breaks the shaping run: the
         // string dies there and a later quote opens a fresh one
-        let t = lex(
-            &rust(),
-            "a\"b\u{1F680}c\"d\"",
-            &|c| c != '\u{1F680}',
-        );
-        assert_eq!(t[1], Tok::StrOpen);
-        assert_eq!(t[2], Tok::StrBody);
+        let t = lex(&rust(), "a\"b\u{1F680}c\"d\"", &|c| c != '\u{1F680}');
+        assert_eq!(t[1], Tok::StrOpen(0));
+        assert_eq!(t[2], Tok::StrBody(0));
         assert_eq!(t[3], Tok::Plain); // the barrier itself
         assert_eq!(t[4], Tok::Plain); // coloring died with the run break
-        assert_eq!(t[5], Tok::StrOpen); // fresh string
-        assert_eq!(t[6], Tok::StrBody);
+        assert_eq!(t[5], Tok::StrOpen(0)); // fresh string
+        assert_eq!(t[6], Tok::StrBody(0));
+    }
+
+    // ---- JavaScript -----------------------------------------------------
+
+    #[test]
+    fn lex_js_quote_kinds_are_independent() {
+        let t = lex(&javascript(), "'a\"b'", &|_| true);
+        assert_eq!(t[0], Tok::StrOpen(1), "single quote opens kind 1");
+        assert_eq!(
+            t[2],
+            Tok::StrBody(1),
+            "double quote inside single-quoted string is body"
+        );
+        assert_eq!(t[4], Tok::StrClose(1));
+        let t = lex(&javascript(), "\"a'b\"", &|_| true);
+        assert_eq!(
+            t[2],
+            Tok::StrBody(0),
+            "single quote inside double-quoted string is body"
+        );
+        // `//` inside any string stays string
+        let t = lex(&javascript(), "'a // b'", &|_| true);
+        assert_eq!(&t[3..5], &[Tok::StrBody(1); 2]);
+    }
+
+    #[test]
+    fn lex_js_template_literals_span_lines() {
+        let t = lex(&javascript(), "`a\nb`", &|_| true);
+        assert_eq!(t[0], Tok::StrOpen(2));
+        assert_eq!(t[2], Tok::StrBody(2), "template literals span newlines");
+        assert_eq!(t[4], Tok::StrClose(2));
+        // ordinary quotes still die at the newline
+        let t = lex(&javascript(), "\"a\nb\"", &|_| true);
+        assert_eq!(t[2], Tok::Plain, "double-quoted string dies at newline");
+        assert_eq!(t[3], Tok::Plain);
+        assert_eq!(t[4], Tok::StrOpen(0), "fresh string after the break");
+        // interpolation degrades to string body (documented v1.2 scope)
+        let t = lex(&javascript(), "`x ${y} z`", &|_| true);
+        assert_eq!(&t[1..9], &[Tok::StrBody(2); 8]);
+    }
+
+    #[test]
+    fn lex_js_keyword_groups_and_dollar() {
+        let spec = javascript();
+        let t = lex(&spec, "a return b", &|_| true);
+        assert_eq!(&t[2..8], &[Tok::Keyword(0); 6], "control group");
+        let t = lex(&spec, "a function b", &|_| true);
+        assert_eq!(&t[2..10], &[Tok::Keyword(1); 8], "storage group");
+        let t = lex(&spec, "a true b", &|_| true);
+        assert_eq!(&t[2..6], &[Tok::Keyword(2); 4], "constant group");
+        // '$' is an identifier char: $return is a name, not a keyword
+        let t = lex(&spec, "a $return b", &|_| true);
+        assert_eq!(&t[2..9], &[Tok::Plain; 7]);
+        let t = lex(&spec, "a return$ b", &|_| true);
+        assert_eq!(&t[2..9], &[Tok::Plain; 7]);
+        // a keyword may anchor on '$' only when it ends a word — it does
+        // not, because '$' is an identifier char
+        let t = lex(&spec, "a$ return $b", &|_| true);
+        assert_eq!(&t[3..9], &[Tok::Keyword(0); 6]);
+    }
+
+    // ---- Python ---------------------------------------------------------
+
+    #[test]
+    fn lex_python_triple_quotes_beat_simple() {
+        let spec = python();
+        // `"""` opens the block string, not an empty `""` pair
+        let t = lex(&spec, "\"\"\"x\"\"\"", &|_| true);
+        assert_eq!(&t[0..3], &[Tok::SpanOpen(0); 3]);
+        assert_eq!(t[3], Tok::SpanBody(0));
+        assert_eq!(&t[4..7], &[Tok::SpanClose(0); 3]);
+        // still `""` when no third quote follows
+        let t = lex(&spec, "\"\"x", &|_| true);
+        assert_eq!(t[0], Tok::StrOpen(0));
+        assert_eq!(t[1], Tok::StrClose(0));
+        assert_eq!(t[2], Tok::Plain);
+        // four quotes: triple open + one body char, unterminated
+        let t = lex(&spec, "\"\"\"\"", &|_| true);
+        assert_eq!(&t[0..3], &[Tok::SpanOpen(0); 3]);
+        assert_eq!(t[3], Tok::SpanBody(0));
+        // empty triple string (six quotes)
+        let t = lex(&spec, "\"\"\"\"\"\"", &|_| true);
+        assert_eq!(&t[0..3], &[Tok::SpanOpen(0); 3]);
+        assert_eq!(&t[3..6], &[Tok::SpanClose(0); 3]);
+        // lone quotes inside a triple string are body
+        let t = lex(&spec, "\"\"\"a\"\"b\"\"\"", &|_| true);
+        assert_eq!(t[4], Tok::SpanBody(0));
+        assert_eq!(t[5], Tok::SpanBody(0));
+        assert_eq!(&t[7..10], &[Tok::SpanClose(0); 3]);
+    }
+
+    #[test]
+    fn lex_python_triple_kinds_and_lines() {
+        let spec = python();
+        // docstring spans lines
+        let t = lex(&spec, "\"\"\"Doc\nstring.\"\"\"", &|_| true);
+        assert_eq!(t[6], Tok::SpanBody(0), "triple strings span newlines");
+        assert_eq!(&t[14..17], &[Tok::SpanClose(0); 3]);
+        // single-quoted triple is a different kind
+        let t = lex(&spec, "'''a\"\"\"b'''", &|_| true);
+        assert_eq!(&t[0..3], &[Tok::SpanOpen(1); 3]);
+        assert_eq!(
+            &t[4..7],
+            &[Tok::SpanBody(1); 3],
+            "`\"\"\"` inside `'''` is body"
+        );
+        assert_eq!(&t[8..11], &[Tok::SpanClose(1); 3]);
+        // simple strings die at the newline
+        let t = lex(&spec, "\"a\nb\"", &|_| true);
+        assert_eq!(t[2], Tok::Plain);
+        // f-string prefix stays plain, the string still colors
+        let t = lex(&spec, "f\"x{y}\"", &|_| true);
+        assert_eq!(t[0], Tok::Plain);
+        assert_eq!(t[1], Tok::StrOpen(0));
+        assert_eq!(&t[2..6], &[Tok::StrBody(0); 4]);
+        assert_eq!(t[6], Tok::StrClose(0));
+    }
+
+    #[test]
+    fn lex_python_hash_comments() {
+        let spec = python();
+        let t = lex(&spec, "# \"q\" x\ndef y():\n    pass\n", &|_| true);
+        assert_eq!(t[0], Tok::SpanOpen(2));
+        assert_eq!(&t[1..7], &[Tok::SpanBody(2); 6]);
+        assert_eq!(t[7], Tok::Plain, "newline ends the comment");
+        assert_eq!(&t[8..11], &[Tok::Keyword(1); 3], "def is group 1");
+        assert_eq!(&t[21..25], &[Tok::Keyword(0); 4], "pass is group 0");
+        let t = lex(&spec, "z = 1\nif x and not y:\n    pass\n", &|_| true);
+        assert_eq!(&t[6..8], &[Tok::Keyword(0); 2]);
+        assert_eq!(&t[11..14], &[Tok::Keyword(3); 3], "and is group 3");
+        assert_eq!(&t[26..30], &[Tok::Keyword(0); 4], "pass at line start");
     }
 }

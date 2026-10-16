@@ -248,8 +248,8 @@ fn inject_cmap14_uvs(font: &[u8], base: char, selector: char) -> Vec<u8> {
     sub.extend_from_slice(&14u16.to_be_bytes()); // format
     sub.extend_from_slice(&length.to_be_bytes());
     sub.extend_from_slice(&1u32.to_be_bytes()); // numVarSelectorRecords
-    // record: varSelector (uint24), defaultUVS offset (0), nonDefaultUVS
-    // offset (relative to subtable start, right after the record)
+                                                // record: varSelector (uint24), defaultUVS offset (0), nonDefaultUVS
+                                                // offset (relative to subtable start, right after the record)
     sub.extend_from_slice(&(selector as u32).to_be_bytes()[1..4]);
     sub.extend_from_slice(&0u32.to_be_bytes());
     sub.extend_from_slice(&non_default_off.to_be_bytes());
@@ -334,14 +334,120 @@ fn generic_mode_highlights_arbitrary_text() {
 /// order, unterminated states, adjacent states, keyword-boundary soup.
 #[test]
 fn generic_mode_adversarial_samples() {
+    adversarial(
+        &chromaglyph_core::generic::rust(),
+        &[
+            "// only comment",
+            "\"only string\"",
+            "fn//c\n\"s\"let",
+            "\"unterminated string let fn",
+            "// unterminated comment let fn",
+            "letletlet let_ let1 1let",
+            "\"a\"\"b\"\"c\"",
+            "///doc\n//!inner\n////",
+            "x = \"//\" / \"/\" // \"/\"\n/=\"\"",
+        ],
+    );
+}
+
+/// The v1.2 languages: multi-quote strings, template literals spanning
+/// lines, Python triple quotes — each built with the oracle running over
+/// curated + deterministic-random samples inside `build`.
+#[test]
+fn generic_mode_new_languages() {
     let themes = themes();
-    let spec = chromaglyph_core::generic::rust();
+    for (spec, min_rules) in [
+        (chromaglyph_core::generic::javascript(), 300),
+        (chromaglyph_core::generic::typescript(), 450),
+        (chromaglyph_core::generic::python(), 300),
+    ] {
+        let out = build(&BuildInput {
+            font_bytes: FONT,
+            themes: &themes,
+            blocks: &[],
+            run_verify: true,
+            generic: Some(&spec),
+            font_name: None,
+            semantic: None,
+        })
+        .unwrap_or_else(|e| panic!("{}: generic build + oracle: {e}", spec.name));
+        assert!(
+            out.report.rules >= min_rules,
+            "{}: expected a real rule machine, got {}",
+            spec.name,
+            out.report.rules
+        );
+        assert_eq!(
+            out.report.palettes.len(),
+            2,
+            "{}: one palette per theme",
+            spec.name
+        );
+        assert!(
+            out.report.verify.ok,
+            "{}: {:?}",
+            spec.name, out.report.verify.failures
+        );
+    }
+}
+
+/// Hand-picked nastiness per new language: quote-kind interleaving,
+/// template literals across lines, triple-quote precedence, `$` words,
+/// f-strings, line-start keywords over the injected newline.
+#[test]
+fn generic_mode_adversarial_new_languages() {
+    adversarial(
+        &chromaglyph_core::generic::javascript(),
+        &[
+            "'only single'",
+            "`only template`",
+            "`a\nb\nc`",
+            "let s = `he said \"hi\" and 'bye'`;",
+            "'a`b' `c'd' e`",
+            "'''''' ``````",
+            "let//c\n`s`const",
+            "`unterminated template let const",
+            "// `unterminated` comment let const",
+            "functionfunction function_ _function 1function",
+            "x = '`' / \"`\" // '`'\n`=`\"\"",
+            "$let let$ $let$ $$let$$ let$$",
+            "\nreturn at_line_start\nconst at_line_start\n42 at_line_start",
+            "`${x /* not a comment */}` + '// str'",
+            "await\nawait awaitx xawait",
+        ],
+    );
+    adversarial(
+        &chromaglyph_core::generic::python(),
+        &[
+            "\"\"\"only triple\"\"\"",
+            "'''only single triple'''",
+            "\"\"\"a\nb\nc\"\"\"",
+            "\"\"\"' and \" inside\"\"\"",
+            "'''\"\"\"x\"\"\"'''",
+            "\"\"\"\"\"\"\"\"\"\"",
+            "def# c\n\"\"\"s\"\"\"class",
+            "\"\"\"unterminated triple def class",
+            "# unterminated comment def if",
+            "defdefdef def_ _def 1def",
+            "s = '\"' # '\"'\nx = \"\"\"'#'\"\"\"",
+            "f'{x}' f\"{y}\" f'''{z}'''",
+            "\nreturn at_line_start\ndef at_line_start\n42 at_line_start",
+            "\"\"\"${x // not a comment}\"\"\" + '# str'",
+            "lambda\nlambda lambdax xlambda",
+        ],
+    );
+}
+
+/// Shared adversarial harness: build without the oracle, then shape the
+/// font over the samples and diff against the reference lexer.
+fn adversarial(spec: &chromaglyph_core::generic::LanguageSpec, samples: &[&str]) {
+    let themes = themes();
     let out = build(&BuildInput {
         font_bytes: FONT,
         themes: &themes,
         blocks: &[],
         run_verify: false,
-        generic: Some(&spec),
+        generic: Some(spec),
         font_name: None,
         semantic: None,
     })
@@ -360,30 +466,22 @@ fn generic_mode_adversarial_samples() {
         .iter()
         .map(|l| (l.glyph_id().to_u16(), l.palette_index()))
         .collect();
-    for record in colr.base_glyph_records().and_then(|r| r.ok()).unwrap_or_default() {
+    for record in colr
+        .base_glyph_records()
+        .and_then(|r| r.ok())
+        .unwrap_or_default()
+    {
         let alt = record.glyph_id().to_u16();
         if let Some(&(base, slot)) = layers.get(record.first_layer_index() as usize) {
             alt_of.insert((base, slot), alt);
         }
     }
+    // model the produced font (the injected newline is mapped)
     let charmap = skrifa::charmap::Charmap::new(&font);
-    let samples: Vec<String> = [
-        "// only comment",
-        "\"only string\"",
-        "fn//c\n\"s\"let",
-        "\"unterminated string let fn",
-        "// unterminated comment let fn",
-        "letletlet let_ let1 1let",
-        "\"a\"\"b\"\"c\"",
-        "///doc\n//!inner\n////",
-        "x = \"//\" / \"/\" // \"/\"\n/=\"\"",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
+    let samples: Vec<String> = samples.iter().map(|s| s.to_string()).collect();
     let result = chromaglyph_core::generic::verify_generic(
         &out.ttf,
-        &spec,
+        spec,
         &alt_of,
         &|ch| {
             charmap
@@ -393,7 +491,7 @@ fn generic_mode_adversarial_samples() {
         },
         &samples,
     );
-    assert!(result.ok, "{:?}", result.failures);
+    assert!(result.ok, "{}: {:?}", spec.name, result.failures);
 }
 
 /// The semantic hook: spans of (byte range, dotted scope) overlay the
@@ -412,19 +510,17 @@ fn semantic_layer_overlays_syntactic_colors() {
         semantic: None,
     })
     .unwrap();
-    let semantic = |block: &chromaglyph_core::Block<'_>| -> Vec<(usize, usize, String)> {
-        block
-            .text
-            .match_indices("msg")
-            .map(|(pos, found)| (pos, pos + found.len(), "variable.parameter".to_string()))
-            .chain(
-                block
-                    .text
-                    .match_indices("main")
-                    .map(|(pos, found)| (pos, pos + found.len(), "entity.name.function".to_string())),
-            )
-            .collect()
-    };
+    let semantic =
+        |block: &chromaglyph_core::Block<'_>| -> Vec<(usize, usize, String)> {
+            block
+                .text
+                .match_indices("msg")
+                .map(|(pos, found)| (pos, pos + found.len(), "variable.parameter".to_string()))
+                .chain(block.text.match_indices("main").map(|(pos, found)| {
+                    (pos, pos + found.len(), "entity.name.function".to_string())
+                }))
+                .collect()
+        };
     let layered = build(&BuildInput {
         font_bytes: FONT,
         themes: &themes,

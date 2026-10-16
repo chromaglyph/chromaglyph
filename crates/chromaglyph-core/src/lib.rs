@@ -176,12 +176,18 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
                     .iter()
                     .map(|&(base, pal, alt)| ((base, pal), alt))
                     .collect();
+                // model the *produced* font: the injected newline glyph
+                // is mapped even when the source font maps no `\n`/`\r`
+                let produced = read_fonts::FontRef::new(&ttf).map_err(|e| {
+                    BuildError::VerifyFailed(vec![format!("cannot re-read produced font: {e}")])
+                })?;
+                let produced_charmap = skrifa::charmap::Charmap::new(&produced);
                 let mut result = generic::verify_generic(
                     &ttf,
                     spec,
                     &alt_of,
                     &|ch| {
-                        charmap
+                        produced_charmap
                             .map(ch)
                             .map(|g| g.to_u32() as u16)
                             .filter(|g| *g != 0)
@@ -205,10 +211,7 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
     };
 
     let woff = woff::wrap(&ttf)?;
-    let css = render_css(
-        input.themes,
-        input.font_name.unwrap_or("chromaglyph.woff"),
-    );
+    let css = render_css(input.themes, input.font_name.unwrap_or("chromaglyph.woff"));
 
     let report = Report {
         themes: input.themes.iter().map(|t| t.name.clone()).collect(),

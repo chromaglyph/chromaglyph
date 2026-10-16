@@ -176,7 +176,13 @@ pub fn assemble(
         h_metrics.push(LongMetric::new(advance, lsb));
     }
     for &(base_gid, _pal, _alt) in &plan.alt_glyphs {
-        let (advance, lsb) = loaded.metrics[base_gid as usize];
+        // an alt may copy an injected plain glyph (the newline's body
+        // copies) — those are zero-width placeholders, not source glyphs
+        let (advance, lsb) = loaded
+            .metrics
+            .get(base_gid as usize)
+            .copied()
+            .unwrap_or((0, 0));
         h_metrics.push(LongMetric::new(advance, lsb));
     }
     for _ in 0..num_plain {
@@ -197,22 +203,14 @@ pub fn assemble(
     } else {
         let mut mappings: BTreeMap<char, GlyphId> = skrifa::charmap::Charmap::new(&loaded.font)
             .mappings()
-            .filter_map(|(cp, gid)| {
-                Some((
-                    char::from_u32(cp)?,
-                    GlyphId::new(gid.to_u32()),
-                ))
-            })
+            .filter_map(|(cp, gid)| Some((char::from_u32(cp)?, GlyphId::new(gid.to_u32()))))
             .collect();
         for &(cp, gid) in &plan.plain_glyphs {
             if let Some(ch) = char::from_u32(cp) {
                 mappings.insert(ch, GlyphId::new(gid as u32));
             }
         }
-        Some(
-            Cmap::from_mappings(mappings)
-                .map_err(|e| BuildError::TableWrite(e.to_string()))?,
-        )
+        Some(Cmap::from_mappings(mappings).map_err(|e| BuildError::TableWrite(e.to_string()))?)
     };
 
     // ---- COLR v0 + CPAL ----------------------------------------------------

@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- **generic mode v1.2 — more languages** (`--generic js | ts | python`
+  alongside `rust`): the language spec model is generalized from one
+    quote character to multiple string kinds (JS `"`, `'` and `` ` ``
+    are independent states; template literals propagate across
+    newlines, `${…}` degrades to string body for now), from one
+    line/block comment to arbitrary delimited spans (Python `"""`/`'''`
+    triple-quoted strings beat the simple quote longest-first, never
+    close each other, and span lines like block comments), and from one
+    keyword scope to keyword groups (`keyword.control` vs
+    `storage.type` vs `constant.language`, colored like a real
+    grammar). Language-specific identifier characters (`$` in JS) are
+    respected — `$return` is a name, not a keyword. The oracle runs
+    curated + 400 deterministic-random samples per language (generated
+    from the spec itself) plus adversarial suites: quote interleaving,
+    unterminated states, keyword glue, barrier emoji.
+- **fix**: three latent generic-mode bugs found while making
+  newline-spanning states real. (1) The newline glyph was injected only
+    when the source font mapped neither `\n` nor `\r` — a font mapping
+    just `\r` (like the JetBrains Mono fixture) silently degraded
+    line-start keywords and multi-line block comments to barriers;
+    injection now keys on `\n` alone. (2) The GSUB coverage table
+    excluded the injected glyph (the filter meant to skip alt copies
+    used `gid < num_source_glyphs`), so propagation rules could never
+    *start* on the newline even though backtracking over it worked —
+    multi-line states died in both the shaper and browsers. (3) The
+    generic oracle judged `mapped()` by the *source* font's cmap; it
+    now uses the produced font's (injected newline included), which is
+    what the shaper actually sees. Also: hmtx generation now tolerates
+    alt glyphs copied from injected (zero-width) glyphs.
 - the CLI crate is renamed **`chromaglyph-cli` → `chromaglyph`** on
   crates.io (`cargo install chromaglyph`); the old name receives one
   final pointer release. The library stays `chromaglyph-core`.

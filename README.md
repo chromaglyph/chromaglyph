@@ -89,6 +89,21 @@ tokenize+theme → compile → fontbuild → verify
     块注释可跨行）；**数字状态**（`3.14` 用前瞻规则、`1.max` 的点不吞）；
     **块注释 `/* */`**（开/闭规则 + 跨行传播）；cmap 在注入时用源映射重建
   - 多主题依旧一套规则 + 每主题一个 CPAL 调色板
+- [x] **M4d** 多语言 generic（v1.2）：`--generic` 支持 **js / ts / python**，
+  spec 模型从「单引号字符」泛化为：
+  - **多引号字符串**：JS 的 `"` `'` `` ` `` 各自成态、互不干扰（`'a"b'` 里
+    双引号是字符串体）；模板字符串**跨行传播**（`${…}` 暂降级为字符串体）
+  - **多定界 span**：行注释 / 块注释 / Python **三引号**统一为一种机制；
+    `"""` 开启符按「长者优先」压过单引号字符串，`'''` 与 `"""` 互不闭合，
+    docstring 跨行——与真实 tokenizer 的最长匹配一致
+  - **关键字分组**：一门语言多组 scope（`keyword.control` 紫色 vs
+    `storage.type` 蓝色 vs `constant.language`），看起来像真语法文件
+  - **`$` 等语言特有标识符字符**：`$return` 不是关键字
+  - 修复：`\n` 注入条件此前被 `\r` 的映射骗过（源字体只映射 `\r` 时跨行
+    特性静默失效）；GSUB coverage 此前漏掉注入字形（跨行传播规则永不命中）；
+    oracle 的 `mapped` 改按**产出字体**的 cmap 判定
+  - oracle 对四种语言各跑「精选 + 按 spec 生成的 400 个确定性随机」样本，
+    另加各语言对抗样本（引号交错、未闭合、关键字胶水、屏障 emoji）
 - [x] **M4c** tree-sitter 语义 token（`--semantic` / `buildFont({semantic: true})`）：
   - 可选 crate `chromaglyph-treesitter`（workspace 里唯一带 C 依赖的 crate，
     core 保持纯 Rust）；解析代码树 → 语义 span（函数定义/调用/方法、参数、
@@ -96,8 +111,9 @@ tokenize+theme → compile → fontbuild → verify
     的 scope 自动跳过——看起来像开了语言服务器的编辑器
   - core 只暴露 `BuildInput.semantic` 回调钩子（`SemanticLayer` 类型），
     与具体解析器完全解耦；oracle 全链路验证（新颜色→新 slot→新规则）
-- [ ] M4 剩余：更多语言与构造（字符字面量、转义、函数名等着色类别、
-  多语言同字体、tree-sitter 语言扩展）
+- [ ] M4 剩余：更多构造与语言（字符串转义与字符字面量、`${}`/f-string 插值
+  着色、更多关键字类别、多语言同字体、Go/Java 等语言 spec、tree-sitter
+  语言扩展）
 
 ## 用法
 
@@ -108,7 +124,8 @@ chromaglyph build --font JetBrainsMono-Regular.ttf \
     --output out.woff --css snippet.css --report report.json
 chromaglyph verify --font out.woff --input examples/hello.rs
 
-# 通用模式：不指定内容，字体高亮任意 Rust 文本（关键字/注释/字符串）
+# 通用模式：不指定内容，字体高亮该语言的任意文本（关键字/注释/字符串/数字；
+# rust | js | ts | python，多引号、模板字符串跨行、Python 三引号与 docstring）
 chromaglyph build --font JetBrainsMono-Regular.ttf --generic rust \
     --output generic.woff --css generic.css
 ```
@@ -130,7 +147,7 @@ WOFF2 编码器（需要 Brotli + woff2 变换栈），v1 先退 WOFF1，浏览�
 
 ```sh
 cargo build --release
-cargo test                                        # 23 tests
+cargo test                                        # 52 tests（含 4 语言 generic oracle）
 cargo run -p chromaglyph -- build --font crates/chromaglyph-core/tests/fixtures/JetBrainsMono-Regular.ttf \
     --input examples/hello.rs --output target/demo/chromaglyph-demo.woff --css target/demo/chromaglyph-demo.css
 python3 -m http.server -d target/demo 8143        # 打开 index.html 看明暗双调色板
