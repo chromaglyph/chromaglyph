@@ -1,0 +1,19 @@
+{
+  "name": "@chromaglyph/node-linux-arm64-gnu",
+  "version": "0.1.0",
+  "description": "chromaglyph napi binary for linux-arm64-gnu",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "*.node"
+  ]
+}

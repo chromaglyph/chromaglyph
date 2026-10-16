@@ -1,8 +1,8 @@
 name: napi build & publish binaries
 
 # Builds @chromaglyph/node platform packages for the full matrix and
-# publishes them on release tags (v*). macOS arm64 is also built here so
-# every platform ships from the same CI.
+# publishes them on release tags (v*). Requires the NPM_TOKEN secret
+# (npm granular token with publish rights for the @chromaglyph scope).
 
 permissions:
   contents: write
@@ -21,24 +21,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        settings:
-          - os: macos-latest # arm64
+        include:
+          - os: macos-latest        # arm64 runner
             target: aarch64-apple-darwin
-          - os: macos-latest # x64
+            platform: darwin-arm64
+          - os: macos-latest        # cross to x64
             target: x86_64-apple-darwin
-            args: --target x86_64-apple-darwin
+            platform: darwin-x64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest
+            platform: linux-x64-gnu
+          - os: ubuntu-latest       # cross via zig
             target: x86_64-unknown-linux-musl
-          - os: ubuntu-latest
+            platform: linux-x64-musl
+            zig: 'true'
+          - os: ubuntu-latest       # cross via zig
             target: aarch64-unknown-linux-gnu
-          - os: ubuntu-latest
+            platform: linux-arm64-gnu
+            zig: 'true'
+          - os: ubuntu-latest       # cross via zig
             target: aarch64-unknown-linux-musl
+            platform: linux-arm64-musl
+            zig: 'true'
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-    name: ${{ matrix.settings.target }}
-    runs-on: ${{ matrix.settings.os }}
+            platform: win32-x64-msvc
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,26 +61,44 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.settings.target }}
+          targets: ${{ matrix.target }}
 
-      - uses: swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-          key: ${{ matrix.settings.target }}
+          key: ${{ matrix.target }}
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm --filter @chromaglyph/node exec napi build --release --platform --target ${{ matrix.settings.target }}
+        shell: bash
+        run: |
+          EXTRA=""
+          if [ "${{ matrix.zig }}" = "true" ]; then EXTRA="--cross-compile"; fi
+          pnpm --filter @chromaglyph/node exec napi build --release --platform --target ${{ matrix.target }} $EXTRA
 
-      - name: Copy artifacts
-        run: pnpm --filter @chromaglyph/node exec napi artifacts --npm-dir ../../npm
+      - name: Stage artifact into platform package
+        shell: bash
+        run: |
+          PKG="npm/@chromaglyph/node-${{ matrix.platform }}"
+          mkdir -p "$PKG"
+          cp "crates/chromaglyph-node/chromaglyph.${{ matrix.platform }}.node" "$PKG/"
 
       - name: Publish (release tags only)
         if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          cd npm/@chromaglyph/*
-          npm publish --access public --provenance
+        shell: bash
         env:
-          NPM_CONFIG_PROVENANCE: true
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          PKG="npm/@chromaglyph/node-${{ matrix.platform }}"
+          VERSION=$(node -p "require('./crates/chromaglyph-node/package.json').version")
+          node -e "
+            const fs = require('fs');
+            const p = process.argv[1];
+            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+            j.version = process.argv[2];
+            fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+          " "$PKG/package.json" "$VERSION"
+          cd "$PKG"
+          npm publish --access public --provenance

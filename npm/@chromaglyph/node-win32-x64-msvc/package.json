@@ -1,0 +1,19 @@
+{
+  "name": "@chromaglyph/node-win32-x64-msvc",
+  "version": "0.1.0",
+  "description": "chromaglyph napi binary for win32-x64-msvc",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "*.node"
+  ]
+}
