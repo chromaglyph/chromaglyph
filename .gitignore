@@ -8,3 +8,9 @@ js/demo/out/
 
 # demo build output
 js/demo/out/
+
+# vitepress demo site
+js/vitepress/.vitepress/cache/
+js/vitepress/.vitepress/dist/
+js/vitepress/.chromaglyph-cache/
+js/vitepress/dist/
