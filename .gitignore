@@ -4,3 +4,4 @@ node_modules/
 crates/chromaglyph-node/index.js
 crates/chromaglyph-node/index.d.ts
 js/demo/out/
+.DS_Store
