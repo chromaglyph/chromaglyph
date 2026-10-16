@@ -15,8 +15,8 @@ use syntect::highlighting::{
 use crate::error::BuildError;
 use crate::spec::Color;
 
-const DARK_PLUS: &str = include_str!("../../../themes/dark_plus.json");
-const LIGHT_PLUS: &str = include_str!("../../../themes/light_plus.json");
+const DARK_PLUS: &str = include_str!("../themes/dark_plus.json");
+const LIGHT_PLUS: &str = include_str!("../themes/light_plus.json");
 
 /// A theme ready for highlighting: the syntect theme plus the editor-level
 /// colors VS Code keeps outside `tokenColors`.
@@ -132,8 +132,8 @@ impl IncludeFiles {
         let file = include.rsplit('/').next().unwrap_or(include);
         match self {
             IncludeFiles::Builtin => match file {
-                "dark_vs.json" => Ok(include_str!("../../../themes/dark_vs.json").to_string()),
-                "light_vs.json" => Ok(include_str!("../../../themes/light_vs.json").to_string()),
+                "dark_vs.json" => Ok(include_str!("../themes/dark_vs.json").to_string()),
+                "light_vs.json" => Ok(include_str!("../themes/light_vs.json").to_string()),
                 _ => Err(BuildError::Theme(format!(
                     "builtin themes cannot include {include:?}"
                 ))),

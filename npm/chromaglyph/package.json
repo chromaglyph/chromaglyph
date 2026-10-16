@@ -1,0 +1,23 @@
+{
+  "name": "chromaglyph",
+  "version": "0.0.1",
+  "description": "Chromaglyph compiles syntax highlighting into OpenType color fonts (COLR + CPAL + exact-mode GSUB). This is a name reservation; the npm-distributed CLI is coming.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "homepage": "https://github.com/chromaglyph/chromaglyph#readme",
+  "bugs": "https://github.com/chromaglyph/chromaglyph/issues",
+  "main": "index.js",
+  "files": [
+    "index.js"
+  ],
+  "keywords": [
+    "font",
+    "syntax-highlighting",
+    "opentype",
+    "color-font",
+    "colr"
+  ]
+}
