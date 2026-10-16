@@ -1,0 +1,29 @@
+{
+  "name": "@chromaglyph/remark",
+  "version": "0.0.1",
+  "description": "remark plugin: highlight code blocks by compiling them into a chromaglyph color font",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
+  "dependencies": {
+    "@chromaglyph/node": "workspace:*",
+    "unist-util-visit": "^5"
+  },
+  "devDependencies": {
+    "remark-parse": "^11",
+    "remark-rehype": "^11",
+    "rehype-stringify": "^10",
+    "unified": "^11"
+  },
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "engines": {
+    "node": ">= 18"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "@chromaglyph/demo",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build-demo.mjs"
+  },
+  "dependencies": {
+    "@chromaglyph/node": "workspace:*",
+    "@chromaglyph/remark": "workspace:*",
+    "rehype-document": "^7.0.3",
+    "rehype-stringify": "^10",
+    "remark-parse": "^11",
+    "remark-rehype": "^11",
+    "unified": "^11"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "chromaglyph-monorepo",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "build:native": "pnpm --filter @chromaglyph/node build",
+    "test": "pnpm -r --if-present test"
+  }
+}

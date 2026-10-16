@@ -1,0 +1,21 @@
+[package]
+name = "chromaglyph-node"
+description = "@chromaglyph/node — napi-rs bindings for chromaglyph-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "3", default-features = false, features = ["napi4"] }
+napi-derive = "3"
+chromaglyph-core.workspace = true
+sha2 = "0.10"
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+napi-build = "2"

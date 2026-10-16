@@ -1,0 +1,31 @@
+{
+  "name": "@chromaglyph/node",
+  "version": "0.0.1",
+  "description": "napi-rs bindings for chromaglyph: compile syntax highlighting into a color font, in-process",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "*.node"
+  ],
+  "napi": {
+    "binaryName": "chromaglyph",
+    "triples": {}
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3"
+  },
+  "scripts": {
+    "build": "napi build --release --platform",
+    "build:debug": "napi build --platform"
+  },
+  "engines": {
+    "node": ">= 18"
+  }
+}

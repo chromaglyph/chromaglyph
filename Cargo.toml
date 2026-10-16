@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/chromaglyph-core", "crates/chromaglyph-cli"]
+members = ["crates/chromaglyph-core", "crates/chromaglyph-cli", "crates/chromaglyph-node"]
 
 [workspace.package]
 version = "0.0.1"

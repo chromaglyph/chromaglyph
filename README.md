@@ -45,7 +45,16 @@ tokenize+theme → compile → fontbuild → verify
   - `--report` JSON、`verify` 子命令独立重验（从 COLR 反推结构，无需原字体）
   - 浏览器验证：同一 woff 双调色板明暗渲染正确
   - 自我压力测试：compile.rs 全文 24469 字符 → 482 条规则，双调色板 oracle 全绿
-- [ ] M3：napi-rs 绑定 + remark/VitePress 插件（批处理合并、内容哈希缓存、失败静默降级）
+- [x] **M3** napi-rs 绑定 + remark 插件：
+  - `@chromaglyph/node`（crates/chromaglyph-node）：`buildFont` / `buildFontSafe`
+    （静默降级返回 null）/ 缓存 API；内容哈希 = sha256(字体+主题源+块文本+选项+版本)，
+    进程内 LRU + 可选磁盘缓存（增量站点构建 49ms → 5ms）
+  - `@chromaglyph/remark`（js/remark）：一个文档的所有 fenced 代码块**批处理合并进一个字体**
+    （跨语言全局消歧），字体默认以 data: URI 内联（零配置），或 `embed: false` 落盘；
+    CSS 作用域限定 `[data-chromaglyph]`（prose 永不受影响）；主题转
+    `@font-palette-values`（双主题自动明暗切换）；任何失败静默降级
+  - pnpm workspace（crates/chromaglyph-node + js/*）；6 个 JS 测试（unified 真实管线）
+  - 浏览器验证：一个字体同时高亮 Rust/JS/Python 三个代码块，prose 内联代码不受影响
 - [ ] M4：tree-sitter 语义 token、cmap14/variation-selector 路线、任意代码的通用模式
 
 ## 用法

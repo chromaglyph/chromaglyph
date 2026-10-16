@@ -1,1 +1,6 @@
-/target
+target/
+node_modules/
+*.node
+crates/chromaglyph-node/index.js
+crates/chromaglyph-node/index.d.ts
+js/demo/out/
