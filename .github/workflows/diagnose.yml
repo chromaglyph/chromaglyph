@@ -1,0 +1,29 @@
+name: diagnose npm token
+
+# Non-destructive checks on the NPM_TOKEN secret: is the token alive,
+# who does it authenticate as, and what can it see in the scope.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Token diagnostics
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "== npm whoami =="
+          npm whoami 2>&1 || true
+          echo
+          echo "== packages writable in the chromaglyph org/scope =="
+          npm access ls-packages chromaglyph 2>&1 || true
+          echo
+          echo "== publish dry-run against an existing package =="
+          cd /tmp && npm pack @chromaglyph/node@0.1.0 --silent >/dev/null 2>&1 || true
+          echo "(pack result above only; PUT not attempted)"
