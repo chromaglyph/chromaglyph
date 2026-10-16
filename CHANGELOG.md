@@ -36,5 +36,5 @@ First functional release.
   `[data-chromaglyph]` scoping, langs filter)
 
 Known limitations: static TrueType fonts only (CFF/variable rejected),
-WOFF1 only (no WOFF2 encoder in pure Rust yet), napi binaries currently
-macOS arm64 (CI matrix pending), site-wide batching is per-document.
+WOFF1 only (no WOFF2 encoder in pure Rust yet), site-wide batching is
+per-document.

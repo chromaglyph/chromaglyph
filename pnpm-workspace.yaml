@@ -1,3 +1,5 @@
 packages:
   - crates/chromaglyph-node
   - js/*
+minimumReleaseAgeExclude:
+  - '@chromaglyph/node-darwin-arm64@0.1.0'
