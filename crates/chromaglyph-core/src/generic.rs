@@ -87,8 +87,11 @@ pub struct KeywordGroup {
 
 /// A single-character-quote string kind. Literals never span newlines:
 /// browsers shape each source line as its own run (see the module docs).
+/// `escapes: false` marks literal kinds (Go raw strings) where a
+/// backslash has no meaning — the closing quote closes even after one.
 pub struct StringKind {
     pub quote: char,
+    pub escapes: bool,
     pub scope: &'static str,
 }
 
@@ -136,6 +139,7 @@ pub fn rust() -> LanguageSpec {
         }],
         strings: &[StringKind {
             quote: '"',
+            escapes: true,
             scope: "string.quoted.double.rust",
         }],
         spans: &[
@@ -209,14 +213,17 @@ pub fn javascript() -> LanguageSpec {
         strings: &[
             StringKind {
                 quote: '"',
+                escapes: true,
                 scope: "string.quoted.double.js",
             },
             StringKind {
                 quote: '\'',
+                escapes: true,
                 scope: "string.quoted.single.js",
             },
             StringKind {
                 quote: '`',
+                escapes: true,
                 scope: "string.template.js",
             },
         ],
@@ -329,14 +336,17 @@ pub fn typescript() -> LanguageSpec {
         strings: &[
             StringKind {
                 quote: '"',
+                escapes: true,
                 scope: "string.quoted.double.ts",
             },
             StringKind {
                 quote: '\'',
+                escapes: true,
                 scope: "string.quoted.single.ts",
             },
             StringKind {
                 quote: '`',
+                escapes: true,
                 scope: "string.template.ts",
             },
         ],
@@ -391,10 +401,12 @@ pub fn python() -> LanguageSpec {
         strings: &[
             StringKind {
                 quote: '"',
+                escapes: true,
                 scope: "string.quoted.double.python",
             },
             StringKind {
                 quote: '\'',
+                escapes: true,
                 scope: "string.quoted.single.python",
             },
         ],
@@ -421,6 +433,134 @@ pub fn python() -> LanguageSpec {
     }
 }
 
+/// Built-in Go spec: `"` strings, backtick raw strings (no escapes — a
+/// backslash never suppresses the closer), `'` rune literals, both
+/// comment kinds.
+pub fn go() -> LanguageSpec {
+    LanguageSpec {
+        name: "go",
+        keywords: &[
+            KeywordGroup {
+                scope: "keyword.control.go",
+                words: &[
+                    "break", "case", "continue", "default", "defer", "else", "fallthrough",
+                    "for", "go", "goto", "if", "return", "select", "switch",
+                ],
+            },
+            KeywordGroup {
+                scope: "keyword.other.go",
+                words: &[
+                    "chan", "const", "func", "import", "interface", "map", "package", "range",
+                    "struct", "type", "var",
+                ],
+            },
+            KeywordGroup {
+                scope: "constant.language.go",
+                words: &["true", "false", "nil", "iota"],
+            },
+        ],
+        strings: &[
+            StringKind {
+                quote: '"',
+                escapes: true,
+                scope: "string.quoted.double.go",
+            },
+            StringKind {
+                quote: '\'',
+                escapes: true,
+                scope: "string.quoted.single.go",
+            },
+            StringKind {
+                quote: '`',
+                escapes: false,
+                scope: "string.quoted.raw.go",
+            },
+        ],
+        spans: &[
+            SpanKind {
+                open: "//",
+                close: "",
+                scope: "comment.line.double-slash.go",
+            },
+            SpanKind {
+                open: "/*",
+                close: "*/",
+                scope: "comment.block.go",
+            },
+        ],
+        numbers: true,
+        number_scope: "constant.numeric.go",
+        ident_extra: &[],
+    }
+}
+
+/// Built-in Java spec: `"` strings, `'` char literals, both comment
+/// kinds, declaration/modifier keyword groups.
+pub fn java() -> LanguageSpec {
+    LanguageSpec {
+        name: "java",
+        keywords: &[
+            KeywordGroup {
+                scope: "keyword.control.java",
+                words: &[
+                    "assert", "break", "case", "catch", "continue", "do", "else", "finally",
+                    "for", "if", "instanceof", "return", "switch", "throw", "throws", "try",
+                    "while", "yield",
+                ],
+            },
+            KeywordGroup {
+                scope: "storage.type.java",
+                words: &[
+                    "boolean", "byte", "char", "class", "double", "enum", "float", "int",
+                    "interface", "long", "record", "short", "void",
+                ],
+            },
+            KeywordGroup {
+                scope: "storage.modifier.java",
+                words: &[
+                    "abstract", "default", "final", "native", "private", "protected", "public",
+                    "sealed", "static", "strictfp", "synchronized", "transient", "volatile",
+                ],
+            },
+            KeywordGroup {
+                scope: "keyword.other.java",
+                words: &["extends", "implements", "import", "new", "package", "super", "this"],
+            },
+            KeywordGroup {
+                scope: "constant.language.java",
+                words: &["true", "false", "null"],
+            },
+        ],
+        strings: &[
+            StringKind {
+                quote: '"',
+                escapes: true,
+                scope: "string.quoted.double.java",
+            },
+            StringKind {
+                quote: '\'',
+                escapes: true,
+                scope: "string.quoted.single.java",
+            },
+        ],
+        spans: &[
+            SpanKind {
+                open: "//",
+                close: "",
+                scope: "comment.line.double-slash.java",
+            },
+            SpanKind {
+                open: "/*",
+                close: "*/",
+                scope: "comment.block.java",
+            },
+        ],
+        numbers: true,
+        number_scope: "constant.numeric.java",
+        ident_extra: &[],
+    }
+}
+
 /// Resolve a language spec by name (the `--generic` CLI argument).
 pub fn spec_by_name(name: &str) -> Result<LanguageSpec, BuildError> {
     match name {
@@ -428,8 +568,10 @@ pub fn spec_by_name(name: &str) -> Result<LanguageSpec, BuildError> {
         "js" | "javascript" | "jsx" | "mjs" | "cjs" => Ok(javascript()),
         "ts" | "typescript" | "tsx" => Ok(typescript()),
         "py" | "python" => Ok(python()),
+        "go" | "golang" => Ok(go()),
+        "java" => Ok(java()),
         other => Err(BuildError::Tokenize(format!(
-            "unknown generic language {other:?}; available: rust, js, ts, python"
+            "unknown generic language {other:?}; available: rust, js, ts, python, go, java"
         ))),
     }
 }
@@ -994,8 +1136,8 @@ pub fn synthesize(
         // backslash; spans (comments, triple quotes) get no pairs —
         // backslash has no meaning there and would suppress real closers
         if class == c_esc {
-            for (k, _s) in spec.strings.iter().enumerate() {
-                if quote_gid[k].is_none() {
+            for (k, s) in spec.strings.iter().enumerate() {
+                if quote_gid[k].is_none() || !s.escapes {
                     continue;
                 }
                 for &x in &present {
@@ -1225,8 +1367,11 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                 }
                 // escape pair: `\` + any mapped non-newline glyph becomes
                 // body in one step (mirrors the font's pair rule), so the
-                // escaped quote never closes and `\\` keeps the state
-                if c == '\\'
+                // escaped quote never closes and `\\` keeps the state;
+                // literal kinds (Go raw strings) skip this — a backslash
+                // there must not stop the quote from closing
+                if s.escapes
+                    && c == '\\'
                     && mapped(c)
                     && i + 1 < chars.len()
                     && mapped(chars[i + 1])
@@ -1389,6 +1534,47 @@ pub fn sample_texts(spec: &LanguageSpec) -> Vec<String> {
 
 fn curated(name: &str) -> Vec<String> {
     match name {
+        "go" => [
+            "x := 1",
+            "// comment\nfunc main() {}",
+            "s := \"double\" + `raw` + 'r'",
+            "q := \"esc: \\\" ok\"",
+            "r := `raw \\ no escape`",
+            "b := `ends with backslash \\`",
+            "c := '\\\\''",
+            "/* block */ var x int",
+            "/* multi\nline */ y := 2",
+            "`multi\nline\nraw`",
+            "\"\" '' ``",
+            "funcfunc func_ _func 1func",
+            "if err != nil {\n    return nil\n}",
+            "type T struct{ X int }",
+            "m := map[string]int{}",
+            "\nfunc at_line_start\nx = at_line_start\n42 at_line_start",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+        "java" => [
+            "int x = 1;",
+            "// comment\npublic class A {}",
+            "String s = \"double\";",
+            "char c = 'x'; char q = '\\'';",
+            "String e = \"esc: \\\" ok\";",
+            "/* block */ private int y;",
+            "/* multi\nline */ int z = 2;",
+            "final var v = new ArrayList<>();",
+            "if (x instanceof String) return null;",
+            "for (int i = 0; i < 42; i++) continue;",
+            "\"\" ''",
+            "classclass class_ _class 1class",
+            "interface I extends J, K {}",
+            "switch (x) { case 1 -> break; }",
+            "\nclass at_line_start\nint at_line_start\n42 at_line_start",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
         "javascript" => [
             "let x = 1;",
             "// comment\nfunction f() {}",
@@ -1879,5 +2065,54 @@ mod tests {
         let t = lex(&spec, "z = 1\n    if x and not y:\n        pass\n", &|_| true);
         assert_eq!(&t[10..12], &[Tok::Keyword(0); 2], "if after indentation");
         assert_eq!(&t[15..18], &[Tok::Keyword(3); 3], "and is group 3");
+    }
+
+    // ---- Go / Java ------------------------------------------------------
+
+    #[test]
+    fn lex_go_raw_strings_have_no_escapes() {
+        let spec = go();
+        // a backslash before the closing backtick does not suppress it —
+        // real Go raw strings have no escape sequences
+        // 0:a 1:sp 2:: 3:= 4:sp 5:` 6..15 "ends with " 16:\ 17:` 18:;
+        let t = lex(&spec, "a := `ends with \\`;", &|_| true);
+        assert_eq!(t[5], Tok::StrOpen(2), "backtick opens the raw string");
+        assert_eq!(t[16], Tok::StrBody(2), "the lone backslash is plain body");
+        assert_eq!(t[17], Tok::StrClose(2), "the backtick closes even after it");
+        assert_eq!(t[18], Tok::Plain);
+        // ordinary strings in the same language DO escape
+        // 5:" 6:x 7:\ 8:" 9:y 10:"
+        let t = lex(&spec, "b := \"x\\\"y\";", &|_| true);
+        assert_eq!(t[5], Tok::StrOpen(0));
+        assert_eq!(t[8], Tok::StrBody(0), "escaped quote stays body");
+        assert_eq!(t[10], Tok::StrClose(0));
+    }
+
+    #[test]
+    fn lex_go_runes_and_groups() {
+        let spec = go();
+        // rune literals are the single-quote string kind
+        // 5:' 6:\ 7:' 8:' 9:;
+        let t = lex(&spec, "c := '\\'';", &|_| true);
+        assert_eq!(t[5], Tok::StrOpen(1));
+        assert_eq!(&t[6..8], &[Tok::StrBody(1); 2], "escaped rune quote");
+        assert_eq!(t[8], Tok::StrClose(1));
+        let t = lex(&spec, "x return nil;", &|_| true);
+        assert_eq!(&t[2..8], &[Tok::Keyword(0); 6], "control group");
+        assert_eq!(&t[9..12], &[Tok::Keyword(2); 3], "constant group");
+    }
+
+    #[test]
+    fn lex_java_char_literals() {
+        let spec = java();
+        // 0:v 2..5:char 7:q 9:= 11:' 12:\ 13:' 14:' 15:;
+        let t = lex(&spec, "v char q = '\\'';", &|_| true);
+        assert_eq!(&t[2..6], &[Tok::Keyword(1); 4], "char is storage.type");
+        assert_eq!(t[11], Tok::StrOpen(1));
+        assert_eq!(&t[12..14], &[Tok::StrBody(1); 2], "escaped quote in char");
+        assert_eq!(t[14], Tok::StrClose(1));
+        let t = lex(&spec, "x return null;", &|_| true);
+        assert_eq!(&t[2..8], &[Tok::Keyword(0); 6], "control group");
+        assert_eq!(&t[9..13], &[Tok::Keyword(4); 4], "constant group");
     }
 }

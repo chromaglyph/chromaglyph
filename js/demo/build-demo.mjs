@@ -125,6 +125,21 @@ def main(): # def at line start: no anchor
     u = "esc: \\" ok"
     t = '''single triple "with dq" inside'''
     return 3.14`,
+  go: `// config
+package main // package at line start: no anchor
+func demo() { // func at line start: no anchor either
+    s := "plain" + \`raw string\`
+    r := 'x'
+    esc := "quote: \\" ok"
+    n := 3.14
+}`,
+  java: `// config
+public class Demo { // class anchors after the space
+    static final String S = "value";
+    char q = '\\''; char c = 'x';
+    String esc = "quote: \\" ok";
+    double n = 3.14;
+}`,
 }
 
 const sections = []

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **generic mode: Go and Java** (`--generic go | java`, node
+  `buildFont({generic})` alike): Go gets `"` strings, backtick raw
+  strings with a new per-kind `escapes: false` switch — raw strings have
+  no escapes in Go, so a backslash before the closing backtick does not
+  suppress it — and `'` rune literals; Java gets `"` strings, `'` char
+  literals and declaration/modifier keyword groups (`class`/`char`
+  render in dark-plus' teal `storage.type.java`, exactly like VS Code).
+  Curated + 400 spec-derived random samples per language in the oracle;
+  browser pixel check on the demo page.
+
 ## 0.1.3 (2026-10-17)
 
 - **generic mode v1.2 — more languages** (`--generic js | ts | python`

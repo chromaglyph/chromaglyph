@@ -21,7 +21,8 @@ const result = buildFontSafe({
 
 - `buildFont` throws on invalid input; `buildFontSafe` returns `null`
   (silent degradation for build pipelines).
-- `generic: 'rust' | 'js' | 'ts' | 'python'` builds a font that highlights
+- `generic: 'rust' | 'js' | 'ts' | 'python' | 'go' | 'java'` builds a font that
+  highlights
   ANY text of that language (keywords, comments, strings, numbers) —
   `blocks` and `semantic` are ignored in that mode.
 - Artifacts are cached by content hash (font + theme sources + block texts

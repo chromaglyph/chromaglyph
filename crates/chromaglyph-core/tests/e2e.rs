@@ -360,6 +360,8 @@ fn generic_mode_new_languages() {
         (chromaglyph_core::generic::javascript(), 250),
         (chromaglyph_core::generic::typescript(), 260),
         (chromaglyph_core::generic::python(), 200),
+        (chromaglyph_core::generic::go(), 180),
+        (chromaglyph_core::generic::java(), 250),
     ] {
         let out = build(&BuildInput {
             font_bytes: FONT,

@@ -89,8 +89,8 @@ tokenize+theme → compile → fontbuild → verify
     `/* */`**（开/闭规则）；当时引入的「注入映射 \n 的零宽字形保住跨行
     整形 run」机制后被 M4d 的浏览器实测推翻——跨行在真实浏览器中不可实现
   - 多主题依旧一套规则 + 每主题一个 CPAL 调色板
-- [x] **M4d** 多语言 generic（v1.2）：`--generic` 支持 **js / ts / python**，
-  spec 模型从「单引号字符」泛化为：
+- [x] **M4d** 多语言 generic（v1.2）：`--generic` 支持 **js / ts / python /
+  go / java**，spec 模型从「单引号字符」泛化为：
   - **多引号字符串**：JS 的 `"` `'` `` ` `` 各自成态、互不干扰（`'a"b'` 里
     双引号是字符串体）；`${…}` 暂降级为字符串体
   - **转义**：`\` + 任意一字形以**双字形配对规则**整体替换为字符串体——
@@ -103,6 +103,9 @@ tokenize+theme → compile → fontbuild → verify
   - **关键字分组**：一门语言多组 scope（`keyword.control` 紫色 vs
     `storage.type` 蓝色 vs `constant.language`），看起来像真语法文件
   - **`$` 等语言特有标识符字符**：`$return` 不是关键字
+  - **逐语言的字面量语义**：Go 反引号原始字符串**无转义**（`escapes` 开关，
+    反斜杠后照样闭串）、Go rune / Java char 字面量按单引号字符串着色、
+    Java 类型关键字按 `storage.type.java` 渲染为 VS Code 的青绿色
   - **模型修正（浏览器像素实测）**：浏览器对 `pre` 逐行整形——每个源行是
     独立的 shaping run，`\n` 被强制换行消费，即使字体给它映射了字形，
     上下文规则也无法跨行；v1.1 的注入换行字形在真实浏览器从未生效
@@ -110,7 +113,7 @@ tokenize+theme → compile → fontbuild → verify
     **`\n`/`\r` 恒为硬屏障**：所有状态在行尾死亡（块注释/模板字符串/
     docstring 只着色起始行），列 0 或行尾的关键字无色（无 in-run 锚点/
     前瞻字形），缩进一格即正常着色；注入机制与 `spans_newlines` 一并移除
-  - oracle 对四种语言各跑「精选 + 按 spec 生成的 400 个确定性随机」样本，
+  - oracle 对各语言跑「精选 + 按 spec 生成的 400 个确定性随机」样本，
     另加各语言对抗样本（引号交错、未闭合、关键字胶水、屏障 emoji）；
     oracle 的 `mapped` 按产出字体的 cmap 判定；node 侧
     `buildFont({generic: 'js'})` 同步暴露（语言名进内容哈希）
@@ -125,8 +128,8 @@ tokenize+theme → compile → fontbuild → verify
     的 scope 自动跳过——看起来像开了语言服务器的编辑器
   - core 只暴露 `BuildInput.semantic` 回调钩子（`SemanticLayer` 类型），
     与具体解析器完全解耦；oracle 全链路验证（新颜色→新 slot→新规则）
-- [ ] M4 剩余：更多构造与语言（字符字面量、`${}`/f-string 插值着色、
-  多语言同字体、Go/Java 等语言 spec、tree-sitter 语言扩展）
+- [ ] M4 剩余：更多构造与语言（`${}`/f-string 插值着色、多语言同字体、
+  tree-sitter 语言扩展）
 
 ## 安装
 
@@ -147,7 +150,7 @@ chromaglyph build --font JetBrainsMono-Regular.ttf \
 chromaglyph verify --font out.woff --input examples/hello.rs
 
 # 通用模式：不指定内容，字体高亮该语言的任意文本（关键字/注释/字符串/数字；
-# rust | js | ts | python；着色为行内语义——见 M4d 的浏览器实测说明）
+# rust | js | ts | python | go | java；着色为行内语义——见 M4d 的浏览器实测说明）
 chromaglyph build --font JetBrainsMono-Regular.ttf --generic rust \
     --output generic.woff --css generic.css
 ```
