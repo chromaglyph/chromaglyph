@@ -1,0 +1,132 @@
+name: cli release binaries
+
+# Prebuilt `chromaglyph` CLI binaries for the full platform matrix,
+# attached to a GitHub Release on version tags (v*). workflow_dispatch
+# builds the same matrix and keeps the archives as workflow artifacts —
+# a dry run for the pipeline that touches nothing public.
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest        # arm64 runner
+            target: aarch64-apple-darwin
+          - os: macos-latest        # cross to x64
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest       # cross via zig (static)
+            target: x86_64-unknown-linux-musl
+            zig: 'true'
+          - os: ubuntu-latest       # cross via zig
+            target: aarch64-unknown-linux-gnu
+            zig: 'true'
+          - os: ubuntu-latest       # cross via zig (static)
+            target: aarch64-unknown-linux-musl
+            zig: 'true'
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # same zig + cargo-zigbuild pair the napi workflow verified
+      - name: Setup zig (cross targets)
+        if: matrix.zig == 'true'
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Install cargo-zigbuild (cross targets)
+        if: matrix.zig == 'true'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: cli-${{ matrix.target }}
+
+      - name: Build
+        shell: bash
+        env:
+          # arch-agnostic stripping; musl targets are fully static
+          RUSTFLAGS: -C strip=symbols
+        run: |
+          if [ "${{ matrix.zig }}" = "true" ]; then
+            cargo zigbuild --release --target ${{ matrix.target }} -p chromaglyph
+          else
+            cargo build --release --target ${{ matrix.target }} -p chromaglyph
+          fi
+
+      - name: Package
+        shell: bash
+        run: |
+          BIN=chromaglyph
+          EXE=""
+          if [[ "${{ matrix.target }}" == *windows* ]]; then EXE=".exe"; fi
+          # Apple Silicon kills unsigned arm64 executables outright;
+          # an ad-hoc signature satisfies the requirement
+          if [[ "${{ matrix.target }}" == *darwin* ]]; then
+            codesign -s - "target/${{ matrix.target }}/release/${BIN}${EXE}"
+          fi
+          STAGE=stage
+          mkdir -p "$STAGE"
+          cp "target/${{ matrix.target }}/release/${BIN}${EXE}" "$STAGE/"
+          cp LICENSE "$STAGE/"
+          if [ -n "$EXE" ]; then
+            7z a "chromaglyph-${{ matrix.target }}.zip" "$STAGE"
+          else
+            tar -czf "chromaglyph-${{ matrix.target }}.tar.gz" -C "$STAGE" .
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chromaglyph-${{ matrix.target }}
+          path: |
+            chromaglyph-${{ matrix.target }}.tar.gz
+            chromaglyph-${{ matrix.target }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum chromaglyph-* > SHA256SUMS
+          ls -l
+
+      - name: Create release with binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+          generate_release_notes: true

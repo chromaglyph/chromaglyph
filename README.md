@@ -128,6 +128,15 @@ tokenize+theme → compile → fontbuild → verify
 - [ ] M4 剩余：更多构造与语言（字符字面量、`${}`/f-string 插值着色、
   多语言同字体、Go/Java 等语言 spec、tree-sitter 语言扩展）
 
+## 安装
+
+- **预编译二进制**：GitHub Releases 提供 7 个目标（macOS arm64/x64、
+  Linux x64/arm64 的 gnu/musl、Windows x64），每个版本附带 `SHA256SUMS`；
+  musl 构建为全静态，适合容器。macOS 包为 ad-hoc 签名，浏览器下载后
+  首次运行可能需要 `xattr -d com.apple.quarantine <binary>`。
+- **cargo**：`cargo install chromaglyph`（crates.io）。
+- **npm**：`@chromaglyph/node`（含 remark / markdown-it 插件）。
+
 ## 用法
 
 ```sh

@@ -49,6 +49,13 @@
   'python' })` exposes generic mode to JS pipelines (the language is part
   of the content hash; `semantic` is ignored in generic mode), with
   tests running in the workspace (`pnpm test`).
+- **ci**: `cli-release.yml` attaches prebuilt `chromaglyph` binaries to
+  GitHub Releases on version tags — seven targets (macOS arm64/x64,
+  Linux x64/arm64 gnu+musl, Windows x64) built with the same
+  zig/cargo-zigbuild pair the napi workflow verified, symbol-stripped,
+  ad-hoc signed on macOS (Apple Silicon kills unsigned executables),
+  with a `SHA256SUMS` manifest. `workflow_dispatch` runs the same matrix
+  as a dry run, keeping the archives as workflow artifacts.
 - the CLI crate is renamed **`chromaglyph-cli` → `chromaglyph`** on
   crates.io (`cargo install chromaglyph`); the old name receives one
   final pointer release. The library stays `chromaglyph-core`.
