@@ -9,7 +9,7 @@ renders those snippets highlighted — with the DOM text staying byte-identical.
 binaries per platform) is under development. Until then, install the Rust CLI:
 
 ```sh
-cargo install chromaglyph-cli
+cargo install chromaglyph
 ```
 
 - Source: <https://github.com/chromaglyph/chromaglyph>

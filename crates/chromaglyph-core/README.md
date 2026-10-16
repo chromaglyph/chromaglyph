@@ -26,5 +26,5 @@ let out = build(&BuildInput { font_bytes: &ttf, themes: &themes, blocks: &blocks
 std::fs::write("out.woff", &out.woff)?;
 ```
 
-CLI: `chromaglyph-cli` (`cargo install chromaglyph-cli`). JS bindings:
+CLI: `chromaglyph` (`cargo install chromaglyph`). JS bindings:
 `@chromaglyph/node` on npm. Source: <https://github.com/chromaglyph/chromaglyph>.

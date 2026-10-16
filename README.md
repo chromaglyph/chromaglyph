@@ -62,7 +62,7 @@ tokenize+theme → compile → fontbuild → verify
     （只 parse 一次、批处理全部 fence、从已解析 token 渲染）、链式接住已有 fence 规则、
     嵌套渲染隔离、`md.chromaglyph()` 自省；8 个测试
   - 共享 CSS 构建器移至 `@chromaglyph/node/css`（两个插件同源）
-- **0.1.0 已发布**：crates.io `chromaglyph-core` / `chromaglyph-cli`；npm
+- **0.1.0 已发布**：crates.io `chromaglyph-core` / `chromaglyph`；npm
   `@chromaglyph/node`（+ darwin-arm64 平台包）、`@chromaglyph/remark`、
   `@chromaglyph/markdown-it`（其余平台二进制走 `.github/workflows/napi.yml` CI 矩阵）
 - [x] **M4a** cmap14 / variation selector：
@@ -131,7 +131,7 @@ WOFF2 编码器（需要 Brotli + woff2 变换栈），v1 先退 WOFF1，浏览�
 ```sh
 cargo build --release
 cargo test                                        # 23 tests
-cargo run -p chromaglyph-cli -- build --font crates/chromaglyph-core/tests/fixtures/JetBrainsMono-Regular.ttf \
+cargo run -p chromaglyph -- build --font crates/chromaglyph-core/tests/fixtures/JetBrainsMono-Regular.ttf \
     --input examples/hello.rs --output target/demo/chromaglyph-demo.woff --css target/demo/chromaglyph-demo.css
 python3 -m http.server -d target/demo 8143        # 打开 index.html 看明暗双调色板
 ```

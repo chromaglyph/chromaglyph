@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- the CLI crate is renamed **`chromaglyph-cli` → `chromaglyph`** on
+  crates.io (`cargo install chromaglyph`); the old name receives one
+  final pointer release. The library stays `chromaglyph-core`.
+
 ## 0.1.2 (2026-10-16)
 
 - **fix**: the platform packages published from CI templates were missing

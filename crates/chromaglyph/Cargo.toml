@@ -1,5 +1,5 @@
 [package]
-name = "chromaglyph-cli"
+name = "chromaglyph"
 description = "CLI for chromaglyph: build and verify fonts with compiled-in syntax highlighting"
 version.workspace = true
 edition.workspace = true
@@ -15,4 +15,4 @@ path = "src/main.rs"
 chromaglyph-core.workspace = true
 clap.workspace = true
 serde_json.workspace = true
-chromaglyph-treesitter = { path = "../chromaglyph-treesitter", version = "0.1.1" }
+chromaglyph-treesitter = { path = "../chromaglyph-treesitter", version = "0.1.2" }

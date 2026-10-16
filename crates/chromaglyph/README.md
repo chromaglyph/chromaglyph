@@ -1,4 +1,4 @@
-# chromaglyph-cli
+# chromaglyph
 
 `chromaglyph` — build and verify fonts with compiled-in syntax highlighting.
 
