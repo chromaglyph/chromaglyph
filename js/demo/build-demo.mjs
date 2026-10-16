@@ -126,19 +126,28 @@ def main(): # def at line start: no anchor
     t = '''single triple "with dq" inside'''
     return 3.14`,
   go: `// config
-package main // package at line start: no anchor
-func demo() { // func at line start: no anchor either
-    s := "plain" + \`raw string\`
-    r := 'x'
-    esc := "quote: \\" ok"
-    n := 3.14
+package main // keywords at column 0 stay plain (no anchor glyph)
+func demo() error {
+    for i := range items { // for/range after spaces: colored
+        if err := check(i); err != nil {
+            return err // return colored; identifiers/operators stay plain
+        }
+        s := "plain" + \`raw string\`
+        r := 'x'
+        n := 3.14
+    }
+    return nil
 }`,
   java: `// config
-public class Demo { // class anchors after the space
-    static final String S = "value";
+public class Demo { // public at column 0 stays plain; class is teal
+    static final String NAME = "value"; // static/final blue; String is an
+    // identifier — white in pure syntax highlighting (no language server)
     char q = '\\''; char c = 'x';
-    String esc = "quote: \\" ok";
     double n = 3.14;
+    int len(String s) {
+        if (s == null || s.isEmpty()) return 0;
+        return s.length();
+    }
 }`,
 }
 
@@ -172,7 +181,9 @@ highlighting is line-scoped: a keyword colors when the glyphs beside it
 live in the font (indent it one space and it colors; at column 0 or the
 very end of a line it stays plain), and multi-line states (block comments,
 template literals, docstrings) color their opening line only — the
-continuation lines start a fresh, plain run.</p>
+continuation lines start a fresh, plain run. Identifiers and operators
+are never colored — that is semantic-highlighting territory, which the
+exact mode's tree-sitter layer covers.</p>
 ${sections
   .map((s) => `<h2>${s.lang}</h2>\n<pre class="${s.lang}">${s.code.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`)
   .join('\n')}
