@@ -95,6 +95,13 @@ jobs:
           PKG="npm/@chromaglyph/node-${{ matrix.platform }}"
           mkdir -p "$PKG"
           cp "crates/chromaglyph-node/chromaglyph.${{ matrix.platform }}.node" "$PKG/"
+          # the loader requires a main entry pointing at the binary
+          node -e "
+            const fs = require('fs');
+            const p = process.argv[1] + '/package.json';
+            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+            if (!j.main) { j.main = 'chromaglyph.${{ matrix.platform }}.node'; fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n'); }
+          " "$PKG"
 
       - name: Publish (release tags only)
         if: startsWith(github.ref, 'refs/tags/v')

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2 (2026-10-16)
+
+- **fix**: the platform packages published from CI templates were missing
+  their `main` field, so `require('@chromaglyph/node-<platform>')` failed
+  with "Cannot find module" even though the native binary shipped fine —
+  only the manually published 0.1.0 darwin-arm64 ever worked. Templates
+  now declare `main`, and the publish step enforces it defensively.
+  `@chromaglyph/node` and the seven platform binaries re-released;
+  `@chromaglyph/remark` / `@chromaglyph/markdown-it` are unaffected and
+  stay at 0.1.1.
+
 ## 0.1.1 (2026-10-16)
 
 - **generic mode v1.1** (`--generic rust`): build a font that highlights ANY

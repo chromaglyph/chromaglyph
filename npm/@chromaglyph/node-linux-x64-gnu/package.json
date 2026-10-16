@@ -15,5 +15,6 @@
   ],
   "files": [
     "*.node"
-  ]
+  ],
+  "main": "chromaglyph.linux-x64-gnu.node"
 }

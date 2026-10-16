@@ -1,6 +1,6 @@
 {
   "name": "@chromaglyph/node",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "napi-rs bindings for chromaglyph: compile syntax highlighting into a color font, in-process",
   "license": "Apache-2.0",
   "repository": {
@@ -38,12 +38,12 @@
     "./css": "./css.mjs"
   },
   "optionalDependencies": {
-    "@chromaglyph/node-darwin-arm64": "0.1.1",
-    "@chromaglyph/node-darwin-x64": "0.1.1",
-    "@chromaglyph/node-linux-x64-gnu": "0.1.1",
-    "@chromaglyph/node-linux-x64-musl": "0.1.1",
-    "@chromaglyph/node-linux-arm64-gnu": "0.1.1",
-    "@chromaglyph/node-linux-arm64-musl": "0.1.1",
-    "@chromaglyph/node-win32-x64-msvc": "0.1.1"
+    "@chromaglyph/node-darwin-arm64": "0.1.2",
+    "@chromaglyph/node-darwin-x64": "0.1.2",
+    "@chromaglyph/node-linux-x64-gnu": "0.1.2",
+    "@chromaglyph/node-linux-x64-musl": "0.1.2",
+    "@chromaglyph/node-linux-arm64-gnu": "0.1.2",
+    "@chromaglyph/node-linux-arm64-musl": "0.1.2",
+    "@chromaglyph/node-win32-x64-msvc": "0.1.2"
   }
 }

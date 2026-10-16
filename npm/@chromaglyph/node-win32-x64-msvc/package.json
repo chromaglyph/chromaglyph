@@ -15,5 +15,6 @@
   ],
   "files": [
     "*.node"
-  ]
+  ],
+  "main": "chromaglyph.win32-x64-msvc.node"
 }

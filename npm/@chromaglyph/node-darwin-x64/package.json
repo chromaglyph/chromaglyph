@@ -15,5 +15,6 @@
   ],
   "files": [
     "*.node"
-  ]
+  ],
+  "main": "chromaglyph.darwin-x64.node"
 }
