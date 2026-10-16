@@ -9,10 +9,13 @@
 //! ```
 //!
 //! `opts.blocks` batches any number of code blocks into ONE font (global
-//! disambiguation across languages is handled by the core). Artifacts are
-//! cached by a content hash (font bytes + theme sources + block texts +
-//! options + engine version): an in-process LRU plus an optional on-disk
-//! cache directory, so incremental site builds skip recomputation.
+//! disambiguation across languages is handled by the core). Alternatively
+//! `opts.generic` (`'rust' | 'js' | 'ts' | 'python'`) builds a font that
+//! highlights ANY text of that language — content unknown at build time.
+//! Artifacts are cached by a content hash (font bytes + theme sources +
+//! block texts + options + engine version): an in-process LRU plus an
+//! optional on-disk cache directory, so incremental site builds skip
+//! recomputation.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -47,6 +50,10 @@ pub struct BuildOptions {
     /// VS Code .json / TextMate .tmTheme files. First = default palette.
     pub themes: Vec<String>,
     pub blocks: Vec<JsBlock>,
+    /// Generic mode: build a font that highlights ANY text of this
+    /// language (`rust`, `js`, `ts`, `python`) instead of compiling
+    /// `blocks` (which are ignored); `semantic` is ignored too.
+    pub generic: Option<String>,
     /// Run the rustybuzz oracle (default true).
     pub verify: Option<bool>,
     /// Overlay tree-sitter semantic colors (parameters, types, calls,
@@ -122,6 +129,10 @@ fn content_hash(opts: &BuildOptions) -> String {
     } else {
         &[0]
     });
+    if let Some(lang) = &opts.generic {
+        hasher.update(lang.as_bytes());
+        hasher.update([0]);
+    }
     for block in &opts.blocks {
         hasher.update(block.id.as_bytes());
         hasher.update([0]);
@@ -230,15 +241,26 @@ fn build_uncached(opts: &BuildOptions) -> napi::Result<BuildResult> {
             .map(|s| (s.start, s.end, s.scope.to_string()))
             .collect()
     };
+    let generic_spec = match &opts.generic {
+        Some(name) => Some(
+            chromaglyph_core::generic::spec_by_name(name)
+                .map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?,
+        ),
+        None => None,
+    };
 
     let out = build(&BuildInput {
         font_bytes: &font,
         themes: &themes,
         blocks: &blocks,
         run_verify: opts.verify.unwrap_or(true),
-        generic: None,
+        generic: generic_spec.as_ref(),
         font_name: None,
-        semantic: opts.semantic.unwrap_or(false).then_some(&semantic_cb),
+        semantic: if generic_spec.is_some() {
+            None
+        } else {
+            opts.semantic.unwrap_or(false).then_some(&semantic_cb)
+        },
     })
     .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
 

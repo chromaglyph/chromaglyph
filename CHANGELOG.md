@@ -31,6 +31,10 @@
     now uses the produced font's (injected newline included), which is
     what the shaper actually sees. Also: hmtx generation now tolerates
     alt glyphs copied from injected (zero-width) glyphs.
+- **`@chromaglyph/node`**: `buildFont({ generic: 'rust' | 'js' | 'ts' |
+  'python' })` exposes generic mode to JS pipelines (the language is part
+  of the content hash; `semantic` is ignored in generic mode), with
+  tests running in the workspace (`pnpm test`).
 - the CLI crate is renamed **`chromaglyph-cli` → `chromaglyph`** on
   crates.io (`cargo install chromaglyph`); the old name receives one
   final pointer release. The library stays `chromaglyph-core`.

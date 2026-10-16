@@ -21,8 +21,12 @@ const result = buildFontSafe({
 
 - `buildFont` throws on invalid input; `buildFontSafe` returns `null`
   (silent degradation for build pipelines).
+- `generic: 'rust' | 'js' | 'ts' | 'python'` builds a font that highlights
+  ANY text of that language (keywords, comments, strings, numbers) —
+  `blocks` and `semantic` are ignored in that mode.
 - Artifacts are cached by content hash (font + theme sources + block texts
-  + options): in-process LRU plus optional on-disk cache directory.
+  + generic language + options): in-process LRU plus optional on-disk
+  cache directory.
 - One GSUB rule set serves every theme (CPAL palettes); switching is a
   CSS `@font-palette-values` flip.
 
