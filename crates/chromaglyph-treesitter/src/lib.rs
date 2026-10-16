@@ -30,6 +30,7 @@ const TYPE: &str = "entity.name.type";
 const CONSTANT: &str = "constant.other";
 const ENUM_MEMBER: &str = "entity.name.enum.constant";
 const PROPERTY: &str = "variable.other.property";
+const VARIABLE: &str = "variable.other.readwrite";
 
 /// Extract semantic spans for a language (`"rust"`, `"js"`/`"ts"`,
 /// `"python"` and their aliases); unknown languages yield nothing (the
@@ -147,6 +148,28 @@ fn handle_rust(node: Node, _source: &[u8], spans: &mut Vec<SemanticSpan>) {
         "macro_invocation" => push_field(node, "macro", FUNCTION, spans),
         // type usages: `i32`, `Vec`, declared type names
         "type_identifier" => push_range(node, TYPE, spans),
+        // bare identifiers are variable reads — what an editor's semantic
+        // layer colors. Excluded: every position a branch above (or below
+        // in dispatch order) already scopes — call/macro names, field
+        // access, path segments, declaration names, parameters. Parents
+        // are handled before children, so an unexcluded identifier here
+        // would otherwise overwrite those spans
+        "identifier" => {
+            let already_scoped = node.parent().is_some_and(|p| {
+                let name_pos = p.child_by_field_name("name") == Some(node);
+                match p.kind() {
+                    "call_expression" | "macro_invocation" | "field_expression"
+                    | "scoped_identifier" | "closure_parameters" | "parameters"
+                    | "enum_variant" | "field_declaration" => true,
+                    "function_item" | "const_item" | "static_item" | "struct_item"
+                    | "enum_item" | "trait_item" | "mod_item" | "macro_definition" => name_pos,
+                    _ => false,
+                }
+            });
+            if !already_scoped {
+                push_range(node, VARIABLE, spans);
+            }
+        }
         _ => {}
     }
 }
@@ -405,6 +428,26 @@ mod tests {
         assert!(all("run").contains(&FUNCTION), "obj.run() colors the method");
         assert!(all("Foo").contains(&TYPE));
         assert!(all("print").contains(&FUNCTION));
+    }
+
+    #[test]
+    fn rust_variables_read_as_semantic_blue() {
+        let src = "fn main() {\n    let path = \"src\";\n    let msg = format!(\"{}\", path);\n    println!(\"{}\", msg);\n}\n";
+        let spans = semantic_spans("rust", src);
+        let get = |needle: &str| {
+            spans
+                .iter()
+                .filter(|s| &src[s.start..s.end] == needle)
+                .map(|s| s.scope)
+                .collect::<Vec<_>>()
+        };
+        // variables get the semantic variable scope
+        assert!(get("path").contains(&VARIABLE));
+        assert!(get("msg").contains(&VARIABLE));
+        // but names a branch already scopes keep their color
+        assert!(get("format").contains(&FUNCTION));
+        assert!(get("println").contains(&FUNCTION));
+        assert!(get("main").contains(&FUNCTION));
     }
 
     #[test]

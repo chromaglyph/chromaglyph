@@ -35,6 +35,7 @@ import { buildCssAssets } from '@chromaglyph/node/css'
  *  outDir?: string,
  *  style?: 'inline' | 'link',
  *  verify?: boolean,
+ *  semantic?: boolean,
  *  cacheDir?: string,
  *  cwd?: string,
  * }} [options]
@@ -53,6 +54,7 @@ function markdownItChromaglyph(md, options = {}) {
     // 两条路都活——CSS 走 data: URI（embed:true）或落盘 css 文件（embed:false）。
     style = 'inline',
     verify = true,
+    semantic = false,
     cacheDir,
     cwd = process.cwd(),
   } = options
@@ -90,7 +92,7 @@ function markdownItChromaglyph(md, options = {}) {
     let css = null
     let result = null
     if (blocks.length > 0) {
-      result = buildFontSafe({ font: loadFont(), themes, blocks, verify, cacheDir })
+      result = buildFontSafe({ font: loadFont(), themes, blocks, verify, semantic, cacheDir })
       if (result) {
         const assets = buildCssAssets(result, { embed, outDir, cwd })
         if (style === 'link') {

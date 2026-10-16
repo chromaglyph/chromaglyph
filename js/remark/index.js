@@ -30,6 +30,7 @@ import { buildCssAssets } from '@chromaglyph/node/css'
  *   embed?: boolean,
  *   outDir?: string,
  *   verify?: boolean,
+ *   semantic?: boolean,
  *   cacheDir?: string,
  * }} [options]
  */
@@ -41,6 +42,7 @@ function remarkChromaglyph(options = {}) {
     embed = true,
     outDir = 'chromaglyph-out',
     verify = true,
+    semantic = false,
     cacheDir,
   } = options
 
@@ -67,7 +69,7 @@ function remarkChromaglyph(options = {}) {
 
     // silent degradation: any failure returns null and the document renders
     // with its usual (uncolored) code styling
-    const result = buildFontSafe({ font: fontBytes, themes, blocks, verify, cacheDir })
+    const result = buildFontSafe({ font: fontBytes, themes, blocks, verify, semantic, cacheDir })
     if (!result) return
 
     const assets = buildCssAssets(result, { embed, outDir, cwd: file.cwd || process.cwd() })

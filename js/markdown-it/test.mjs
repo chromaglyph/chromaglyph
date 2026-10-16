@@ -119,3 +119,15 @@ test('file mode emits assets', () => {
   const html = md.render(MARKDOWN)
   assert.match(html, /src: url\(\.\/chromaglyph-[0-9a-f]+\.woff\)/)
 })
+
+test('semantic option produces its own build (distinct hash)', () => {
+  const md = new MarkdownIt({ html: true })
+  md.use(chromaglyph, { font: FONT, verify: false })
+  md.render('```rust\nfn area(r: f64) -> f64 { let p = r * 2.0; p }\n```\n')
+  const plain = md.chromaglyph().contentHash
+  const md2 = new MarkdownIt({ html: true })
+  md2.use(chromaglyph, { font: FONT, verify: false, semantic: true })
+  md2.render('```rust\nfn area(r: f64) -> f64 { let p = r * 2.0; p }\n```\n')
+  const semantic = md2.chromaglyph().contentHash
+  assert.notStrictEqual(plain, semantic, 'semantic joins the content hash')
+})

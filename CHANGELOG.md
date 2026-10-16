@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **plugins: opt-in `semantic` option** (`@chromaglyph/remark`,
+  `@chromaglyph/markdown-it`): pass-through to `buildFont({semantic:
+  true})`, default off — same-page cross-language consistency and
+  ecosystem-baseline (syntactic) rendering stay the default; one line
+  opts a site into the language-server look. Tests cover the option
+  joining the content hash.
+- **fix: `semantic` was missing from the node content hash** — an
+  enabled build could wrongly hit the plain font's disk cache. Note for
+  upgraders: engine changes since 0.2.0 (TypeScript grammar, variable
+  spans) do not invalidate caches built against the 0.2.0 binary until
+  the next version bumps `CACHE_VERSION`; a stale `.chromaglyph-cache`
+  built before these fixes should be deleted once.
+- **semantic layer: Rust variable reads** color as VS Code's semantic
+  blue (`variable.other.readwrite` → #9CDCFE) via tree-sitter — bare
+  identifiers, excluding every position another branch scopes (call and
+  macro names, fields, paths, declaration names, parameters). JS/TS
+  already get variable colors from their grammar; Python/Java variable
+  spans are future work. The VitePress demo site ships with semantic on.
+
 - **fix: exact mode could not highlight TypeScript** — syntect's default
   syntax set does not contain a TypeScript grammar, so `ts`/`tsx`
   fences silently resolved to plain text: zero coloring, zero warnings.

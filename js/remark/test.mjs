@@ -84,3 +84,12 @@ test('file mode emits assets instead of data URIs', async () => {
   assert.ok(data.fontUrl.startsWith('./chromaglyph-'), `fontUrl: ${data.fontUrl}`)
   assert.match(data.css, /src: url\(\.\/chromaglyph-[0-9a-f]+\.woff\)/)
 })
+
+test('semantic option produces its own build (distinct hash, same pipeline)', async () => {
+  const md = '```rust\nfn area(r: f64) -> f64 { let p = r * 2.0; p }\n```\n'
+  const plain = await render(md, { font: FONT, verify: false })
+  const semantic = await render(md, { font: FONT, verify: false, semantic: true })
+  assert.ok(plain.data.css.includes('@font-face'))
+  assert.ok(semantic.data.css.includes('@font-face'))
+  assert.notEqual(plain.data.contentHash, semantic.data.contentHash, 'semantic joins the content hash')
+})

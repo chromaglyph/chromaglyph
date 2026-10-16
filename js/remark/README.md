@@ -43,6 +43,7 @@ Inspect `file.data.chromaglyph` for `{ cached, contentHash, css, warnings }`.
 | `embed` | `true` | Inline the font as a data: URI; `false` emits files into `outDir`. |
 | `outDir` | `'chromaglyph-out'` | Where emitted font/CSS assets go (`embed: false`). |
 | `verify` | `true` | Run the rustybuzz oracle over the produced font before shipping it. |
+| `semantic` | `false` | Overlay tree-sitter semantic colors (parameters, variables-as-scoped, types, calls) on top of the syntactic highlighting — rust/js/ts/python only; other languages silently stay syntactic. |
 | `cacheDir` | — | Optional on-disk cache directory for incremental site builds. |
 
 ## License

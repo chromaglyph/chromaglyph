@@ -129,6 +129,13 @@ fn content_hash(opts: &BuildOptions) -> String {
     } else {
         &[0]
     });
+    // semantic changes the output (overlay spans); it must change the hash
+    // too, or an enabled build would wrongly hit the plain cache
+    hasher.update(if opts.semantic.unwrap_or(false) {
+        &[1]
+    } else {
+        &[0]
+    });
     if let Some(lang) = &opts.generic {
         hasher.update(lang.as_bytes());
         hasher.update([0]);
