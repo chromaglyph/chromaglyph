@@ -39,6 +39,7 @@ fn two_themes_one_font() {
         blocks: &blocks(SAMPLE),
         run_verify: true,
         generic: None,
+        font_name: None,
     })
     .expect("build + inline verify must succeed");
 
@@ -79,6 +80,7 @@ fn single_theme_still_works() {
         blocks: &blocks(SAMPLE),
         run_verify: true,
         generic: None,
+        font_name: None,
     })
     .expect("single-theme build");
     assert_eq!(out.report.palettes.len(), 1);
@@ -100,6 +102,7 @@ fn rejects_cff_fonts() {
         blocks: &blocks("fn"),
         run_verify: false,
         generic: None,
+        font_name: None,
     }) {
         Ok(_) => panic!("CFF font must be rejected"),
         Err(err) => err,
@@ -134,6 +137,7 @@ fn cross_language_ambiguity_degrades_not_fails() {
         blocks: &blocks,
         run_verify: true,
         generic: None,
+        font_name: None,
     })
     .expect("build never fails on ambiguity");
     assert!(
@@ -155,6 +159,7 @@ fn real_tokenization_colors_function_names() {
         blocks: &blocks(SAMPLE),
         run_verify: false,
         generic: None,
+        font_name: None,
     })
     .unwrap();
     assert!(
@@ -176,6 +181,7 @@ fn emoji_and_variation_selectors_shape_and_color() {
         blocks: &blocks(EMOJI_SAMPLE),
         run_verify: true,
         generic: None,
+        font_name: None,
     })
     .expect("emoji sample must build + verify");
 
@@ -207,6 +213,7 @@ fn cmap14_variation_sequence_resolves_to_variant_glyph() {
         blocks: &blocks(UVS_SAMPLE),
         run_verify: true,
         generic: None,
+        font_name: None,
     })
     .expect("UVS sample must build + verify (oracle resolves cmap14)");
     assert!(out.report.verify.ok);
@@ -302,6 +309,7 @@ fn generic_mode_highlights_arbitrary_text() {
         blocks: &[],
         run_verify: true,
         generic: Some(&spec),
+        font_name: None,
     })
     .expect("generic build + oracle over random samples");
 
@@ -326,6 +334,7 @@ fn generic_mode_adversarial_samples() {
         blocks: &[],
         run_verify: false,
         generic: Some(&spec),
+        font_name: None,
     })
     .expect("generic build");
 

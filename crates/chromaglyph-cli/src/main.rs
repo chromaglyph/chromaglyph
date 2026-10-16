@@ -202,6 +202,11 @@ fn cmd_build(
         blocks: block.as_slice(),
         run_verify: !no_verify,
         generic: generic_spec.as_ref(),
+        font_name: output
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(str::to_owned)
+            .as_deref(),
     })?;
 
     let is_ttf = output.extension().map(|e| e == "ttf").unwrap_or(false);
