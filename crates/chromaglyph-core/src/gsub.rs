@@ -1,25 +1,34 @@
 //! GlyphPlan → a write-fonts `Gsub` table.
 //!
-//! Layout of the generated GSUB:
+//! Layout of the generated GSUB (lookup indices are the application order
+//! within `calt` — shapers apply lookups by increasing index):
 //! - Lookup 0..P-1 (P = palette size): `SingleSubst` format 2, one per
 //!   palette color, mapping every colored base glyph to its colored copy.
 //!   These are *nested-only* lookups: they are not referenced by any feature,
 //!   so they never fire outside a contextual rule.
-//! - Lookup P: every contextual rule, grouped into as many chain-context
-//!   format-2 subtables as needed. Class defs put a base glyph and all of its
-//!   colored copies into the same class, which makes backtrack/lookahead
-//!   matching insensitive to whether neighboring glyphs have already been
-//!   substituted. When the rules do not fit one subtable (u16 offsets cap a
-//!   subtable at 64 KiB), the lookup becomes an extension lookup (type 7)
-//!   whose 32-bit offsets allow a GSUB of any practical size.
-//! - Feature `calt` (applied by default by HarfBuzz and browsers), registered
-//!   under `DFLT` and `latn` default langsys.
+//! - One nested lookup per ligature site: a `SingleSubst` for 1:1 restores,
+//!   a `LigatureSubst` for ligatures (also nested-only). One lookup per
+//!   site keeps sites with identical components but different outputs
+//!   distinguishable — the chain rule picks the exact substitution.
+//! - The ligature-restore chain lookup: every ligature rule, grouped into
+//!   as many chain-context format-2 subtables as needed. It runs FIRST so
+//!   the coloring rules see the restored (ligated) stream.
+//! - The coloring chain lookup: same construction, runs after the restore.
+//!
+//! Class defs put a base glyph and all of its colored copies into the same
+//! class, which makes backtrack/lookahead matching insensitive to whether
+//! neighboring glyphs have already been substituted. When a lookup's rules
+//! do not fit one subtable (u16 offsets cap a subtable at 64 KiB), it
+//! becomes an extension lookup (type 7) whose 32-bit offsets allow a GSUB
+//! of any practical size. Both chain lookups are registered under `calt`
+//! (applied by default by HarfBuzz and browsers), `DFLT` and `latn` default
+//! langsys.
 
 use std::collections::HashMap;
 
 use write_fonts::tables::gsub::{
-    ExtensionSubstFormat1, ExtensionSubtable, Gsub, SingleSubst, SubstitutionChainContext,
-    SubstitutionLookup,
+    ExtensionSubstFormat1, ExtensionSubtable, Gsub, Ligature, LigatureSet, LigatureSubstFormat1,
+    SingleSubst, SubstitutionChainContext, SubstitutionLookup,
 };
 use write_fonts::tables::layout::builders::CoverageTableBuilder;
 use write_fonts::tables::layout::{
@@ -30,15 +39,15 @@ use write_fonts::tables::layout::{
 };
 use write_fonts::types::{GlyphId16, Tag};
 
-use crate::compile::{GlyphPlan, Rule};
+use crate::compile::GlyphPlan;
 
 /// Conservative per-subtable budget: subtable-internal offsets are u16.
 const MAX_SUBTABLE_BYTES: usize = 36_000;
 
-/// Build the GSUB table; `None` when the plan colors nothing (font keeps no
-/// GSUB and no color tables).
+/// Build the GSUB table; `None` when the plan colors nothing and restores
+/// no ligatures (font keeps no GSUB and no color tables).
 pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
-    if plan.rules.is_empty() || plan.alt_glyphs.is_empty() {
+    if plan.lig_rules.is_empty() && (plan.rules.is_empty() || plan.alt_glyphs.is_empty()) {
         return None;
     }
     let num_palettes = plan.slots.len() as u16; // one nested single-subst lookup per slot
@@ -48,7 +57,7 @@ pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
     for &(base, pal, alt) in &plan.alt_glyphs {
         pairs_by_pal.entry(pal).or_default().push((base, alt));
     }
-    let mut singles: Vec<SubstitutionLookup> = Vec::new();
+    let mut lookups: Vec<SubstitutionLookup> = Vec::new();
     for pal in 0..num_palettes {
         let mut pairs = pairs_by_pal.remove(&pal).unwrap_or_default();
         pairs.sort_unstable();
@@ -61,12 +70,53 @@ pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
             })
             .collect();
         let single = SingleSubst::format_2(coverage.build(), substitutes);
-        singles.push(SubstitutionLookup::Single(Lookup::new(
+        lookups.push(SubstitutionLookup::Single(Lookup::new(
             LookupFlag::empty(),
             vec![single],
         )));
     }
-    let chain_lookup_index = num_palettes;
+
+    // ---- nested per-site restore lookups ----------------------------------
+    // one lookup per distinct site: the chain rule's record picks the exact
+    // substitution, so identical components with different outputs stay
+    // distinguishable (a shared table could not tell them apart)
+    let mut next = num_palettes;
+    for site in &plan.lig_sites {
+        let lookup = match site.components.as_slice() {
+            // 1:1 restore: a contextual single substitution
+            [only] => {
+                let mut coverage = CoverageTableBuilder::default();
+                coverage.add(GlyphId16::new(*only));
+                SubstitutionLookup::Single(Lookup::new(
+                    LookupFlag::empty(),
+                    vec![SingleSubst::format_2(
+                        coverage.build(),
+                        vec![GlyphId16::new(site.out)],
+                    )],
+                ))
+            }
+            // ligature: coverage carries the first component, the Ligature
+            // table lists the rest
+            [first, rest @ ..] => {
+                let mut coverage = CoverageTableBuilder::default();
+                coverage.add(GlyphId16::new(*first));
+                let ligature = Ligature::new(
+                    GlyphId16::new(site.out),
+                    rest.iter().map(|&g| GlyphId16::new(g)).collect(),
+                );
+                SubstitutionLookup::Ligature(Lookup::new(
+                    LookupFlag::empty(),
+                    vec![LigatureSubstFormat1::new(
+                        coverage.build(),
+                        vec![LigatureSet::new(vec![ligature])],
+                    )],
+                ))
+            }
+            [] => unreachable!("a site has at least one component"),
+        };
+        lookups.push(lookup);
+        next += 1;
+    }
 
     // ---- shared class material -------------------------------------------
     // Classes may lump many glyphs (generic mode partitions the whole
@@ -93,19 +143,92 @@ pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
         map
     };
 
+    // ---- the two chain lookups, restore first -----------------------------
+    let mut feature_lookups: Vec<u16> = Vec::new();
+    if !plan.lig_rules.is_empty() {
+        let packed: Vec<PackedRule<'_>> = plan
+            .lig_rules
+            .iter()
+            .map(|rule| PackedRule {
+                backtrack: &rule.backtrack,
+                input: &rule.input,
+                lookahead: &rule.lookahead,
+                records: vec![SequenceLookupRecord::new(
+                    0,
+                    num_palettes + rule.site, // the site's nested lookup
+                )],
+            })
+            .collect();
+        lookups.push(chain_lookup(&packed, &class_glyphs, &glyphs_of_class));
+        feature_lookups.push(next);
+        next += 1;
+    }
+
+    if !plan.rules.is_empty() {
+        let packed: Vec<PackedRule<'_>> = plan
+            .rules
+            .iter()
+            .map(|rule| PackedRule {
+                backtrack: &rule.backtrack,
+                input: &rule.input,
+                lookahead: &rule.lookahead,
+                records: (0..rule.input.len() as u16)
+                    .map(|i| SequenceLookupRecord::new(i, rule.pal))
+                    .collect(),
+            })
+            .collect();
+        lookups.push(chain_lookup(&packed, &class_glyphs, &glyphs_of_class));
+        feature_lookups.push(next);
+    }
+
+    let lookup_list = LookupList::new(lookups);
+
+    // ---- feature + scripts -----------------------------------------------
+    let feature_list = FeatureList::new(vec![FeatureRecord::new(
+        Tag::new(b"calt"),
+        Feature::new(None, feature_lookups),
+    )]);
+    let lang_sys = LangSys::new(vec![0]);
+    let script = Script::new(Some(lang_sys.clone()), Vec::new());
+    let script_list = ScriptList::new(vec![
+        ScriptRecord::new(Tag::new(b"DFLT"), script.clone()),
+        ScriptRecord::new(Tag::new(b"latn"), script),
+    ]);
+
+    Some(Gsub::new(script_list, feature_list, lookup_list))
+}
+
+/// One chain-context rule flattened for subtable packing: class windows
+/// plus the precomputed nested-lookup records.
+struct PackedRule<'r> {
+    backtrack: &'r [u16],
+    input: &'r [u16],
+    lookahead: &'r [u16],
+    records: Vec<SequenceLookupRecord>,
+}
+
+/// Pack rules into chain-context format-2 subtables (one per ~36 KiB
+/// chunk, grouped by first input class) and wrap them into one lookup —
+/// a plain ChainContextual lookup when a single subtable suffices, an
+/// Extension lookup otherwise.
+fn chain_lookup(
+    packed: &[PackedRule<'_>],
+    class_glyphs: &[(u16, u16)],
+    glyphs_of_class: &HashMap<u16, Vec<u16>>,
+) -> SubstitutionLookup {
     // ---- chunk rules into subtable-sized groups ---------------------------
     // Grouped by first input class; classes themselves may be split.
-    let mut rules_by_class: HashMap<u16, Vec<&Rule>> = HashMap::new();
-    for rule in &plan.rules {
+    let mut rules_by_class: HashMap<u16, Vec<&PackedRule<'_>>> = HashMap::new();
+    for rule in packed {
         rules_by_class.entry(rule.input[0]).or_default().push(rule);
     }
     let mut classes: Vec<u16> = rules_by_class.keys().copied().collect();
     classes.sort_unstable();
 
-    let mut chunks: Vec<Vec<(u16, Vec<&Rule>)>> = Vec::new();
-    let mut current: Vec<(u16, Vec<&Rule>)> = Vec::new();
+    let mut chunks: Vec<Vec<(u16, Vec<&PackedRule<'_>>)>> = Vec::new();
+    let mut current: Vec<(u16, Vec<&PackedRule<'_>>)> = Vec::new();
     let mut current_bytes = 0usize;
-    for class in classes {
+    for &class in &classes {
         let rules = &rules_by_class[&class];
         for rule_group in split_class_rules(rules) {
             let group_bytes: usize = rule_group.iter().map(|r| est_rule_bytes(r)).sum();
@@ -130,7 +253,7 @@ pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
         for &(class, ref rules) in chunk {
             let seq_rules: Vec<ChainedClassSequenceRule> = rules
                 .iter()
-                .map(|r| to_chain_rule(r, chain_lookup_index))
+                .map(|r| to_chain_rule(r.backtrack, r.input, r.lookahead, &r.records))
                 .collect();
             sets[class as usize] = Some(ChainedClassSequenceRuleSet::new(seq_rules));
             if let Some(gids) = glyphs_of_class.get(&class) {
@@ -157,15 +280,11 @@ pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
         ));
     }
 
-    // ---- assemble the chain lookup ----------------------------------------
-    let mut lookups = singles;
+    // ---- wrap into one lookup ---------------------------------------------
     if chain_contexts.len() == 1 {
         // small case: a plain (non-extension) chain lookup
         let chain = SubstitutionChainContext::from(chain_contexts.pop().expect("one chunk"));
-        lookups.push(SubstitutionLookup::ChainContextual(Lookup::new(
-            LookupFlag::empty(),
-            vec![chain],
-        )));
+        SubstitutionLookup::ChainContextual(Lookup::new(LookupFlag::empty(), vec![chain]))
     } else {
         let extensions: Vec<ExtensionSubtable> = chain_contexts
             .into_iter()
@@ -176,32 +295,14 @@ pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
                 ))
             })
             .collect();
-        lookups.push(SubstitutionLookup::Extension(Lookup::new(
-            LookupFlag::empty(),
-            extensions,
-        )));
+        SubstitutionLookup::Extension(Lookup::new(LookupFlag::empty(), extensions))
     }
-    let lookup_list = LookupList::new(lookups);
-
-    // ---- feature + scripts -----------------------------------------------
-    let feature_list = FeatureList::new(vec![FeatureRecord::new(
-        Tag::new(b"calt"),
-        Feature::new(None, vec![chain_lookup_index]),
-    )]);
-    let lang_sys = LangSys::new(vec![0]);
-    let script = Script::new(Some(lang_sys.clone()), Vec::new());
-    let script_list = ScriptList::new(vec![
-        ScriptRecord::new(Tag::new(b"DFLT"), script.clone()),
-        ScriptRecord::new(Tag::new(b"latn"), script),
-    ]);
-
-    Some(Gsub::new(script_list, feature_list, lookup_list))
 }
 
 /// Split one class's rules into groups that each fit the subtable budget.
-fn split_class_rules<'r>(rules: &[&'r Rule]) -> Vec<Vec<&'r Rule>> {
-    let mut groups: Vec<Vec<&'r Rule>> = Vec::new();
-    let mut current: Vec<&'r Rule> = Vec::new();
+fn split_class_rules<'r>(rules: &[&'r PackedRule<'r>]) -> Vec<Vec<&'r PackedRule<'r>>> {
+    let mut groups: Vec<Vec<&'r PackedRule<'r>>> = Vec::new();
+    let mut current: Vec<&'r PackedRule<'r>> = Vec::new();
     let mut bytes = 0usize;
     for &rule in rules {
         let b = est_rule_bytes(rule);
@@ -218,23 +319,25 @@ fn split_class_rules<'r>(rules: &[&'r Rule]) -> Vec<Vec<&'r Rule>> {
     groups
 }
 
-fn est_rule_bytes(rule: &Rule) -> usize {
+fn est_rule_bytes(rule: &PackedRule<'_>) -> usize {
     // backtrack u16s + input-1 u16s + lookahead u16s + one 4-byte lookup
-    // record per input glyph + counts
-    8 + 2 * (rule.backtrack.len() + rule.lookahead.len() + rule.input.len()) + 4 * rule.input.len()
+    // record per nested application + counts
+    8 + 2 * (rule.backtrack.len() + rule.lookahead.len() + rule.input.len())
+        + 4 * rule.records.len()
 }
 
-fn to_chain_rule(rule: &Rule, chain_lookup_index: u16) -> ChainedClassSequenceRule {
-    debug_assert!(rule.pal < chain_lookup_index);
-    let records: Vec<SequenceLookupRecord> = (0..rule.input.len() as u16)
-        .map(|i| SequenceLookupRecord::new(i, rule.pal))
-        .collect();
+fn to_chain_rule(
+    backtrack: &[u16],
+    input: &[u16],
+    lookahead: &[u16],
+    records: &[SequenceLookupRecord],
+) -> ChainedClassSequenceRule {
     // input_sequence begins at the *second* input position; the first glyph's
     // class is the rule-set index.
     ChainedClassSequenceRule::new(
-        rule.backtrack.clone(),
-        rule.input[1..].to_vec(),
-        rule.lookahead.clone(),
-        records,
+        backtrack.to_vec(),
+        input[1..].to_vec(),
+        lookahead.to_vec(),
+        records.to_vec(),
     )
 }

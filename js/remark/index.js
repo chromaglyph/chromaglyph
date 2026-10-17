@@ -33,6 +33,7 @@ import { buildCssAssets } from '@chromaglyph/node/css'
  *   outDir?: string,
  *   verify?: boolean,
  *   semantic?: boolean,
+ *   ligatures?: boolean,
  *   cacheDir?: string, // on-disk cache for cross-process builds; ignored when NODE_ENV=development
  *   grouping?: 'page' | 'lang',
  * }} [options]
@@ -46,6 +47,10 @@ function remarkChromaglyph(options = {}) {
     outDir = 'chromaglyph-out',
     verify = true,
     semantic = false,
+    // 保留源字体的连字(如 != -> ===):构建时用源字体 shaping,把每个
+    // 替换重物化为规则——连字照常渲染且保持高亮;跨颜色的连字退化为
+    // 逐字符(颜色优先)。
+    ligatures = false,
     cacheDir,
     // 'page'（默认）：整篇文档合成一个字体；'lang'：按语言分组，一语言一
     // 字体（<pre> 带 data-chromaglyph-lang，CSS 按语言 scope）——改某语言
@@ -105,6 +110,7 @@ function remarkChromaglyph(options = {}) {
         blocks: group.map((b, i) => ({ id: `block-${i}`, lang: b.lang, text: b.text })),
         verify,
         semantic,
+        ligatures,
         cacheDir: diskCache,
       })
       if (!result) return null

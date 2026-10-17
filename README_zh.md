@@ -39,6 +39,10 @@ tokenize+theme → compile → fontbuild → verify
 
 - **exact**（`--input`）：内容构建期已知。多语言共用一个字体（全局消歧），
   0.2.2 起字体**只保留代码块实际用到的字形**（真实页面 ~8 倍缩小）。
+  0.2.3 起 `--ligatures` 保留源字体的连字：构建期用源字体对每个代码块做
+  一次 shaping，把每个替换重物化为规则——`!=`、`->` 以及 JetBrains Mono
+  的上下文变体都按字体本来的样子渲染，同时保持高亮。跨颜色的连字位点
+  退化为逐字符渲染（颜色优先——一个字形只能有一种颜色）。
 - **generic**（`--generic rust|js|ts|python|go|java|c|cpp`）：不需要指定内容——
   一个字体高亮该语言的**任意**文本（关键字、注释、字符串、数字），纯靠字形
   替换推进状态，思路即原项目的 FSM，但从语言 spec 自动合成，只需约 100 条
@@ -63,6 +67,7 @@ tokenize+theme → compile → fontbuild → verify
 chromaglyph build --font JetBrainsMono-Regular.ttf \
     --input examples/hello.rs \             # --lang auto 按扩展名探测
     --theme dark-plus --theme light-plus \  # 或 my-theme.json / my.tmTheme，可重复
+    --ligatures \                           # 保留字体的 != -> 连字，且带高亮
     --output out.woff --css snippet.css --report report.json
 
 chromaglyph verify --font out.woff --input examples/hello.rs

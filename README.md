@@ -48,6 +48,12 @@ Two modes:
 - **exact** (`--input`): content known at build time. Multiple languages
   share one font (disambiguated globally), and since 0.2.2 the font is
   **subset to just the glyphs the blocks use** (~8x smaller on real pages).
+  Since 0.2.3, `--ligatures` preserves the source font's ligatures: the
+  build shapes each block with the source font and re-materializes every
+  substitution as a rule — `!=`, `->` or JetBrains Mono's contextual
+  alternates render exactly as the font intends while staying highlighted.
+  Ligature sites spanning multiple colors degrade to plain per-char text
+  (colors win); one glyph can only carry one color.
 - **generic** (`--generic rust|js|ts|python|go|java|c|cpp`): no content needed —
   the font highlights **any** text of that language (keywords, comments,
   strings, numbers) by advancing state purely through glyph substitution,
@@ -75,6 +81,7 @@ Two modes:
 chromaglyph build --font JetBrainsMono-Regular.ttf \
     --input examples/hello.rs \             # --lang auto detects by extension
     --theme dark-plus --theme light-plus \  # or my-theme.json / my.tmTheme, repeatable
+    --ligatures \                           # keep the font's != -> ligatures, highlighted
     --output out.woff --css snippet.css --report report.json
 
 chromaglyph verify --font out.woff --input examples/hello.rs

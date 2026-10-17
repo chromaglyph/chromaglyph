@@ -62,6 +62,11 @@ pub struct BuildOptions {
     pub semantic: Option<bool>,
     /// Optional on-disk cache directory; enables cross-process caching.
     pub cache_dir: Option<String>,
+    /// Preserve the source font's ligatures in exact mode (default false):
+    /// each substitution the font's own shaping performs becomes a rule,
+    /// so `!=`, `->`, … render exactly as the font intends while staying
+    /// highlighted. Ignored with `generic`.
+    pub ligatures: Option<bool>,
 }
 
 #[napi(object)]
@@ -132,6 +137,14 @@ fn content_hash(opts: &BuildOptions) -> String {
     // semantic changes the output (overlay spans); it must change the hash
     // too, or an enabled build would wrongly hit the plain cache
     hasher.update(if opts.semantic.unwrap_or(false) {
+        &[1]
+    } else {
+        &[0]
+    });
+    // ligatures changes the output (restored substitutions); it must
+    // change the hash too, or an enabled build would wrongly hit the
+    // plain cache
+    hasher.update(if opts.ligatures.unwrap_or(false) {
         &[1]
     } else {
         &[0]
@@ -268,6 +281,7 @@ fn build_uncached(opts: &BuildOptions) -> napi::Result<BuildResult> {
         } else {
             opts.semantic.unwrap_or(false).then_some(&semantic_cb)
         },
+        ligatures: opts.ligatures.unwrap_or(false) && generic_spec.is_none(),
     })
     .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
 

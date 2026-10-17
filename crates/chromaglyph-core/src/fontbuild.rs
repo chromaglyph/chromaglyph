@@ -8,9 +8,10 @@
 //! otherwise (and in generic mode) it is copied byte-for-byte, cmap14
 //! included. The colored copies are *empty* glyphs whose COLR layer
 //! references the base glyph — near-zero size cost per color. The source
-//! font's own GSUB/GPOS/GDEF (and any AAT layout tables) are dropped so
-//! nothing interferes with the generated `calt`; M2 adds a
-//! `--keep-base-features` escape hatch.
+//! font's own GSUB/GPOS/GDEF (and any AAT layout tables) are dropped:
+//! coloring (and, since 0.2.3, ligature restoration) happens through the
+//! generated `calt` alone — see `compile.rs` for how the source font's
+//! shaping is re-materialized at build time instead.
 
 use read_fonts::{FontRef, TableProvider};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -198,9 +199,16 @@ pub fn subset_glyphs(
     let num = loaded.num_glyphs as usize;
     let mut used: BTreeSet<u16> = BTreeSet::new();
     used.insert(0); // .notdef always ships
-    for cell in &plan.cells {
-        if let Some(gid) = cell.gid {
-            used.insert(gid);
+                    // the glyphs the output font produces: plain cells and restored
+                    // substitution outputs (ligature glyphs have no cmap entry of their
+                    // own — the units are what keep them in the subset)
+    for unit in &plan.units {
+        used.insert(unit.glyph);
+    }
+    // ligature rule inputs: member glyphs the nested lookups match on
+    for site in &plan.lig_sites {
+        for &g in &site.components {
+            used.insert(g);
         }
     }
     for &(_, _, gid) in variants.iter() {
@@ -237,12 +245,29 @@ pub fn subset_glyphs(
         }
     }
 
+    // units carry the glyphs the output font produces (they seeded the
+    // keep-set, so every one survives); ligature sites carry the pristine
+    // member glyphs and the restored output the same way
+    for unit in plan.units.iter_mut() {
+        unit.glyph = map[unit.glyph as usize];
+        debug_assert!(unit.glyph != DROPPED, "unit glyphs seeded the keep-set");
+    }
+    for site in plan.lig_sites.iter_mut() {
+        for g in site.components.iter_mut() {
+            *g = map[*g as usize];
+        }
+        site.out = map[site.out as usize];
+    }
+
     // alt copies: bases remap (they are colored cells' glyphs, always
     // kept), the (base, slot) order is restored, alt ids are reissued
     // directly after the surviving source glyphs
     let old_num_source = plan.num_source_glyphs;
     for triple in plan.alt_glyphs.iter_mut() {
-        debug_assert!(map[triple.0 as usize] != DROPPED, "alt base is a kept cell glyph");
+        debug_assert!(
+            map[triple.0 as usize] != DROPPED,
+            "alt base is a kept cell glyph"
+        );
         triple.0 = map[triple.0 as usize];
     }
     plan.alt_glyphs.sort_unstable_by_key(|t| (t.0, t.1));
@@ -316,7 +341,11 @@ fn components_of(loaded: &LoadedFont<'_>, gid: u16) -> Vec<u16> {
         let flags = u16::from_be_bytes([data[pos], data[pos + 1]]);
         out.push(u16::from_be_bytes([data[pos + 2], data[pos + 3]]));
         pos += 4;
-        pos += if flags & ARG_1_AND_2_ARE_WORDS != 0 { 4 } else { 2 };
+        pos += if flags & ARG_1_AND_2_ARE_WORDS != 0 {
+            4
+        } else {
+            2
+        };
         pos += if flags & WE_HAVE_A_SCALE != 0 {
             2
         } else if flags & WE_HAVE_AN_X_AND_Y_SCALE != 0 {
@@ -352,7 +381,11 @@ fn subset_glyph_bytes(loaded: &LoadedFont<'_>, old: u16, map: &[u16]) -> Vec<u8>
         debug_assert!(new != DROPPED, "component survived the keep-set closure");
         out[pos + 2..pos + 4].copy_from_slice(&new.to_be_bytes());
         pos += 4;
-        pos += if flags & ARG_1_AND_2_ARE_WORDS != 0 { 4 } else { 2 };
+        pos += if flags & ARG_1_AND_2_ARE_WORDS != 0 {
+            4
+        } else {
+            2
+        };
         pos += if flags & WE_HAVE_A_SCALE != 0 {
             2
         } else if flags & WE_HAVE_AN_X_AND_Y_SCALE != 0 {
@@ -458,11 +491,7 @@ pub fn assemble(
             Some(sub) => sub.unmap[base_gid as usize] as usize,
             None => base_gid as usize,
         };
-        let (advance, lsb) = loaded
-            .metrics
-            .get(old_base)
-            .copied()
-            .unwrap_or((0, 0));
+        let (advance, lsb) = loaded.metrics.get(old_base).copied().unwrap_or((0, 0));
         h_metrics.push(LongMetric::new(advance, lsb));
     }
     for _ in 0..num_plain {
@@ -529,8 +558,8 @@ pub fn assemble(
                 CmapSubtable::Format14(Cmap14::new(records)),
             )])
         } else {
-            let mut cmap = Cmap::from_mappings(mappings)
-                .map_err(|e| BuildError::TableWrite(e.to_string()))?;
+            let mut cmap =
+                Cmap::from_mappings(mappings).map_err(|e| BuildError::TableWrite(e.to_string()))?;
             if !records.is_empty() {
                 cmap.encoding_records.push(EncodingRecord::new(
                     PlatformId::Unicode,

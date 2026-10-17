@@ -68,6 +68,14 @@ enum Command {
         /// language tree-sitter knows (currently rust, js/ts, python, java)
         #[arg(long)]
         semantic: bool,
+        /// Preserve the source font's ligatures (`!=`, `->`, `www`, …) in
+        /// exact mode: the build shapes the input with the source font and
+        /// re-materializes each substitution as a rule, so ligatures render
+        /// exactly as the font intends while staying highlighted. Sites
+        /// spanning multiple colors degrade to plain per-char text
+        /// (colors win). Ignored with --generic.
+        #[arg(long)]
+        ligatures: bool,
     },
     /// Re-check a built font against input content (the rustybuzz oracle).
     Verify {
@@ -102,6 +110,7 @@ fn main() -> ExitCode {
             report,
             no_verify,
             semantic,
+            ligatures,
         } => cmd_build(
             &font,
             input.as_deref(),
@@ -113,6 +122,7 @@ fn main() -> ExitCode {
             report.as_deref(),
             no_verify,
             semantic,
+            ligatures,
         ),
         Command::Verify {
             font,
@@ -180,6 +190,7 @@ fn cmd_build(
     report_path: Option<&Path>,
     no_verify: bool,
     semantic: bool,
+    ligatures: bool,
 ) -> Result<(), BuildError> {
     let font_bytes = read_required(font_path)?;
     let generic_spec = match (generic, input_path) {
@@ -224,6 +235,7 @@ fn cmd_build(
             .map(str::to_owned)
             .as_deref(),
         semantic: semantic.then_some(&semantic_cb as chromaglyph_core::SemanticLayer),
+        ligatures: ligatures && generic_spec.is_none(),
     })?;
 
     let is_ttf = output.extension().map(|e| e == "ttf").unwrap_or(false);
@@ -252,6 +264,12 @@ fn cmd_build(
         "  {} blocks, {} chars ({} colored), {} slots, {} rules, {} colored glyph copies",
         r.blocks, r.chars, r.colored_cells, r.slots, r.rules, r.alt_glyphs
     );
+    if r.lig_rules > 0 {
+        println!(
+            "  ligatures: {} rule(s) over {} site(s) restored from the source font's shaping",
+            r.lig_rules, r.lig_sites
+        );
+    }
     println!(
         "  verify: {} ({} glyphs, {} colored, {} palettes)",
         if r.verify.ok { "OK" } else { "FAILED" },

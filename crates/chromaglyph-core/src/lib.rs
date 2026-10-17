@@ -65,9 +65,16 @@ pub struct BuildInput<'a> {
     pub font_name: Option<&'a str>,
     /// Optional semantic layer (exact mode): per block, byte ranges with
     /// dotted TextMate scopes that override the syntactic colors wherever
-    /// a theme colors the scope — the hook the pure-Rust core stays free
+    /// the theme colors the scope — the hook the pure-Rust core stays free
     /// of tree-sitter while `chromaglyph-treesitter` plugs in.
     pub semantic: Option<SemanticLayer<'a>>,
+    /// Exact mode: re-materialize the source font's ligatures (and other
+    /// default `calt`/`liga` substitutions) as build-time rules, so code
+    /// like `!=` or `->` renders exactly as the source font shapes it
+    /// while keeping the highlighting. Sites spanning multiple colors
+    /// degrade to plain per-char text (colors win). Ignored in generic
+    /// mode. Default off.
+    pub ligatures: bool,
 }
 
 /// Build artifacts.
@@ -88,6 +95,9 @@ pub struct Report {
     pub colored_cells: usize,
     pub slots: usize,
     pub rules: usize,
+    /// Ligature-restore rules + the substitution sites they reference.
+    pub lig_rules: usize,
+    pub lig_sites: usize,
     pub alt_glyphs: usize,
     pub source_glyphs: u16,
     pub total_glyphs: u16,
@@ -146,6 +156,34 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
             // stage 3: compile to rules (slot model); the resolver records
             // cmap14 variant hits for the subset cmap
             let variant_log = std::cell::RefCell::new(Vec::new());
+            // ligature re-materialization: shape each block with the source
+            // font so the compiler sees the glyphs a browser would render.
+            // A rustybuzz parse failure here degrades to ligatures-off
+            // (read-fonts already accepted the font, so this is unlikely).
+            let face = input
+                .ligatures
+                .then(|| rustybuzz::Face::from_slice(input.font_bytes, 0))
+                .flatten();
+            let shape_fn;
+            let shaper: Option<compile::Shaper<'_>> = match &face {
+                Some(face) => {
+                    shape_fn = |text: &str| {
+                        let mut buffer = rustybuzz::UnicodeBuffer::new();
+                        buffer.push_str(text);
+                        let shaped = rustybuzz::shape(face, &[], buffer);
+                        shaped
+                            .glyph_infos()
+                            .iter()
+                            .map(|i| compile::ShapedGlyph {
+                                glyph: i.glyph_id as u16,
+                                cluster: i.cluster,
+                            })
+                            .collect()
+                    };
+                    Some(&shape_fn)
+                }
+                None => None,
+            };
             let mut plan = compile::compile(
                 &prepared,
                 &|ch, vs| {
@@ -170,6 +208,7 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
                 },
                 loaded.num_glyphs,
                 &theme_fgs,
+                shaper,
             )?;
             variants = variant_log.into_inner();
             subset = fontbuild::subset_glyphs(&loaded, &mut plan, &mut variants);
@@ -220,8 +259,8 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
         result
     } else {
         let mut result = VerifyResult::ok();
-        result.glyphs_checked = plan.cells.len();
-        result.colored_glyphs = plan.cells.iter().filter(|c| c.pal.is_some()).count();
+        result.glyphs_checked = plan.units.len();
+        result.colored_glyphs = plan.units.iter().filter(|u| u.pal.is_some()).count();
         result
     };
 
@@ -235,9 +274,12 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
         colored_cells: plan.cells.iter().filter(|c| c.pal.is_some()).count(),
         slots: plan.slots.len(),
         rules: plan.rules.len(),
+        lig_rules: plan.lig_rules.len(),
+        lig_sites: plan.lig_sites.len(),
         alt_glyphs: plan.alt_glyphs.len(),
         source_glyphs: loaded.num_glyphs,
-        total_glyphs: (plan.num_source_glyphs as usize + plan.alt_glyphs.len()
+        total_glyphs: (plan.num_source_glyphs as usize
+            + plan.alt_glyphs.len()
             + plan.plain_glyphs.len()) as u16,
         palettes: (0..input.themes.len())
             .map(|t| {
@@ -331,7 +373,10 @@ fn render_css(themes: &[ThemeSpec], font_name: &str) -> String {
     css.push_str("pre, code {\n  font-family: chromaglyph, monospace;\n");
     css.push_str("  font-palette: var(--chromaglyph-palette, var(--chromaglyph-dark-palette));\n");
     if let Some(bg) = themes.first().and_then(|t| t.background) {
-        css.push_str(&format!("  background: var(--chromaglyph-bg, {});\n", bg.to_hex()));
+        css.push_str(&format!(
+            "  background: var(--chromaglyph-bg, {});\n",
+            bg.to_hex()
+        ));
     }
     css.push_str("}\n");
     // second theme switches automatically with the OS color scheme
@@ -340,7 +385,10 @@ fn render_css(themes: &[ThemeSpec], font_name: &str) -> String {
             "\n@media (prefers-color-scheme: light) {{\n  pre, code {{\n    font-palette: var(--chromaglyph-palette, var(--chromaglyph-light-palette));\n",
         ));
         if let Some(bg) = light.background {
-            css.push_str(&format!("    background: var(--chromaglyph-bg, {});\n", bg.to_hex()));
+            css.push_str(&format!(
+                "    background: var(--chromaglyph-bg, {});\n",
+                bg.to_hex()
+            ));
         }
         css.push_str("  }\n}\n");
     }
@@ -377,7 +425,9 @@ mod tests {
         // display names are "Dark+"/"Light+" → slug "dark"/"light"
         assert!(css.contains("--chromaglyph-dark-palette: --chromaglyph-dark;"));
         assert!(css.contains("--chromaglyph-light-palette: --chromaglyph-light;"));
-        assert!(css.contains("font-palette: var(--chromaglyph-palette, var(--chromaglyph-dark-palette));"));
+        assert!(css.contains(
+            "font-palette: var(--chromaglyph-palette, var(--chromaglyph-dark-palette));"
+        ));
         assert!(css.contains("background: var(--chromaglyph-bg, #1e1e1e);"));
     }
 

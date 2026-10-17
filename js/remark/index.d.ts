@@ -14,6 +14,12 @@ export interface RemarkChromaglyphOptions {
   outDir?: string
   /** Run the rustybuzz oracle (default true). */
   verify?: boolean
+  /** Preserve the source font's ligatures (`!=`, `->`, …) in exact mode:
+   *  each substitution the font's own shaping performs is re-materialized
+   *  as a rule, so ligatures render exactly as the font intends while
+   *  staying highlighted. Sites spanning multiple colors degrade to plain
+   *  per-char text (colors win). Default false. */
+  ligatures?: boolean
   /** On-disk cache directory for incremental rebuilds. */
   cacheDir?: string
 }

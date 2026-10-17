@@ -443,7 +443,9 @@ pub fn synthesize(
     // the interpolation state) and one uncolored copy of every glyph the
     // expression may contain — the closer reuses the string body slot
     for (k, s) in spec.strings.iter().enumerate() {
-        let Some((open, close)) = s.interpolation else { continue };
+        let Some((open, close)) = s.interpolation else {
+            continue;
+        };
         if quote_gid[k].is_none() {
             continue;
         }
@@ -650,7 +652,9 @@ pub fn synthesize(
     let mut interp_openers: HashMap<u16, Vec<Rule>> = HashMap::new();
     let mut interp_resume: HashMap<u16, Vec<Rule>> = HashMap::new();
     for (k, s) in spec.strings.iter().enumerate() {
-        let Some((open, close)) = s.interpolation else { continue };
+        let Some((open, close)) = s.interpolation else {
+            continue;
+        };
         if quote_gid[k].is_none() {
             continue;
         }
@@ -665,7 +669,9 @@ pub fn synthesize(
                 }
             }
         }
-        let Some(&close_cls) = char_class.get(&close) else { continue };
+        let Some(&close_cls) = char_class.get(&close) else {
+            continue;
+        };
         if !ok {
             continue;
         }
@@ -863,6 +869,11 @@ pub fn synthesize(
         alt_glyphs,
         class_of,
         rules,
+        // the generic state machine has no build-time content to shape:
+        // no ligature sites, no per-cell units (nothing consumes them here)
+        lig_rules: Vec::new(),
+        lig_sites: Vec::new(),
+        units: Vec::new(),
         slots,
         theme_fgs,
         num_source_glyphs,

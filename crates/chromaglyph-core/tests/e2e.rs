@@ -41,6 +41,7 @@ fn two_themes_one_font() {
         generic: None,
         font_name: None,
         semantic: None,
+        ligatures: false,
     })
     .expect("build + inline verify must succeed");
 
@@ -83,6 +84,7 @@ fn single_theme_still_works() {
         generic: None,
         font_name: None,
         semantic: None,
+        ligatures: false,
     })
     .expect("single-theme build");
     assert_eq!(out.report.palettes.len(), 1);
@@ -106,6 +108,7 @@ fn rejects_cff_fonts() {
         generic: None,
         font_name: None,
         semantic: None,
+        ligatures: false,
     }) {
         Ok(_) => panic!("CFF font must be rejected"),
         Err(err) => err,
@@ -142,6 +145,7 @@ fn cross_language_ambiguity_degrades_not_fails() {
         generic: None,
         font_name: None,
         semantic: None,
+        ligatures: false,
     })
     .expect("build never fails on ambiguity");
     assert!(
@@ -165,6 +169,7 @@ fn real_tokenization_colors_function_names() {
         generic: None,
         font_name: None,
         semantic: None,
+        ligatures: false,
     })
     .unwrap();
     assert!(
@@ -188,6 +193,7 @@ fn emoji_and_variation_selectors_shape_and_color() {
         generic: None,
         font_name: None,
         semantic: None,
+        ligatures: false,
     })
     .expect("emoji sample must build + verify");
 
@@ -221,6 +227,7 @@ fn cmap14_variation_sequence_resolves_to_variant_glyph() {
         generic: None,
         font_name: None,
         semantic: None,
+        ligatures: false,
     })
     .expect("UVS sample must build + verify (oracle resolves cmap14)");
     assert!(out.report.verify.ok);
@@ -318,6 +325,7 @@ fn generic_mode_highlights_arbitrary_text() {
         generic: Some(&spec),
         font_name: None,
         semantic: None,
+        ligatures: false,
     })
     .expect("generic build + oracle over random samples");
 
@@ -373,6 +381,7 @@ fn generic_mode_new_languages() {
             generic: Some(&spec),
             font_name: None,
             semantic: None,
+            ligatures: false,
         })
         .unwrap_or_else(|e| panic!("{}: generic build + oracle: {e}", spec.name));
         assert!(
@@ -501,6 +510,7 @@ fn adversarial(spec: &chromaglyph_core::generic::LanguageSpec, samples: &[&str])
         generic: Some(spec),
         font_name: None,
         semantic: None,
+        ligatures: false,
     })
     .expect("generic build");
 
@@ -565,6 +575,7 @@ fn exact_mode_highlights_typescript() {
             generic: None,
             font_name: None,
             semantic: None,
+            ligatures: false,
         })
         .unwrap_or_else(|e| panic!("{lang}: {e}"));
         assert!(
@@ -572,7 +583,11 @@ fn exact_mode_highlights_typescript() {
             "{lang}: expected real highlighting, got {} colored cells",
             out.report.colored_cells
         );
-        assert!(out.report.verify.ok, "{lang}: {:?}", out.report.verify.failures);
+        assert!(
+            out.report.verify.ok,
+            "{lang}: {:?}",
+            out.report.verify.failures
+        );
     }
 }
 
@@ -593,6 +608,7 @@ fn cjk_text_is_a_barrier_and_the_warning_names_it() {
         generic: None,
         font_name: None,
         semantic: None,
+        ligatures: false,
     })
     .expect("CJK sample builds and verifies");
     assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
@@ -613,7 +629,10 @@ fn cjk_text_is_a_barrier_and_the_warning_names_it() {
         .iter()
         .find(|w| w.contains("Missing:"))
         .expect("the missing characters are listed");
-    assert!(missing.contains('\u{6570}'), "the actual CJK chars appear: {missing}");
+    assert!(
+        missing.contains('\u{6570}'),
+        "the actual CJK chars appear: {missing}"
+    );
 }
 
 /// The semantic hook: spans of (byte range, dotted scope) overlay the
@@ -630,6 +649,7 @@ fn semantic_layer_overlays_syntactic_colors() {
         generic: None,
         font_name: None,
         semantic: None,
+        ligatures: false,
     })
     .unwrap();
     let semantic =
@@ -651,6 +671,7 @@ fn semantic_layer_overlays_syntactic_colors() {
         generic: None,
         font_name: None,
         semantic: Some(&semantic),
+        ligatures: false,
     })
     .expect("layered build + oracle");
 
@@ -685,6 +706,7 @@ fn exact_mode_subsets_the_font() {
         generic: None,
         font_name: None,
         semantic: None,
+        ligatures: false,
     })
     .expect("subset build + oracle");
 
@@ -744,6 +766,7 @@ fn generic_font_glyphs_stay_aligned() {
         generic: Some(&spec),
         font_name: None,
         semantic: None,
+        ligatures: false,
     })
     .expect("generic build");
 
@@ -763,7 +786,11 @@ fn generic_font_glyphs_stay_aligned() {
             .collect()
     };
     let dloca = loca_of(&dst);
-    assert_eq!(dloca.len(), num_dst + 1, "one offset per glyph plus the end");
+    assert_eq!(
+        dloca.len(),
+        num_dst + 1,
+        "one offset per glyph plus the end"
+    );
     assert_eq!(dloca[0], 0, "loca starts at 0 (no double prefix)");
 
     // every source-range glyph is byte-identical at the SAME gid
@@ -797,7 +824,13 @@ fn generic_font_glyphs_stay_aligned() {
             let idx = u16::from_be_bytes([g[pos + 2], g[pos + 3]]) as usize;
             comps.push(idx);
             pos += 4;
-            for (bit, size) in [(0x0001u16, 2usize), (0x0002, 2), (0x0008, 2), (0x0040, 4), (0x0080, 2)] {
+            for (bit, size) in [
+                (0x0001u16, 2usize),
+                (0x0002, 2),
+                (0x0008, 2),
+                (0x0040, 4),
+                (0x0080, 2),
+            ] {
                 if flags & bit != 0 {
                     pos += size;
                 }
@@ -826,4 +859,342 @@ fn generic_font_glyphs_stay_aligned() {
             }
         }
     }
+}
+
+/// Exact mode with `ligatures: true`: the build shapes each block with the
+/// source font (rustybuzz) and re-materializes every substitution as a
+/// rule. This fixture expresses its `!=`/`->` "ligatures" as per-character
+/// contextual alternates (same glyph count, different glyphs) — the
+/// restore path must bring those alternates back, colored, with both the
+/// build-time oracle and the standalone intent oracle green.
+#[test]
+fn exact_mode_restores_contextual_alternates() {
+    let themes = themes();
+    let src: &str = "fn f(x: u32) -> u32 { if x != 0 { x <= 2 } else { 3 } }\n";
+    let out = build(&BuildInput {
+        font_bytes: FONT,
+        themes: &themes,
+        blocks: &[Block {
+            id: "main".into(),
+            lang: "rust".into(),
+            text: src,
+        }],
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+        ligatures: true,
+    })
+    .expect("ligature build + oracle");
+
+    assert!(
+        out.report.lig_sites > 0,
+        "the fixture ligates the operators"
+    );
+    assert!(out.report.lig_rules > 0);
+    assert!(out.report.warnings.is_empty(), "{:?}", out.report.warnings);
+
+    // the woff round-trips through the standalone intent oracle
+    let result = verify(
+        &out.woff,
+        &[Block {
+            id: "main".into(),
+            lang: "rust".into(),
+            text: src,
+        }],
+        &themes,
+    )
+    .expect("standalone verify");
+    assert!(result.ok, "standalone verify: {:?}", result.failures);
+
+    // shape the produced font: the `!` of `!=` must render its restored
+    // alternate — neither the plain cmap glyph of '!' nor of '=' — and (the
+    // operator token colors uniformly) that glyph must be a COLR colored copy
+    use read_fonts::{FontRef, TableProvider};
+    let font = FontRef::new(&out.ttf).unwrap();
+    let charmap = skrifa::charmap::Charmap::new(&font);
+    let bang = charmap.map('!').unwrap().to_u32() as u16;
+    let eq = charmap.map('=').unwrap().to_u32() as u16;
+    let face = rustybuzz::Face::from_slice(&out.ttf, 0).unwrap();
+    let mut buffer = rustybuzz::UnicodeBuffer::new();
+    buffer.push_str(src);
+    let shaped = rustybuzz::shape(&face, &[], buffer);
+    let bang_at = shaped
+        .glyph_infos()
+        .iter()
+        .find(|i| i.cluster == 18)
+        .expect("a glyph covers the != site");
+    let lig = bang_at.glyph_id as u16;
+    assert_ne!(lig, bang, "the site is not the plain ! glyph");
+    assert_ne!(lig, eq, "the site is not the plain = glyph");
+    let colr = font.colr().unwrap();
+    let bases: Vec<u16> = colr
+        .base_glyph_records()
+        .unwrap()
+        .unwrap()
+        .iter()
+        .map(|r| r.glyph_id().to_u32() as u16)
+        .collect();
+    assert!(
+        bases.contains(&lig),
+        "the colored ligature copy paints the ligature glyph itself"
+    );
+
+    // contrast: the same text built WITHOUT ligatures keeps the two base
+    // glyphs (no restore rules at all)
+    let plain = build(&BuildInput {
+        font_bytes: FONT,
+        themes: &themes,
+        blocks: &[Block {
+            id: "main".into(),
+            lang: "rust".into(),
+            text: src,
+        }],
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+        ligatures: false,
+    })
+    .unwrap();
+    assert_eq!(plain.report.lig_sites, 0);
+    assert_eq!(plain.report.lig_rules, 0);
+    assert!(plain.report.verify.ok);
+}
+
+/// A real LigatureSubst, exercised through a fixture splice: the JBM
+/// fixture only substitutes per-char alternates, so this builds a font
+/// whose `calt` carries one honest ligature (`f` + `i` → the glyph of
+/// `W`). All three fates get covered: colored (inside a string, uniform
+/// slot), uncolored (a plain identifier), and mixed (an identifier with a
+/// semantic overlay on the second char) which must degrade so colors win.
+#[test]
+fn injected_ligature_colored_uncolored_and_mixed() {
+    let themes = themes();
+    let lig_font = inject_gsub_ligature(FONT, 'f', 'i', fixture_gid('W'));
+
+    // colored: "fi" inside a string colors uniformly, so the ligature
+    // glyph itself gets the colored copy
+    let colored_src: &str = "let s = \"fi\";\n";
+    let out = build(&BuildInput {
+        font_bytes: &lig_font,
+        themes: &themes,
+        blocks: &[Block {
+            id: "main".into(),
+            lang: "rust".into(),
+            text: colored_src,
+        }],
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+        ligatures: true,
+    })
+    .expect("colored ligature build + oracle");
+    assert!(out.report.warnings.is_empty(), "{:?}", out.report.warnings);
+    use read_fonts::{FontRef, TableProvider};
+    let font = FontRef::new(&out.ttf).unwrap();
+    let charmap = skrifa::charmap::Charmap::new(&font);
+    let f_gid = charmap.map('f').unwrap().to_u32() as u16;
+    let i_gid = charmap.map('i').unwrap().to_u32() as u16;
+    let face = rustybuzz::Face::from_slice(&out.ttf, 0).unwrap();
+    let mut buffer = rustybuzz::UnicodeBuffer::new();
+    buffer.push_str(colored_src);
+    let shaped = rustybuzz::shape(&face, &[], buffer);
+    let site = colored_src.find("fi").unwrap();
+    // ONE glyph at the site cluster: not f, not i — the ligature
+    let at_site: Vec<u16> = shaped
+        .glyph_infos()
+        .iter()
+        .filter(|g| g.cluster as usize == site)
+        .map(|g| g.glyph_id as u16)
+        .collect();
+    assert_eq!(at_site.len(), 1, "the site renders as one glyph");
+    let lig = at_site[0];
+    assert_ne!(lig, f_gid);
+    assert_ne!(lig, i_gid);
+    // and it is a COLR colored copy (the string colors uniformly)
+    let colr = font.colr().unwrap();
+    let bases: Vec<u16> = colr
+        .base_glyph_records()
+        .unwrap()
+        .unwrap()
+        .iter()
+        .map(|r| r.glyph_id().to_u32() as u16)
+        .collect();
+    assert!(bases.contains(&lig), "the ligature glyph is colored");
+    // the standalone intent oracle round-trips through the woff
+    let result = verify(
+        &out.woff,
+        &[Block {
+            id: "main".into(),
+            lang: "rust".into(),
+            text: colored_src,
+        }],
+        &themes,
+    )
+    .unwrap();
+    assert!(result.ok, "{:?}", result.failures);
+
+    // uncolored: the same ligature over a plain identifier restores the
+    // ligature glyph WITHOUT a colored copy
+    let plain_src: &str = "let fi = 1;\n";
+    let out = build(&BuildInput {
+        font_bytes: &lig_font,
+        themes: &themes,
+        blocks: &[Block {
+            id: "main".into(),
+            lang: "rust".into(),
+            text: plain_src,
+        }],
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+        ligatures: true,
+    })
+    .expect("uncolored ligature build + oracle");
+    let font = FontRef::new(&out.ttf).unwrap();
+    let face = rustybuzz::Face::from_slice(&out.ttf, 0).unwrap();
+    let mut buffer = rustybuzz::UnicodeBuffer::new();
+    buffer.push_str(plain_src);
+    let shaped = rustybuzz::shape(&face, &[], buffer);
+    let site = plain_src.find("fi").unwrap();
+    let at_site: Vec<u16> = shaped
+        .glyph_infos()
+        .iter()
+        .filter(|g| g.cluster as usize == site)
+        .map(|g| g.glyph_id as u16)
+        .collect();
+    assert_eq!(at_site.len(), 1, "uncolored site still ligates");
+    let is_colored = font
+        .colr()
+        .unwrap()
+        .base_glyph_records()
+        .unwrap()
+        .unwrap()
+        .iter()
+        .any(|r| r.glyph_id().to_u32() as u16 == at_site[0]);
+    assert!(!is_colored, "the uncolored ligature has no colored copy");
+
+    // mixed: a semantic overlay colors only the `i` — the ligature gives
+    // way so every character keeps its color, with a warning
+    let mixed_src: &str = "let fi = 1;\n";
+    let fi_at = mixed_src.find("fi").unwrap();
+    let overlay = move |block: &chromaglyph_core::Block<'_>| -> Vec<(usize, usize, String)> {
+        let _ = block;
+        vec![(fi_at + 1, fi_at + 2, "variable.parameter".to_string())]
+    };
+    let out = build(&BuildInput {
+        font_bytes: &lig_font,
+        themes: &themes,
+        blocks: &[Block {
+            id: "main".into(),
+            lang: "rust".into(),
+            text: mixed_src,
+        }],
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: Some(&overlay),
+        ligatures: true,
+    })
+    .expect("mixed ligature build + oracle");
+    assert!(
+        out.report
+            .warnings
+            .iter()
+            .any(|w| w.contains("ligature") && w.contains("color")),
+        "{:?}",
+        out.report.warnings
+    );
+    let face = rustybuzz::Face::from_slice(&out.ttf, 0).unwrap();
+    let mut buffer = rustybuzz::UnicodeBuffer::new();
+    buffer.push_str(mixed_src);
+    let shaped = rustybuzz::shape(&face, &[], buffer);
+    // per-build subset numbering: read the mixed font's own cmap
+    let mixed_font = FontRef::new(&out.ttf).unwrap();
+    let mixed_charmap = skrifa::charmap::Charmap::new(&mixed_font);
+    let mixed_f = mixed_charmap.map('f').unwrap().to_u32() as u16;
+    let at_site: Vec<u16> = shaped
+        .glyph_infos()
+        .iter()
+        .filter(|g| g.cluster as usize == fi_at)
+        .map(|g| g.glyph_id as u16)
+        .collect();
+    assert_eq!(at_site, vec![mixed_f], "the mixed site stays per-char");
+    // and the second char still carries its overlay color: the i glyph is
+    // a colored copy
+    let mixed_i = mixed_charmap.map('i').unwrap().to_u32() as u16;
+    let i_at = shaped
+        .glyph_infos()
+        .iter()
+        .find(|g| g.cluster as usize == fi_at + 1)
+        .unwrap();
+    assert_ne!(i_at.glyph_id as u16, mixed_i, "the overlaid char colors");
+}
+
+/// Gid of `ch` in the untouched fixture (same numbering as any build's
+/// source font).
+fn fixture_gid(ch: char) -> u16 {
+    let font = read_fonts::FontRef::new(FONT).unwrap();
+    skrifa::charmap::Charmap::new(&font)
+        .map(ch)
+        .map(|g| g.to_u32() as u16)
+        .unwrap_or(0)
+}
+
+/// Splice a `calt` GSUB carrying one LigatureSubst (`first` + `second` →
+/// `out_gid`) into `font`, replacing its own layout tables — the JBM
+/// fixture only substitutes per-char alternates, so true ligatures need a
+/// dedicated fixture.
+fn inject_gsub_ligature(font: &[u8], first: char, second: char, out_gid: u16) -> Vec<u8> {
+    use read_fonts::{FontRef, TableProvider};
+    use write_fonts::tables::gsub::{
+        Gsub, Ligature, LigatureSet, LigatureSubstFormat1, SubstitutionLookup,
+    };
+    use write_fonts::tables::layout::builders::CoverageTableBuilder;
+    use write_fonts::tables::layout::{
+        Feature, FeatureList, FeatureRecord, LangSys, Lookup, LookupFlag, LookupList, Script,
+        ScriptList, ScriptRecord,
+    };
+    use write_fonts::types::{GlyphId16, Tag};
+
+    let parsed = FontRef::new(font).expect("fixture parses");
+    let charmap = skrifa::charmap::Charmap::new(&parsed);
+    let g1 = charmap.map(first).expect("first maps").to_u32() as u16;
+    let g2 = charmap.map(second).expect("second maps").to_u32() as u16;
+
+    let mut coverage = CoverageTableBuilder::default();
+    coverage.add(GlyphId16::new(g1));
+    let ligature = Ligature::new(GlyphId16::new(out_gid), vec![GlyphId16::new(g2)]);
+    let lookup = SubstitutionLookup::Ligature(Lookup::new(
+        LookupFlag::empty(),
+        vec![LigatureSubstFormat1::new(
+            coverage.build(),
+            vec![LigatureSet::new(vec![ligature])],
+        )],
+    ));
+    let feature_list = FeatureList::new(vec![FeatureRecord::new(
+        Tag::new(b"calt"),
+        Feature::new(None, vec![0]),
+    )]);
+    let lang_sys = LangSys::new(vec![0]);
+    let script = Script::new(Some(lang_sys.clone()), Vec::new());
+    let script_list = ScriptList::new(vec![
+        ScriptRecord::new(Tag::new(b"DFLT"), script.clone()),
+        ScriptRecord::new(Tag::new(b"latn"), script),
+    ]);
+    let gsub = Gsub::new(script_list, feature_list, LookupList::new(vec![lookup]));
+
+    let mut builder = write_fonts::FontBuilder::new();
+    for record in parsed.table_directory().table_records() {
+        let tag = record.tag();
+        if tag == Tag::new(b"GSUB") || tag == Tag::new(b"GPOS") || tag == Tag::new(b"GDEF") {
+            continue;
+        }
+        builder.add_raw(tag, parsed.data_for_tag(tag).unwrap().as_bytes().to_vec());
+    }
+    builder.add_table(&gsub).unwrap();
+    builder.build()
 }

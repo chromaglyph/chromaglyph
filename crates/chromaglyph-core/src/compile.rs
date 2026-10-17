@@ -7,6 +7,27 @@
 //! lexer state machine to carry through the font, unlike the original
 //! FontWithASyntaxHighlighter design.
 //!
+//! ## Ligature re-materialization (exact mode + a shaper)
+//!
+//! The source font's own GSUB is dropped from the output font, so its
+//! ligatures would be lost. Instead of keeping (and subsetting) the source
+//! layout tables, the build *shapes* each block with the source font
+//! (rustybuzz — the same algorithm browsers run) and re-materializes every
+//! substitution the shaper performed as one more minimal-window rule: the
+//! pristine per-char glyphs become the shaped glyph through a nested
+//! single/ligature substitution. A site whose member cells color uniformly
+//! restores the ligature glyph itself, which is then colored like any base
+//! glyph by the ordinary rules; a site with mixed colors degrades to plain
+//! per-char text so every character keeps its color.
+//!
+//! Ordering inside `calt` is mirrored by two coordinate spaces. Ligature
+//! rules run first, on the pristine stream: their lookahead is compiled
+//! against the pristine glyph sequence (`seq`), while their backtrack sees
+//! glyphs already restored by earlier rules (the restored stream `rseq`) —
+//! exactly the state a shaper presents mid-lookup. Coloring rules run
+//! second, entirely against the restored stream; that is why their
+//! contexts may reference ligature glyphs.
+//!
 //! ## The slot model (multi-theme in one font)
 //!
 //! Input colors are per character *per theme*. A **slot** is one distinct
@@ -49,6 +70,60 @@ pub struct Cell {
     pub pal: Option<u16>,
 }
 
+/// One glyph of build-time shaping ground truth (rustybuzz over the source
+/// font): the glyph id and the byte offset of the cluster it descends from.
+#[derive(Clone, Copy, Debug)]
+pub struct ShapedGlyph {
+    pub glyph: u16,
+    pub cluster: u32,
+}
+
+/// Build-time shaping oracle: block text → the glyphs the source font's own
+/// shaping produces, aligned by cluster.
+pub type Shaper<'a> = &'a dyn Fn(&str) -> Vec<ShapedGlyph>;
+
+/// One contextual ligature-restore rule, expressed in class ids. The nested
+/// substitution is the per-site lookup (see [`GlyphPlan::lig_sites`]),
+/// applied at input position 0.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LigRule {
+    /// Backtrack classes (restored-stream glyphs), outermost (leftmost) first.
+    pub backtrack: Vec<u16>,
+    /// Input classes for the full member span (first glyph included).
+    pub input: Vec<u16>,
+    /// Lookahead classes (pristine-stream glyphs), innermost first.
+    pub lookahead: Vec<u16>,
+    /// Index into [`GlyphPlan::lig_sites`].
+    pub site: u16,
+}
+
+/// A re-materialized substitution site: `components` (the pristine per-char
+/// glyphs the text resolves to) become `out` (the glyph the source font's
+/// own shaping produced). A single component is a contextual single
+/// substitution; several form a ligature.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LigSite {
+    pub components: Vec<u16>,
+    pub out: u16,
+}
+
+/// One glyph the output font produces for a block: a plain cell, or a
+/// re-materialized substitution site covering several cells.
+#[derive(Clone, Copy, Debug)]
+pub struct Unit {
+    /// First covered cell (index into `GlyphPlan::cells`); the unit spans
+    /// `len` cells from it.
+    pub cell: u32,
+    pub len: u32,
+    /// Glyph after shape-restore, before coloring.
+    pub glyph: u16,
+    /// Slot if the covered cells color uniformly.
+    pub pal: Option<u16>,
+    pub block: usize,
+    /// Position in the restored stream (the coloring rules' space).
+    pub rpos: u32,
+}
+
 /// One contextual substitution rule, expressed in class ids.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Rule {
@@ -73,6 +148,13 @@ pub struct GlyphPlan {
     /// glyph id -> class id (base glyphs and their alt copies share a class).
     pub class_of: HashMap<u16, u16>,
     pub rules: Vec<Rule>,
+    /// Ligature-restore rules (run before `rules` inside `calt`).
+    pub lig_rules: Vec<LigRule>,
+    /// Deduplicated substitution sites the ligature rules reference.
+    pub lig_sites: Vec<LigSite>,
+    /// The shaping units: one entry per glyph the output font produces per
+    /// block, in stream order (the coloring rules' coordinate space).
+    pub units: Vec<Unit>,
     /// slot id -> per-theme color (`None` = this theme leaves it on the
     /// default foreground). Indexing: `slots[slot][theme]`.
     pub slots: Vec<Vec<Option<Color>>>,
@@ -117,11 +199,17 @@ const SEGMENT_MAX_INPUT: usize = 48;
 /// sequence through the font's cmap14 (UVS). `num_source_glyphs` is where
 /// alt glyph ids start; `theme_fgs` backs the CPAL palette fallback color
 /// (one entry per theme, parallel to `PreparedBlock::colors`).
+///
+/// `shaper` provides build-time shaping ground truth per block text (exact
+/// mode with ligatures on): the glyphs the source font's own shaping
+/// produces, aligned by cluster. `None` keeps the classic per-character
+/// model with no ligature restoration.
 pub fn compile(
     blocks: &[PreparedBlock<'_>],
     charmap: &dyn Fn(char, Option<char>) -> Option<u16>,
     num_source_glyphs: u16,
     theme_fgs: &[Color],
+    shaper: Option<Shaper<'_>>,
 ) -> Result<GlyphPlan, BuildError> {
     let num_themes = blocks
         .first()
@@ -198,53 +286,275 @@ pub fn compile(
         }
         block_ranges.push((start, end));
     }
-    let uncolored_cells = cells.iter().filter(|c| c.pal.is_none()).count();
 
-    // ---- shaping view -----------------------------------------------------
-    // How the shaper of *this* font turns cells into glyphs: hidden
-    // controls (variation selectors, zero-width format controls) produce no
-    // glyph at all; unmapped chars produce .notdef and, in a browser, leave
-    // this font's shaping run entirely (font fallback itemization), so they
-    // are hard separators for rule contexts. `seq` models exactly that
-    // adjacency: one entry per mapped cell, `-1` at every unmapped cell and
-    // block boundary. Rules and their contexts live in this space; `-1`
-    // never enters a rule because windows stop at separators.
-    // `cell_at` is aligned with `seq` positions (u32::MAX at separators,
-    // never dereferenced — matches cover only real glyph positions).
-    let mut shaped_pos: Vec<i32> = vec![-1; cells.len()];
-    let mut cell_at: Vec<u32> = Vec::new();
-    let mut seq: Vec<i32> = Vec::new();
-    for &(lo, hi) in &block_ranges {
-        for i in lo..hi {
-            if is_shaper_hidden(cells[i].ch) {
-                continue;
-            }
-            match cells[i].gid {
-                Some(gid) => {
-                    shaped_pos[i] = seq.len() as i32;
-                    cell_at.push(i as u32);
-                    seq.push(i32::from(gid));
-                }
-                None => {
-                    cell_at.push(u32::MAX);
-                    seq.push(-1);
+    // ---- barriers: unmapped chars cannot be colored ----------------------
+    // A char with no cmap entry and no shaper-side hiding is a barrier: it
+    // shapes to .notdef here, and in a browser it moves to a fallback font,
+    // breaking the shaping run. Grammars often scope such chars into tokens
+    // (a trailing newline in a line comment, an emoji inside a string), but
+    // since they produce no colorable glyph the cells simply stay on the
+    // base foreground and coloring continues around them.
+    {
+        let mut unmapped = 0usize;
+        let mut missing: Vec<char> = Vec::new();
+        let mut missing_seen: HashSet<char> = HashSet::new();
+        for cell in cells.iter_mut() {
+            if cell.gid.is_none() && !is_shaper_hidden(cell.ch) && cell.pal.is_some() {
+                cell.pal = None;
+                unmapped += 1;
+                if missing_seen.insert(cell.ch) {
+                    missing.push(cell.ch);
                 }
             }
         }
-        cell_at.push(u32::MAX);
-        seq.push(-1); // matches never cross block boundaries
+        if unmapped > 0 {
+            // name the actual characters so "why is my comment not
+            // highlighted?" answers itself in the build log
+            let display: String = missing
+                .iter()
+                .take(16)
+                .map(|&c| {
+                    if c.is_control() {
+                        format!("U+{:04X} ", c as u32)
+                    } else {
+                        c.to_string()
+                    }
+                })
+                .collect();
+            let ellipsis = if missing.len() > 16 { "…" } else { "" };
+            warnings.push(format!(
+                "{unmapped} colored character(s) have no glyph in the font — those \
+                 chars render via the browser's fallback font and stay uncolored \
+                 (coloring continues around them). Missing: {display}{ellipsis}",
+            ));
+            let cjk = missing.iter().any(|&c| {
+                matches!(c as u32,
+                    0x2E80..=0x9FFF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF | 0x20000..=0x2FA1F)
+            });
+            if cjk {
+                warnings.push(
+                    "the text includes CJK characters the font does not cover — they will \
+                     render in the fallback font and cannot be highlighted; use a CJK-capable \
+                     monospace font (e.g. Sarasa Mono SC) to color them"
+                        .into(),
+                );
+            }
+        }
     }
 
-    // ---- occurrences: maximal runs of cells with the same slot -----------
-    // Adjacent same-slot tokens merge; rules operate on glyph runs.
-    let mut occurrences: Vec<(usize, usize, u16)> = Vec::new();
+    // ---- shaping ground truth: protos + substitution sites ---------------
+    // `Proto` narrates the pristine stream once per glyph-producing group:
+    // a plain mapped cell, a re-materialized site, or a separator (unmapped
+    // char / block boundary — `-1` in both streams).
+    let mut mixed_sites = 0usize;
+    let mut dropped_sites = 0usize;
+    let mut misaligned_blocks = 0usize;
+    let mut sites: Vec<Site> = Vec::new();
+    let mut protos: Vec<Proto> = Vec::new();
+    for (block_idx, &(lo, hi)) in block_ranges.iter().enumerate() {
+        let groups_before = protos.len();
+        let sites_before = sites.len();
+        // empty blocks carry no protos of their own — just the boundary
+        let aligned = lo >= hi
+            || shaper.is_some_and(|shape| {
+                align_shaping(
+                    shape(blocks[block_idx].text),
+                    &cells[lo..hi],
+                    lo,
+                    &mut protos,
+                    &mut sites,
+                    &mut mixed_sites,
+                    &mut dropped_sites,
+                )
+            });
+        if !aligned {
+            // rustybuzz and the per-char model disagree on this block
+            // (merged clusters, bidi reordering, glyph count mismatch):
+            // fall back to the classic per-character view
+            misaligned_blocks += 1;
+            protos.truncate(groups_before);
+            sites.truncate(sites_before);
+            classic_protos(lo, hi, &cells, &mut protos);
+        }
+    }
+    if shaper.is_some() && misaligned_blocks > 0 {
+        warnings.push(format!(
+            "{misaligned_blocks} block(s) could not be aligned with the source font's \
+             shaping; ligatures are not restored there",
+        ));
+    }
+    if mixed_sites > 0 {
+        warnings.push(format!(
+            "{mixed_sites} ligature site(s) span multiple colors — rendered without \
+             the font's ligature so every character keeps its color",
+        ));
+    }
+    if dropped_sites > 0 {
+        warnings.push(format!(
+            "{dropped_sites} substitution site(s) could not be re-materialized \
+             (decomposed or crossing unmapped chars) — the characters render with \
+             their base glyphs",
+        ));
+    }
+
+    // ---- pristine stream (`seq`) + site spans ----------------------------
+    let mut seq: Vec<i32> = Vec::new();
+    for proto in &protos {
+        match *proto {
+            Proto::Plain(i) => seq.push(i32::from(cells[i].gid.unwrap())),
+            Proto::Site(si) => {
+                sites[si].s = seq.len();
+                for &mcell in &sites[si].members {
+                    seq.push(i32::from(cells[mcell].gid.unwrap()));
+                }
+                sites[si].e = seq.len();
+            }
+            Proto::Sep => seq.push(-1),
+        }
+    }
+
+    // ---- ligature fixed point --------------------------------------------
+    // Degrading an unresolvable site leaves its members pristine, which
+    // changes the restored stream other sites' backtracks see — so the
+    // audit re-runs until stable. Sequence matches over `seq` never change,
+    // so candidates are computed once and reused across iterations.
+    let matcher0 = Matcher::new(seq.clone());
+    let mut lig_cand_cache: HashMap<(usize, usize), Rc<Vec<u32>>> = HashMap::new();
+    let mut active: Vec<bool> = vec![true; sites.len()];
+    loop {
+        let (rseq, _units, rpos, _unit_at) = materialize(&cells, &protos, &sites, &active);
+        let site_start: HashMap<usize, usize> = sites
+            .iter()
+            .enumerate()
+            .filter(|&(si, _)| active[si])
+            .map(|(si, st)| (st.s, si))
+            .collect();
+        let mut failures: Vec<usize> = Vec::new();
+        for (si, _) in sites.iter().enumerate() {
+            if !active[si] {
+                continue;
+            }
+            let resolved = build_lig_rule(
+                &seq,
+                &rseq,
+                &rpos,
+                &matcher0,
+                &mut lig_cand_cache,
+                &sites,
+                &site_start,
+                si,
+            )
+            .is_some();
+            if !resolved {
+                failures.push(si);
+            }
+        }
+        if failures.is_empty() {
+            break;
+        }
+        for &si in &failures {
+            active[si] = false;
+            let st = &sites[si];
+            let text: String = cells[st.cell_lo..st.cell_hi].iter().map(|c| c.ch).collect();
+            warnings.push(format!(
+                "block '{}': ligature {:?} ({} cells) cannot be uniquely \
+                 distinguished within the 64-glyph shaper context; rendered without \
+                 the font's ligature",
+                blocks[cells[st.cell_lo].block].id,
+                truncate(&text, 40),
+                st.cell_hi - st.cell_lo
+            ));
+        }
+    }
+
+    // final restored stream + units
+    let (rseq, mut units, rpos, unit_at) = materialize(&cells, &protos, &sites, &active);
+
+    // ---- classes: one class per distinct glyph ---------------------------
+    // Covers pristine glyphs (member inputs, plain cells) and restored
+    // glyphs (ligature outputs). Class ids are 1:1 with glyphs in exact
+    // mode, so class-level matching at run time equals glyph equality at
+    // build time; alt copies join their base's class later (invariant 1).
+    let mut base_gids: Vec<u16> = cells.iter().map(|c| c.gid.unwrap_or(0)).collect();
+    base_gids.extend(rseq.iter().filter_map(|&g| u16::try_from(g).ok()));
+    base_gids.sort_unstable();
+    base_gids.dedup();
+    let mut class_of: HashMap<u16, u16> = HashMap::with_capacity(base_gids.len() * 2);
+    for (class, gid) in base_gids.iter().enumerate() {
+        class_of.insert(*gid, (class + 1) as u16);
+    }
+
+    // ---- ligature rules (class space) + deduped site table ----------------
+    let mut lig_rules: Vec<LigRule> = Vec::new();
+    let mut lig_sites: Vec<LigSite> = Vec::new();
+    let mut site_table: HashMap<(Vec<u16>, u16), u16> = HashMap::new();
+    let site_start: HashMap<usize, usize> = sites
+        .iter()
+        .enumerate()
+        .filter(|&(si, _)| active[si])
+        .map(|(si, st)| (st.s, si))
+        .collect();
+    for (si, st) in sites.iter().enumerate() {
+        if !active[si] {
+            continue;
+        }
+        let Some((backtrack, input, lookahead)) = build_lig_rule(
+            &seq,
+            &rseq,
+            &rpos,
+            &matcher0,
+            &mut lig_cand_cache,
+            &sites,
+            &site_start,
+            si,
+        ) else {
+            continue; // degraded between the audit and here; impossible today
+        };
+        let components: Vec<u16> = input.iter().map(|&g| g as u16).collect();
+        let key = (components.clone(), st.out);
+        let site_idx = *site_table.entry(key.clone()).or_insert_with(|| {
+            lig_sites.push(LigSite {
+                components,
+                out: st.out,
+            });
+            (lig_sites.len() - 1) as u16
+        });
+        lig_rules.push(LigRule {
+            backtrack: backtrack.iter().map(|&g| class_of[&(g as u16)]).collect(),
+            input: input.iter().map(|&g| class_of[&(g as u16)]).collect(),
+            lookahead: lookahead.iter().map(|&g| class_of[&(g as u16)]).collect(),
+            site: site_idx,
+        });
+    }
+    let mut seen = HashSet::new();
+    lig_rules.retain(|rule| {
+        seen.insert((
+            rule.backtrack.clone(),
+            rule.input.clone(),
+            rule.lookahead.clone(),
+            rule.site,
+        ))
+    });
+    // longest first: when two rules share a first class and could both match
+    // at a position, the longer one wins (maximal munch), e.g. `===` before `==`
+    lig_rules.sort_by_key(|rule| std::cmp::Reverse(rule.input.len()));
+
+    // ---- global match index over the restored stream ----------------------
+    let matcher = Matcher::new(rseq.clone());
+
+    // ---- occurrences: maximal runs of uniformly colored units ------------
+    let mut occurrences: Vec<(usize, usize, u16)> = Vec::new(); // unit index spans
     {
         let mut i = 0;
-        while i < cells.len() {
-            if let Some(pal) = cells[i].pal {
+        while i < units.len() {
+            if let Some(pal) = units[i].pal {
                 let start = i;
-                let block = cells[i].block;
-                while i < cells.len() && cells[i].pal == Some(pal) && cells[i].block == block {
+                let block = units[i].block;
+                while i < units.len()
+                    && units[i].pal == Some(pal)
+                    && units[i].block == block
+                    && (i == start || unit_rpos(&units, i) == unit_rpos(&units, i - 1) + 1)
+                {
                     i += 1;
                 }
                 occurrences.push((start, i, pal));
@@ -254,96 +564,6 @@ pub fn compile(
         }
     }
 
-    // ---- split occurrences at unmapped chars ------------------------------
-    // A char with no cmap entry and no shaper-side hiding is a barrier: it
-    // shapes to .notdef here, and in a browser it moves to a fallback font,
-    // breaking the shaping run. Grammars often scope such chars into tokens
-    // (a trailing newline in a line comment, an emoji inside a string), so
-    // instead of degrading the whole token we cut the run at every barrier:
-    // the barrier cell stays on the base foreground, its mapped neighbors
-    // keep coloring. Hidden controls (variation selectors) are *not*
-    // barriers — the shaper drops them, so the mapped text around them is
-    // contiguous at shaping time and the run continues through them.
-    let mut split: Vec<(usize, usize, u16)> = Vec::with_capacity(occurrences.len());
-    let mut unmapped_tokens = 0usize;
-    let mut missing: Vec<char> = Vec::new();
-    let mut missing_seen: HashSet<char> = HashSet::new();
-    for (start, end, pal) in occurrences {
-        let mut run_start: Option<usize> = None;
-        let mut had_unmapped = false;
-        for (i, cell) in cells.iter_mut().enumerate().take(end).skip(start) {
-            if cell.gid.is_some() || is_shaper_hidden(cell.ch) {
-                run_start.get_or_insert(i);
-            } else {
-                if let Some(s) = run_start.take() {
-                    split.push((s, i, pal));
-                }
-                cell.pal = None;
-                if missing_seen.insert(cell.ch) {
-                    missing.push(cell.ch);
-                }
-                had_unmapped = true;
-            }
-        }
-        if let Some(s) = run_start {
-            split.push((s, end, pal));
-        }
-        if had_unmapped {
-            unmapped_tokens += 1;
-        }
-    }
-    if unmapped_tokens > 0 {
-        // name the actual characters so "why is my comment not
-        // highlighted?" answers itself in the build log
-        let display: String = missing
-            .iter()
-            .take(16)
-            .map(|&c| {
-                if c.is_control() {
-                    format!("U+{:04X} ", c as u32)
-                } else {
-                    c.to_string()
-                }
-            })
-            .collect();
-        let ellipsis = if missing.len() > 16 { "…" } else { "" };
-        warnings.push(format!(
-            "{unmapped_tokens} token(s) contain chars with no glyph in the font — those \
-             chars render via the browser's fallback font and stay uncolored (coloring \
-             continues around them). Missing: {display}{ellipsis}",
-        ));
-        let cjk = missing.iter().any(|&c| {
-            matches!(c as u32,
-                0x2E80..=0x9FFF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF | 0x20000..=0x2FA1F)
-        });
-        if cjk {
-            warnings.push(
-                "the text includes CJK characters the font does not cover — they will \
-                 render in the fallback font and cannot be highlighted; use a CJK-capable \
-                 monospace font (e.g. Sarasa Mono SC) to color them"
-                    .into(),
-            );
-        }
-    }
-    let occurrences = split;
-
-    // ---- classes: one class per distinct base glyph ----------------------
-    // Unmapped chars shape to .notdef (gid 0), so gid 0 gets a class too and
-    // rule contexts may legally cross unmapped positions.
-    let mut base_gids: Vec<u16> = cells.iter().map(|c| c.gid.unwrap_or(0)).collect();
-    base_gids.sort_unstable();
-    base_gids.dedup();
-    let mut class_of: HashMap<u16, u16> = HashMap::with_capacity(base_gids.len() * 2);
-    for (class, gid) in base_gids.iter().enumerate() {
-        class_of.insert(*gid, (class + 1) as u16);
-    }
-
-    // ---- global match index ----------------------------------------------
-    // A suffix array over `seq` answers "where else does this glyph
-    // sequence occur?" in O(m log n) instead of rescanning every cell on
-    // every window-growth step.
-    let matcher = Matcher::new(seq.clone());
-
     // ---- minimal distinguishing contexts + global audit -----------------
     // Unresolvable occurrences degrade to uncolored + warning instead of
     // failing the build; degrading can resolve other occurrences' conflicts,
@@ -351,16 +571,18 @@ pub fn compile(
     // during the loop (only intended slots do), so each segment's candidate
     // positions are computed once and reused across iterations.
     let mut cand_cache: HashMap<(usize, usize), Rc<Vec<u32>>> = HashMap::new();
-    let mut active: Vec<(usize, usize, u16)> = occurrences;
+    let mut active_occ: Vec<(usize, usize, u16)> = occurrences;
     loop {
         let mut failures: Vec<usize> = Vec::new();
-        for (i, &(start, end, pal)) in active.iter().enumerate() {
-            let Some((s, e)) = shaped_span(&shaped_pos, start, end) else {
-                continue; // no glyph to color (only hidden controls)
-            };
+        for (i, &(ustart, uend, pal)) in active_occ.iter().enumerate() {
+            let s = unit_rpos(&units, ustart);
+            let e = unit_rpos(&units, uend - 1) + 1;
             let unresolvable = segments(s, e).any(|(ss, se)| {
                 let cands = candidates(&matcher, &mut cand_cache, ss, se);
-                build_rule(&seq, &cells, &cell_at, &class_of, ss, se, pal, &cands).is_none()
+                build_rule(
+                    &rseq, &cells, &units, &unit_at, &class_of, ss, se, pal, &cands,
+                )
+                .is_none()
             });
             if unresolvable {
                 failures.push(i);
@@ -370,32 +592,34 @@ pub fn compile(
             break;
         }
         for &i in &failures {
-            let (start, end, _pal) = active[i];
-            let text: String = cells[start..end].iter().map(|c| c.ch).collect();
+            let (ustart, uend, _pal) = active_occ[i];
+            let lo = units[ustart].cell as usize;
+            let hi = (units[uend - 1].cell + units[uend - 1].len) as usize;
+            let text: String = cells[lo..hi].iter().map(|c| c.ch).collect();
             warnings.push(format!(
                 "block '{}': occurrence of {:?} ({} cells) cannot be uniquely \
                  distinguished within the 64-glyph shaper context; left uncolored",
-                blocks[cells[start].block].id,
+                blocks[units[ustart].block].id,
                 truncate(&text, 40),
-                end - start
+                hi - lo
             ));
-            for cell in &mut cells[start..end] {
+            for cell in &mut cells[lo..hi] {
                 cell.pal = None;
             }
         }
         for &i in failures.iter().rev() {
-            active.swap_remove(i);
+            active_occ.swap_remove(i);
         }
     }
     let mut rules: Vec<Rule> = Vec::new();
-    for &(start, end, pal) in &active {
-        let Some((s, e)) = shaped_span(&shaped_pos, start, end) else {
-            continue;
-        };
+    for &(ustart, uend, pal) in &active_occ {
+        let s = unit_rpos(&units, ustart);
+        let e = unit_rpos(&units, uend - 1) + 1;
         for (ss, se) in segments(s, e) {
             let cands = candidates(&matcher, &mut cand_cache, ss, se);
-            if let Some(rule) = build_rule(&seq, &cells, &cell_at, &class_of, ss, se, pal, &cands)
-            {
+            if let Some(rule) = build_rule(
+                &rseq, &cells, &units, &unit_at, &class_of, ss, se, pal, &cands,
+            ) {
                 rules.push(rule);
             }
         }
@@ -417,13 +641,13 @@ pub fn compile(
     // e.g. `function` before `fun`.
     rules.sort_by_key(|rule| std::cmp::Reverse(rule.input.len()));
 
-    // ---- alt glyphs: one colored copy per (base glyph, slot) -------------
+    // ---- alt glyphs: one colored copy per (glyph, slot) ------------------
     let mut pairs: HashSet<(u16, u16)> = HashSet::new();
-    for &(start, end, pal) in &active {
-        if let Some((s, e)) = shaped_span(&shaped_pos, start, end) {
-            for &g in &seq[s..e] {
-                pairs.insert((g as u16, pal));
-            }
+    for &(ustart, uend, pal) in &active_occ {
+        let s = unit_rpos(&units, ustart);
+        let e = unit_rpos(&units, uend - 1) + 1;
+        for &g in &rseq[s..e] {
+            pairs.insert((g as u16, pal));
         }
     }
     let mut pairs: Vec<(u16, u16)> = pairs.into_iter().collect();
@@ -438,11 +662,29 @@ pub fn compile(
         class_of.insert(alt, class);
     }
 
+    // ---- unit slots reflect the final (possibly degraded) cell colors ----
+    for unit in units.iter_mut() {
+        let lo = unit.cell as usize;
+        let hi = lo + unit.len as usize;
+        let mut uniform = cells[lo].pal;
+        for cell in &cells[lo + 1..hi] {
+            if cell.pal != uniform {
+                uniform = None;
+                break;
+            }
+        }
+        unit.pal = uniform;
+    }
+    let uncolored_cells = cells.iter().filter(|c| c.pal.is_none()).count();
+
     Ok(GlyphPlan {
         cells,
         alt_glyphs,
         class_of,
         rules,
+        lig_rules,
+        lig_sites,
+        units,
         slots,
         theme_fgs: theme_fgs.to_vec(),
         num_source_glyphs,
@@ -453,6 +695,262 @@ pub fn compile(
     })
 }
 
+/// One re-materialized substitution site, between the alignment walk and
+/// the rule builders.
+struct Site {
+    /// Member cells (mapped), in order; hidden controls may sit between them.
+    members: Vec<usize>,
+    /// `[cell_lo, cell_hi)` — cells covered by the restored glyph (from the
+    /// first member to the last, trailing hidden controls excluded).
+    cell_lo: usize,
+    cell_hi: usize,
+    /// Shaped output glyph.
+    out: u16,
+    /// Uniform slot across the covered cells (mixed sites are never kept).
+    pal: Option<u16>,
+    /// `[s, e)` span in the pristine stream, filled when `seq` is built.
+    s: usize,
+    e: usize,
+}
+
+/// One glyph-producing group of the pristine stream.
+enum Proto {
+    /// A plain mapped cell producing its cmap glyph.
+    Plain(usize),
+    /// A re-materialized substitution site (index into `sites`).
+    Site(usize),
+    /// An unmapped char or a block boundary: `-1` in both streams.
+    Sep,
+}
+
+/// The classic per-character view used without a shaper (and as the
+/// degradation fallback for blocks the shaper could not align).
+fn classic_protos(lo: usize, hi: usize, cells: &[Cell], protos: &mut Vec<Proto>) {
+    for (i, cell) in cells.iter().enumerate().take(hi).skip(lo) {
+        if is_shaper_hidden(cell.ch) {
+            continue;
+        }
+        protos.push(if cell.gid.is_some() {
+            Proto::Plain(i)
+        } else {
+            Proto::Sep
+        });
+    }
+    protos.push(Proto::Sep); // block boundary
+}
+
+/// Walk the shaping ground truth of one block against its cells and emit
+/// protos (and substitution sites). `cells` is the block's slice with
+/// LOCAL indices; every proto and site records GLOBAL cell indices
+/// (offset by `lo`). Returns `false` when the two views cannot be aligned
+/// (glyph count or cluster mismatch — e.g. bidi reordering); the caller
+/// then degrades the block to the classic view.
+#[allow(clippy::too_many_arguments)]
+fn align_shaping(
+    infos: Vec<ShapedGlyph>,
+    cells: &[Cell],
+    lo: usize,
+    protos: &mut Vec<Proto>,
+    sites: &mut Vec<Site>,
+    mixed_sites: &mut usize,
+    dropped_sites: &mut usize,
+) -> bool {
+    let nonhidden: Vec<usize> = (0..cells.len())
+        .filter(|&i| !is_shaper_hidden(cells[i].ch))
+        .collect();
+    let mut ci = 0; // index into `nonhidden` (expected next cell)
+    let mut i = 0; // index into `infos`
+    while i < infos.len() {
+        let cluster = infos[i].cluster as usize;
+        let Some(&cell) = nonhidden.get(ci) else {
+            return false; // more glyphs than chars left
+        };
+        if cluster < cells[cell].byte_start {
+            // artifact of a hidden control (own or merged cluster)
+            i += 1;
+            continue;
+        }
+        if cluster > cells[cell].byte_start {
+            return false; // a char produced no glyph / clusters not monotone
+        }
+        // one or more glyphs share this cluster (MultipleSubst degrades)
+        let glyphs: Vec<u16> = infos[i..]
+            .iter()
+            .take_while(|g| g.cluster as usize == cluster)
+            .map(|g| g.glyph)
+            .collect();
+        let j = i + glyphs.len();
+        // span: cells from `cell` until the next glyph's cluster
+        let next_cluster = infos
+            .get(j)
+            .map(|g| g.cluster as usize)
+            .unwrap_or(usize::MAX);
+        let span_end = nonhidden[ci..]
+            .iter()
+            .position(|&c| cells[c].byte_start >= next_cluster)
+            .map_or(nonhidden.len(), |p| ci + p);
+        let cell_lo = nonhidden[ci];
+        let cell_hi = if span_end < nonhidden.len() {
+            nonhidden[span_end]
+        } else {
+            cells.len()
+        };
+        let members: Vec<usize> = (cell_lo..cell_hi)
+            .filter(|&c| cells[c].gid.is_some())
+            .map(|c| c + lo)
+            .collect();
+        let has_barrier = (cell_lo..cell_hi).any(|c| cells[c].gid.is_none());
+
+        if glyphs.len() == 1 && !members.is_empty() {
+            let glyph = glyphs[0];
+            if members.len() == 1 && cells[members[0] - lo].gid == Some(glyph) {
+                // the shaper produced exactly the cmap glyph: plain cell
+                protos.push(Proto::Plain(members[0]));
+            } else if !has_barrier && glyph != 0 {
+                // a real substitution site: keep it iff the covered cells
+                // color uniformly, else degrade so colors win
+                let first_pal = cells[members[0] - lo].pal;
+                if members.iter().any(|&m| cells[m - lo].pal != first_pal) {
+                    *mixed_sites += 1;
+                    push_classic_span(cells, lo, cell_lo, cell_hi, protos);
+                } else {
+                    sites.push(Site {
+                        members: members.clone(),
+                        cell_lo: members[0],
+                        cell_hi: members[members.len() - 1] + 1,
+                        out: glyph,
+                        pal: first_pal,
+                        s: 0,
+                        e: 0,
+                    });
+                    protos.push(Proto::Site(sites.len() - 1));
+                }
+            } else {
+                // ligating across an unmapped char never happens in a
+                // browser (fallback splits the run first), and a ligature
+                // to .notdef is nonsense
+                *dropped_sites += 1;
+                push_classic_span(cells, lo, cell_lo, cell_hi, protos);
+            }
+        } else if !members.is_empty() {
+            // 1:N decomposition: not expressible as a restore rule
+            *dropped_sites += 1;
+            push_classic_span(cells, lo, cell_lo, cell_hi, protos);
+        } else {
+            // unmapped run: shapes to .notdef here, moves to a fallback
+            // font in the browser — a separator either way
+            protos.push(Proto::Sep);
+        }
+        ci = span_end;
+        i = j;
+    }
+    if ci < nonhidden.len() {
+        return false; // chars left over: the shaper dropped mapped glyphs
+    }
+    protos.push(Proto::Sep); // block boundary
+    true
+}
+
+/// Re-emit one alignment span as the classic per-character view.
+fn push_classic_span(
+    cells: &[Cell],
+    lo: usize,
+    cell_lo: usize,
+    cell_hi: usize,
+    protos: &mut Vec<Proto>,
+) {
+    for (c, cell) in cells.iter().enumerate().take(cell_hi).skip(cell_lo) {
+        if is_shaper_hidden(cell.ch) {
+            continue;
+        }
+        protos.push(if cell.gid.is_some() {
+            Proto::Plain(c + lo)
+        } else {
+            Proto::Sep
+        });
+    }
+}
+
+/// Build the restored stream (`rseq`), the unit list, the pristine→restored
+/// position map (`rpos`: seq index → rseq index, `-1` when the position is
+/// consumed by a site), and the rseq-position → unit-index map.
+fn materialize(
+    cells: &[Cell],
+    protos: &[Proto],
+    sites: &[Site],
+    active: &[bool],
+) -> (Vec<i32>, Vec<Unit>, Vec<i32>, Vec<usize>) {
+    let mut rseq: Vec<i32> = Vec::new();
+    let mut units: Vec<Unit> = Vec::new();
+    let mut rpos: Vec<i32> = Vec::new();
+    let mut unit_at: Vec<usize> = Vec::new();
+    for proto in protos {
+        match *proto {
+            Proto::Plain(i) => {
+                rpos.push(rseq.len() as i32);
+                unit_at.push(units.len());
+                let cell = &cells[i];
+                units.push(Unit {
+                    cell: i as u32,
+                    len: 1,
+                    glyph: cell.gid.unwrap(),
+                    pal: cell.pal,
+                    block: cell.block,
+                    rpos: rseq.len() as u32,
+                });
+                rseq.push(i32::from(cell.gid.unwrap()));
+            }
+            Proto::Site(si) => {
+                let st = &sites[si];
+                if active[si] {
+                    rpos.push(rseq.len() as i32);
+                    for _ in st.s + 1..st.e {
+                        rpos.push(-1);
+                    }
+                    unit_at.push(units.len());
+                    units.push(Unit {
+                        cell: st.cell_lo as u32,
+                        len: (st.cell_hi - st.cell_lo) as u32,
+                        glyph: st.out,
+                        pal: st.pal,
+                        block: cells[st.cell_lo].block,
+                        rpos: rseq.len() as u32,
+                    });
+                    rseq.push(i32::from(st.out));
+                } else {
+                    for &mcell in &st.members {
+                        rpos.push(rseq.len() as i32);
+                        unit_at.push(units.len());
+                        let cell = &cells[mcell];
+                        units.push(Unit {
+                            cell: mcell as u32,
+                            len: 1,
+                            glyph: cell.gid.unwrap(),
+                            pal: cell.pal,
+                            block: cell.block,
+                            rpos: rseq.len() as u32,
+                        });
+                        rseq.push(i32::from(cell.gid.unwrap()));
+                    }
+                }
+            }
+            Proto::Sep => {
+                rpos.push(-1);
+                unit_at.push(usize::MAX);
+                rseq.push(-1);
+            }
+        }
+    }
+    (rseq, units, rpos, unit_at)
+}
+
+/// rseq position of a unit (units are in stream order, but consecutive
+/// units are only stream-adjacent when their rpos values differ by one —
+/// separators sit between them otherwise).
+fn unit_rpos(units: &[Unit], i: usize) -> usize {
+    units[i].rpos as usize
+}
+
 /// Split `[start, end)` into roughly balanced segments.
 fn segments(start: usize, end: usize) -> impl Iterator<Item = (usize, usize)> {
     let m = end - start;
@@ -461,23 +959,6 @@ fn segments(start: usize, end: usize) -> impl Iterator<Item = (usize, usize)> {
     (0..m)
         .step_by(seg)
         .map(move |off| (start + off, (start + off + seg).min(end)))
-}
-
-/// Shaped span `[s, e)` of a cell-range occurrence: the shaped positions
-/// of its mapped cells (contiguous in `seq`: hidden controls contribute
-/// nothing and occurrences contain no barriers after splitting). `None`
-/// when the occurrence has no mapped cell at all.
-fn shaped_span(shaped_pos: &[i32], start: usize, end: usize) -> Option<(usize, usize)> {
-    let mut s = None;
-    let mut e = 0;
-    for &i in &shaped_pos[start..end] {
-        if i >= 0 {
-            let p = i as usize;
-            s.get_or_insert(p);
-            e = p + 1;
-        }
-    }
-    s.map(|s| (s, e))
 }
 
 /// Chars the shaper hides entirely (produces no glyph for) when the font
@@ -503,11 +984,11 @@ fn is_variation_selector(ch: char) -> bool {
     )
 }
 
-/// Cached candidate positions for the segment `[s, e)` in shaping space:
-/// every other shaped position carrying the same glyph run (separators in
-/// `seq` keep matches inside one block and one barrier-free run). Sequence
-/// matches are independent of the fixed point loop, so this is computed
-/// once per segment.
+/// Cached candidate positions for the segment `[s, e)` in one matcher's
+/// space: every other shaped position carrying the same glyph run
+/// (separators keep matches inside one block and one barrier-free run).
+/// Sequence matches are independent of the fixed point loops, so this is
+/// computed once per segment.
 fn candidates(
     matcher: &Matcher,
     cache: &mut HashMap<(usize, usize), Rc<Vec<u32>>>,
@@ -529,15 +1010,16 @@ fn candidates(
     rc
 }
 
-/// Build one contextual rule for the shaped segment `[s, e)` in slot
-/// `pal`: grow the backtrack/lookahead window minimally until no false
-/// match remains, staying inside the shaper's rule budget. `None` if the
-/// occurrence cannot be uniquely pinned (caller degrades it to uncolored).
+/// Build one contextual coloring rule for the restored-stream segment
+/// `[s, e)` in slot `pal`: grow the backtrack/lookahead window minimally
+/// until no false match remains, staying inside the shaper's rule budget.
+/// `None` if the occurrence cannot be uniquely pinned (caller degrades it).
 #[allow(clippy::too_many_arguments)] // independent coordinates of one probe
 fn build_rule(
-    seq: &[i32],
+    rseq: &[i32],
     cells: &[Cell],
-    cell_at: &[u32],
+    units: &[Unit],
+    unit_at: &[usize],
     class_of: &HashMap<u16, u16>,
     s: usize,
     e: usize,
@@ -547,19 +1029,23 @@ fn build_rule(
     let m = e - s;
     debug_assert!(m < SHAPER_MAX_CONTEXT, "segments leave room for context");
     let budget = SHAPER_MAX_CONTEXT - m; // max backtrack + lookahead combined
-    // windows stop at separators: contexts never legitimately cross an
-    // unmapped char (font fallback moves it out of this font's run) or a
-    // block boundary
-    let max_l = (0..s).rev().take_while(|&k| seq[k] >= 0).count().min(budget);
-    let max_r = (e..seq.len())
-        .take_while(|&k| seq[k] >= 0)
+                                         // windows stop at separators: contexts never legitimately cross an
+                                         // unmapped char (font fallback moves it out of this font's run) or a
+                                         // block boundary
+    let max_l = (0..s)
+        .rev()
+        .take_while(|&k| rseq[k] >= 0)
+        .count()
+        .min(budget);
+    let max_r = (e..rseq.len())
+        .take_while(|&k| rseq[k] >= 0)
         .count()
         .min(budget);
     let mut l = 0usize;
     let mut r = 0usize;
     let mut grow_left = true;
     loop {
-        if audit(seq, cells, cell_at, s, e, pal, l, r, cands).is_some() {
+        if audit(rseq, cells, units, unit_at, s, e, pal, l, r, cands).is_some() {
             let can_l = l < max_l && l + r < budget;
             let can_r = r < max_r && l + r < budget;
             if can_l && (grow_left || !can_r) {
@@ -572,10 +1058,10 @@ fn build_rule(
                 return None; // unresolvable within the 64-glyph budget
             }
         } else {
-            let backtrack = (1..=l).map(|k| class_of[&(seq[s - k] as u16)]).collect();
-            let input = seq[s..e].iter().map(|&g| class_of[&(g as u16)]).collect();
+            let backtrack = (1..=l).map(|k| class_of[&(rseq[s - k] as u16)]).collect();
+            let input = rseq[s..e].iter().map(|&g| class_of[&(g as u16)]).collect();
             let lookahead = (1..=r)
-                .map(|k| class_of[&(seq[e + k - 1] as u16)])
+                .map(|k| class_of[&(rseq[e + k - 1] as u16)])
                 .collect();
             return Some(Rule {
                 backtrack,
@@ -587,24 +1073,22 @@ fn build_rule(
     }
 }
 
-/// Check whether a rule for the shaped segment `[s, e)` with window `(l, r)`
-/// would falsely fire at any candidate position. Returns the first
-/// conflicting position (shaped index) if so.
+/// Check whether a coloring rule for the restored-stream segment `[s, e)`
+/// with window `(l, r)` would falsely fire at any candidate position.
+/// Returns the first conflicting position (restored index) if so.
 ///
 /// A candidate `q` falsely fires iff its glyph run equals the occurrence's
 /// and the `l` glyphs before and `r` glyphs after also match. Comparisons
-/// happen in `seq` space, so a window crossing a separator (`-1`) can never
-/// equal a window of real glyph ids — barrier and block clamping fall out
-/// of the equality itself. A firing is harmless iff every covered cell
-/// already intends this slot.
-///
-/// Class ids are 1:1 with base glyphs, so comparing glyph ids at build time
-/// is exactly the class-level match at run time (see invariant 1).
+/// happen in `rseq` space, so a window crossing a separator (`-1`) can
+/// never equal a window of real glyph ids. A firing is harmless iff every
+/// covered cell — hidden controls inside the span included — already
+/// intends this slot.
 #[allow(clippy::too_many_arguments)] // independent coordinates of one probe
 fn audit(
-    seq: &[i32],
+    rseq: &[i32],
     cells: &[Cell],
-    cell_at: &[u32],
+    units: &[Unit],
+    unit_at: &[usize],
     s: usize,
     e: usize,
     pal: u16,
@@ -619,13 +1103,13 @@ fn audit(
         // the rule cannot fire where its window does not physically fit
         // (start/end of the whole glyph stream); inside it, separators
         // reject crossings by mere inequality
-        if q < l || q + m + r > seq.len() {
+        if q < l || q + m + r > rseq.len() {
             continue;
         }
         // backtrack equality (a `-1` separator never equals a glyph id)
         let mut equal = true;
         for k in 1..=l {
-            if seq[q - k] != seq[s - k] {
+            if rseq[q - k] != rseq[s - k] {
                 equal = false;
                 break;
             }
@@ -636,7 +1120,7 @@ fn audit(
         // lookahead equality
         let mut equal = true;
         for k in 1..=r {
-            if seq[q + m + k - 1] != seq[e + k - 1] {
+            if rseq[q + m + k - 1] != rseq[e + k - 1] {
                 equal = false;
                 break;
             }
@@ -647,10 +1131,154 @@ fn audit(
         // The rule would fire at q. Harmless iff every covered cell —
         // including hidden controls inside the span — is already intended
         // to carry this slot.
-        let lo = cell_at[q] as usize;
-        let hi = cell_at[q + m - 1] as usize + 1;
+        let first = units[unit_at[q]];
+        let last = units[unit_at[q + m - 1]];
+        let lo = first.cell as usize;
+        let hi = (last.cell + last.len) as usize;
         if cells[lo..hi].iter().any(|c| c.pal != Some(pal)) {
             return Some(q);
+        }
+    }
+    None
+}
+
+/// Build one contextual ligature-restore rule for site `si` as glyph-level
+/// window (backtrack, input, lookahead): grow the window minimally until
+/// no false match remains, staying inside the shaper's rule budget.
+///
+/// Coordinate spaces (see the module docs): input and lookahead are
+/// pristine-stream glyphs — the rule runs before any substitution; the
+/// backtrack is restored-stream glyphs — earlier rules of the same lookup
+/// have already replaced their spans when this one matches.
+#[allow(clippy::too_many_arguments)] // independent coordinates of one probe
+fn build_lig_rule(
+    seq: &[i32],
+    rseq: &[i32],
+    rpos: &[i32],
+    matcher: &Matcher,
+    cache: &mut HashMap<(usize, usize), Rc<Vec<u32>>>,
+    sites: &[Site],
+    site_start: &HashMap<usize, usize>,
+    si: usize,
+) -> Option<(Vec<i32>, Vec<i32>, Vec<i32>)> {
+    let st = &sites[si];
+    let s = st.s;
+    let e = st.e;
+    let m = e - s;
+    if m >= SHAPER_MAX_CONTEXT {
+        return None; // the input alone busts the shaper's rule budget
+    }
+    let budget = SHAPER_MAX_CONTEXT - m;
+    let rs = rpos[s];
+    debug_assert!(rs >= 0, "an active site's first member maps to its unit");
+    let rs = rs as usize;
+    // backtrack walks the restored stream (earlier rules already fired);
+    // lookahead walks the pristine stream (later rules have not fired yet)
+    let max_l = (0..rs)
+        .rev()
+        .take_while(|&k| rseq[k] >= 0)
+        .count()
+        .min(budget);
+    let max_r = (e..seq.len())
+        .take_while(|&k| seq[k] >= 0)
+        .count()
+        .min(budget);
+    let cands = candidates(matcher, cache, s, e);
+    let mut l = 0usize;
+    let mut r = 0usize;
+    let mut grow_left = true;
+    loop {
+        if lig_audit(
+            seq, rseq, rpos, s, e, st.out, l, r, rs, &cands, sites, site_start,
+        )
+        .is_some()
+        {
+            let can_l = l < max_l && l + r < budget;
+            let can_r = r < max_r && l + r < budget;
+            if can_l && (grow_left || !can_r) {
+                l += 1;
+                grow_left = false;
+            } else if can_r {
+                r += 1;
+                grow_left = true;
+            } else {
+                return None; // unresolvable within the 64-glyph budget
+            }
+        } else {
+            let backtrack = (1..=l).map(|k| rseq[rs - k]).collect();
+            let input = seq[s..e].to_vec();
+            let lookahead = (1..=r).map(|k| seq[e + k - 1]).collect();
+            return Some((backtrack, input, lookahead));
+        }
+    }
+}
+
+/// Check whether a ligature rule for the pristine span `[s, e)` outputting
+/// `out` with window `(l, r)` would falsely fire at any candidate.
+///
+/// A candidate `q` (same glyph run in the pristine stream) falsely fires
+/// iff its restored backtrack and pristine lookahead both match and `q` is
+/// not itself an active site start with the same output — firing there
+/// would replace text the source font left unligated (or ligated
+/// differently). Candidates inside a fired site's span are unreachable at
+/// run time (the shaper's cursor never rests inside a substitution) and
+/// therefore skipped.
+#[allow(clippy::too_many_arguments)] // independent coordinates of one probe
+fn lig_audit(
+    seq: &[i32],
+    rseq: &[i32],
+    rpos: &[i32],
+    s: usize,
+    e: usize,
+    out: u16,
+    l: usize,
+    r: usize,
+    rs: usize,
+    cands: &[u32],
+    sites: &[Site],
+    site_start: &HashMap<usize, usize>,
+) -> Option<usize> {
+    let m = e - s;
+    for &q0 in cands {
+        let q = q0 as usize;
+        let rq = rpos[q];
+        if rq < 0 {
+            continue; // inside a fired site: the cursor never rests there
+        }
+        let rq = rq as usize;
+        if rq < l {
+            continue; // the window cannot physically fit at run time
+        }
+        // backtrack equality in the restored stream
+        let mut equal = true;
+        for k in 1..=l {
+            if rseq[rq - k] != rseq[rs - k] {
+                equal = false;
+                break;
+            }
+        }
+        if !equal {
+            continue;
+        }
+        // lookahead equality in the pristine stream
+        let mut equal = true;
+        for k in 1..=r {
+            match seq.get(q + m + k - 1) {
+                Some(&v) if v == seq[e + k - 1] => continue,
+                _ => {
+                    equal = false;
+                    break;
+                }
+            }
+        }
+        if !equal {
+            continue;
+        }
+        // The rule would fire at q. Harmless iff the ground truth there is
+        // the same substitution: an active site with the same output.
+        match site_start.get(&q) {
+            Some(&qi) if sites[qi].out == out => {}
+            _ => return Some(q),
         }
     }
     None
@@ -685,9 +1313,7 @@ impl Matcher {
         };
         let mut k = 1usize;
         loop {
-            sa.sort_unstable_by(|&a, &b| {
-                key(a as usize, &rank, k).cmp(&key(b as usize, &rank, k))
-            });
+            sa.sort_unstable_by(|&a, &b| key(a as usize, &rank, k).cmp(&key(b as usize, &rank, k)));
             next[sa[0] as usize] = 0;
             for w in 1..n {
                 let (prev, cur) = (sa[w - 1] as usize, sa[w] as usize);
@@ -721,9 +1347,9 @@ impl Matcher {
         let lo = self
             .sa
             .partition_point(|&s| cmp_suffix(s as usize) == std::cmp::Ordering::Less);
-        let hi = lo + self.sa[lo..].partition_point(|&s| {
-            cmp_suffix(s as usize) == std::cmp::Ordering::Equal
-        });
+        let hi = lo
+            + self.sa[lo..]
+                .partition_point(|&s| cmp_suffix(s as usize) == std::cmp::Ordering::Equal);
         &self.sa[lo..hi]
     }
 }
@@ -749,7 +1375,7 @@ mod tests {
     /// Build a plan from (text, per-char color runs): spans is
     /// `[(start_char, end_char, Some(color) | None)]` under one theme.
     fn plan_for(texts: SpanBlocks<'_>) -> GlyphPlan {
-        plan_for_themes(texts, &[], &[])
+        plan_for_themes(texts, &[], &[], None)
     }
 
     /// Multi-theme variant: `themes` is extra per-theme color runs; theme 0
@@ -758,6 +1384,7 @@ mod tests {
         texts: SpanBlocks<'_>,
         _extra: &[&[(usize, usize, Option<Color>)]],
         _extra_fgs: &[Color],
+        shaped: Option<&[ShapedGlyph]>,
     ) -> GlyphPlan {
         let charmap = |ch: char, _vs: Option<char>| -> Option<u16> {
             match ch {
@@ -783,7 +1410,24 @@ mod tests {
                 }
             })
             .collect();
-        compile(&blocks, &charmap, 100, &[Color::rgb(0xd4, 0xd4, 0xd4)]).unwrap()
+        let shaper_cb;
+        let shaper: Option<Shaper<'_>> = match shaped {
+            // every block reports the same shaped stream (tests are
+            // single-block unless they say otherwise)
+            Some(s) => {
+                shaper_cb = move |_text: &str| s.to_vec();
+                Some(&shaper_cb)
+            }
+            None => None,
+        };
+        compile(
+            &blocks,
+            &charmap,
+            100,
+            &[Color::rgb(0xd4, 0xd4, 0xd4)],
+            shaper,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -839,16 +1483,22 @@ mod tests {
     fn cross_block_identical_colors_degrade_not_fail() {
         // same text, different colors in two single-cell blocks: any rule
         // would fire in both, so both degrade with warnings
-        let charmap = |ch: char, _vs: Option<char>| -> Option<u16> {
-            Some(10 + (ch as u16 - 'a' as u16))
-        };
+        let charmap =
+            |ch: char, _vs: Option<char>| -> Option<u16> { Some(10 + (ch as u16 - 'a' as u16)) };
         let mk = |color: Option<Color>| PreparedBlock {
             id: "b".into(),
             text: "ab",
             colors: vec![vec![color, color]],
         };
         let blocks = vec![mk(Some(BLUE)), mk(Some(RED))];
-        let plan = compile(&blocks, &charmap, 100, &[Color::rgb(0xd4, 0xd4, 0xd4)]).unwrap();
+        let plan = compile(
+            &blocks,
+            &charmap,
+            100,
+            &[Color::rgb(0xd4, 0xd4, 0xd4)],
+            None,
+        )
+        .unwrap();
         assert!(!plan.warnings.is_empty());
         assert!(plan.cells.iter().all(|c| c.pal.is_none()));
         assert!(plan.alt_glyphs.is_empty());
@@ -886,16 +1536,15 @@ mod tests {
     #[test]
     fn slots_dedupe_color_vectors() {
         // two themes, same structure -> slots count == distinct color pairs
-        let charmap = |ch: char, _vs: Option<char>| -> Option<u16> {
-            Some(10 + (ch as u16 - 'a' as u16))
-        };
+        let charmap =
+            |ch: char, _vs: Option<char>| -> Option<u16> { Some(10 + (ch as u16 - 'a' as u16)) };
         let row = |color: Option<Color>, n: usize| vec![color; n];
         let blocks = vec![PreparedBlock {
             id: "b".into(),
             text: "ab",
             colors: vec![row(Some(BLUE), 2), row(Some(RED), 2)],
         }];
-        let plan = compile(&blocks, &charmap, 100, &[BLUE, RED]).unwrap();
+        let plan = compile(&blocks, &charmap, 100, &[BLUE, RED], None).unwrap();
         assert_eq!(plan.slots.len(), 1, "one slot: (blue, red)");
         assert_eq!(plan.slots[0], vec![Some(BLUE), Some(RED)]);
     }
@@ -928,10 +1577,19 @@ mod tests {
             text: "aaXaa",
             colors: vec![vec![Some(BLUE), Some(BLUE), None, Some(RED), Some(RED)]],
         }];
-        let plan = compile(&blocks, &charmap, 100, &[Color::rgb(0xd4, 0xd4, 0xd4)]).unwrap();
+        let plan = compile(
+            &blocks,
+            &charmap,
+            100,
+            &[Color::rgb(0xd4, 0xd4, 0xd4)],
+            None,
+        )
+        .unwrap();
         assert!(!plan.warnings.is_empty());
         assert!(
-            plan.cells.iter().all(|c| c.pal.is_none() || c.gid.is_none()),
+            plan.cells
+                .iter()
+                .all(|c| c.pal.is_none() || c.gid.is_none()),
             "ambiguous occurrences must degrade"
         );
         assert!(plan.rules.is_empty());
@@ -955,12 +1613,166 @@ mod tests {
             text: "x\u{FE0F}",
             colors: vec![vec![Some(BLUE), Some(BLUE)]],
         }];
-        let plan = compile(&blocks, &charmap, 100, &[Color::rgb(0xd4, 0xd4, 0xd4)]).unwrap();
+        let plan = compile(
+            &blocks,
+            &charmap,
+            100,
+            &[Color::rgb(0xd4, 0xd4, 0xd4)],
+            None,
+        )
+        .unwrap();
         assert_eq!(plan.cells[0].gid, Some(42));
         assert_eq!(plan.alt_glyphs.len(), 1);
         assert_eq!(plan.alt_glyphs[0].0, 42, "colored copy of the UVS glyph");
         assert_eq!(plan.rules.len(), 1);
         assert_eq!(plan.rules[0].input.len(), 1);
+    }
+
+    // ---- ligature re-materialization --------------------------------------
+
+    fn sg(glyph: u16, cluster: u32) -> ShapedGlyph {
+        ShapedGlyph { glyph, cluster }
+    }
+
+    #[test]
+    fn uniform_ligature_becomes_colored_site() {
+        // "ab" colors blue and the font ligates it to glyph 90: one lig
+        // rule, one unit covering both cells, and a colored copy of 90
+        let plan = plan_for_themes(
+            &[("ab", &[(0, 2, Some(BLUE))])],
+            &[],
+            &[],
+            Some(&[sg(90, 0)]),
+        );
+        assert_eq!(plan.warnings, Vec::<String>::new());
+        assert_eq!(plan.lig_rules.len(), 1);
+        assert_eq!(plan.lig_rules[0].input.len(), 2);
+        assert!(plan.lig_rules[0].backtrack.is_empty());
+        assert!(plan.lig_rules[0].lookahead.is_empty());
+        assert_eq!(
+            plan.lig_sites,
+            vec![LigSite {
+                components: vec![10, 11],
+                out: 90
+            }]
+        );
+        assert_eq!(plan.units.len(), 1);
+        assert_eq!(plan.units[0].glyph, 90);
+        assert_eq!(plan.units[0].len, 2);
+        assert!(plan.units[0].pal.is_some());
+        // the ligature glyph itself gets the colored copy
+        assert_eq!(plan.alt_glyphs.len(), 1);
+        assert_eq!(plan.alt_glyphs[0].0, 90);
+        // and the coloring rule targets the ligature glyph's class
+        assert_eq!(plan.rules.len(), 1);
+        assert_eq!(plan.rules[0].input.len(), 1);
+    }
+
+    #[test]
+    fn mixed_color_ligature_degrades_to_per_char() {
+        // "ab" ligates to 90, but only "a" colors: the ligature is dropped
+        // so "a" keeps its color; "a" and "b" stay per-char units
+        let plan = plan_for_themes(
+            &[("ab", &[(0, 1, Some(BLUE))])],
+            &[],
+            &[],
+            Some(&[sg(90, 0)]),
+        );
+        assert!(plan.lig_rules.is_empty());
+        assert!(plan.lig_sites.is_empty());
+        assert_eq!(plan.units.len(), 2);
+        assert_eq!(plan.units[0].glyph, 10);
+        assert_eq!(plan.units[0].pal, Some(0));
+        assert_eq!(plan.units[1].pal, None);
+        assert_eq!(plan.alt_glyphs.len(), 1);
+        assert_eq!(plan.alt_glyphs[0].0, 10);
+        assert!(plan.warnings.iter().any(|w| w.contains("ligature")));
+    }
+
+    #[test]
+    fn uncolored_ligature_is_restored_without_color() {
+        let plan = plan_for_themes(&[("ab", &[])], &[], &[], Some(&[sg(90, 0)]));
+        assert_eq!(plan.lig_rules.len(), 1);
+        assert_eq!(plan.units.len(), 1);
+        assert_eq!(plan.units[0].glyph, 90);
+        assert_eq!(plan.units[0].pal, None);
+        assert!(plan.alt_glyphs.is_empty());
+        assert!(plan.rules.is_empty());
+    }
+
+    #[test]
+    fn identical_plain_run_gets_ligature_context() {
+        // "ab" ligates at 0 but not at 3 (contextual calt): the lig rule
+        // must grow a window so it does not fire over the plain "ab"
+        let plan = plan_for_themes(
+            &[("ab ab", &[(0, 2, Some(BLUE)), (3, 5, Some(BLUE))])],
+            &[],
+            &[],
+            Some(&[sg(90, 0), sg(2, 2), sg(10, 3), sg(11, 4)]),
+        );
+        assert_eq!(plan.lig_rules.len(), 1);
+        let rule = &plan.lig_rules[0];
+        assert!(
+            !rule.lookahead.is_empty() || !rule.backtrack.is_empty(),
+            "needs a distinguishing window: {rule:?}"
+        );
+        // the coloring rules now reference the ligature glyph (unit 0) and
+        // the plain a/b units separately — the space glyph breaks the run
+        assert_eq!(plan.units.len(), 4);
+        assert_eq!(plan.units[0].glyph, 90);
+        assert_eq!(plan.units[2].glyph, 10);
+    }
+
+    #[test]
+    fn single_substitution_site_restores_one_to_one() {
+        // "a" alone shapes to a contextual alternate 55: a 1:1 restore
+        let plan = plan_for_themes(
+            &[("a", &[(0, 1, Some(BLUE))])],
+            &[],
+            &[],
+            Some(&[sg(55, 0)]),
+        );
+        assert_eq!(
+            plan.lig_sites,
+            vec![LigSite {
+                components: vec![10],
+                out: 55
+            }]
+        );
+        assert_eq!(plan.units.len(), 1);
+        assert_eq!(plan.units[0].glyph, 55);
+        // colored copy of the *shaped* glyph
+        assert_eq!(plan.alt_glyphs.len(), 1);
+        assert_eq!(plan.alt_glyphs[0].0, 55);
+    }
+
+    #[test]
+    fn empty_shaping_degrades_block_to_classic() {
+        // the shaper returns nothing (misalignment upstream): the block
+        // falls back to the per-character view and still colors
+        let plan = plan_for_themes(&[("ab", &[(0, 2, Some(BLUE))])], &[], &[], Some(&[]));
+        assert!(plan.lig_rules.is_empty());
+        assert_eq!(plan.rules.len(), 1);
+        assert_eq!(plan.rules[0].input.len(), 2);
+        assert!(plan.warnings.iter().any(|w| w.contains("aligned")));
+    }
+
+    #[test]
+    fn adjacent_sites_backtrack_sees_restored_glyphs() {
+        // "== =" shapes to two ligatures (90 for the first pair, 91 for the
+        // last pair with the repeated char): the second rule's backtrack
+        // must reference glyph 90 in restored space, not the members
+        let plan = plan_for_themes(&[("abab", &[])], &[], &[], Some(&[sg(90, 0), sg(91, 2)]));
+        assert_eq!(plan.lig_rules.len(), 2, "{:?}", plan.lig_rules);
+        let second = plan
+            .lig_rules
+            .iter()
+            .find(|r| plan.lig_sites[r.site as usize].out == 91)
+            .expect("rule for the second site");
+        assert_eq!(second.backtrack.len(), 1, "{second:?}");
+        let backtrack_class = second.backtrack[0];
+        let out90_class = plan.class_of[&90];
+        assert_eq!(backtrack_class, out90_class, "backtrack references 90");
     }
 
     #[test]

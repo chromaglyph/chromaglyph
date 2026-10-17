@@ -23,6 +23,9 @@ export interface MarkdownItChromaglyphOptions {
   style?: 'inline' | 'link'
   /** Run the rustybuzz oracle (default true). */
   verify?: boolean
+  /** Preserve the source font's ligatures (`!=`, `->`, …) in exact mode
+   *  (see the remark plugin's option of the same name). Default false. */
+  ligatures?: boolean
   /** On-disk cache directory for incremental rebuilds. */
   cacheDir?: string
   /** Base directory for relative `font`/`outDir` paths (default: cwd). */

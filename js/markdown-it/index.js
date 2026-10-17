@@ -39,6 +39,7 @@ import { buildCssAssets } from '@chromaglyph/node/css'
  *  style?: 'inline' | 'link',
  *  verify?: boolean,
  *  semantic?: boolean,
+ *  ligatures?: boolean,
  *  cacheDir?: string,   // on-disk cache for cross-process builds; ignored when NODE_ENV=development
  *  cwd?: string,
  *  grouping?: 'page' | 'lang',
@@ -59,6 +60,8 @@ function markdownItChromaglyph(md, options = {}) {
     style = 'inline',
     verify = true,
     semantic = false,
+    // 保留源字体的连字(如 != -> ===):同 remark 插件的 ligatures 选项。
+    ligatures = false,
     cacheDir,
     cwd = process.cwd(),
     // 'page'（默认）：整页所有代码块合成一个字体；'lang'：按语言分组，一语言
@@ -137,7 +140,7 @@ function markdownItChromaglyph(md, options = {}) {
     // render, shared by every language group)
     const fontBytes = loadFont()
     const emit = (group, scope) => {
-      const built = buildFontSafe({ font: fontBytes, themes, blocks: group, verify, semantic, cacheDir: diskCache })
+      const built = buildFontSafe({ font: fontBytes, themes, blocks: group, verify, semantic, ligatures, cacheDir: diskCache })
       if (!built) return null
       const assets = buildCssAssets(built, { embed, outDir, cwd, ...(scope ? { lang: scope } : {}) })
       return { built, tag: styleTag(assets) }
