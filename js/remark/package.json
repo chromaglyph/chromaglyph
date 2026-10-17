@@ -1,6 +1,6 @@
 {
   "name": "@chromaglyph/remark",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "remark plugin: highlight code blocks by compiling them into a chromaglyph color font",
   "license": "Apache-2.0",
   "type": "module",
