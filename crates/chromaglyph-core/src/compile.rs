@@ -305,6 +305,10 @@ pub fn compile(
                 if missing_seen.insert(cell.ch) {
                     missing.push(cell.ch);
                 }
+            } else if is_run_split(cell.ch) && cell.pal.is_some() {
+                // run-splitting chars carry no visible ink; keeping them
+                // uncolored is visually identical and simplifies the model
+                cell.pal = None;
             }
         }
         if unmapped > 0 {
@@ -730,7 +734,7 @@ fn classic_protos(lo: usize, hi: usize, cells: &[Cell], protos: &mut Vec<Proto>)
         if is_shaper_hidden(cell.ch) {
             continue;
         }
-        protos.push(if cell.gid.is_some() {
+        protos.push(if cell.gid.is_some() && !is_run_split(cell.ch) {
             Proto::Plain(i)
         } else {
             Proto::Sep
@@ -801,7 +805,16 @@ fn align_shaping(
             .collect();
         let has_barrier = (cell_lo..cell_hi).any(|c| cells[c].gid.is_none());
 
-        if glyphs.len() == 1 && !members.is_empty() {
+        // a run-splitting char shapes into its own run: a barrier, never
+        // a site and never a dropped-site warning
+        if glyphs.len() == 1 && members.len() == 1 && is_run_split(cells[members[0] - lo].ch) {
+            protos.push(Proto::Sep);
+            ci = span_end;
+            i = j;
+            continue;
+        }
+        let splits_run = (cell_lo..cell_hi).any(|c| is_run_split(cells[c].ch));
+        if glyphs.len() == 1 && !members.is_empty() && !splits_run {
             let glyph = glyphs[0];
             if members.len() == 1 && cells[members[0] - lo].gid == Some(glyph) {
                 // the shaper produced exactly the cmap glyph: plain cell
@@ -863,7 +876,7 @@ fn push_classic_span(
         if is_shaper_hidden(cell.ch) {
             continue;
         }
-        protos.push(if cell.gid.is_some() {
+        protos.push(if cell.gid.is_some() && !is_run_split(cell.ch) {
             Proto::Plain(c + lo)
         } else {
             Proto::Sep
@@ -965,6 +978,17 @@ fn segments(start: usize, end: usize) -> impl Iterator<Item = (usize, usize)> {
 /// does not map them: variation selectors plus zero-width/bidi format
 /// controls. These are transparent to rule building: they never split an
 /// occurrence and occupy no position in the shaping view.
+/// Chars the browser's shaper splits shaping runs at (Blink shapes
+/// space-delimited sub-runs to apply spacing). No contextual rule can see
+/// across them, so they are hard separators for rule contexts — exactly
+/// like unmapped chars — and never carry color (they have no visible ink
+/// anyway). Verified empirically against Chromium: a chain rule whose
+/// backtrack is the space class never fires, while intra-word backtrack
+/// does.
+pub(crate) fn is_run_split(ch: char) -> bool {
+    matches!(ch, ' ' | '\t' | '\u{2000}'..='\u{200A}' | '\u{3000}')
+}
+
 pub(crate) fn is_shaper_hidden(ch: char) -> bool {
     matches!(
         ch,
@@ -1441,8 +1465,10 @@ mod tests {
 
     #[test]
     fn same_text_different_color_gets_context() {
-        // "ab" blue then "ab" red: the two rules need distinguishing windows
-        let plan = plan_for(&[("ab ab", &[(0, 2, Some(BLUE)), (3, 5, Some(RED))])]);
+        // "ab" blue then "ab" red ADJACENT: the two rules distinguish via
+        // windows inside one run (across a space no browser could tell
+        // them apart — see space_separated_duplicates_degrade below)
+        let plan = plan_for(&[("abab", &[(0, 2, Some(BLUE)), (2, 4, Some(RED))])]);
         assert_eq!(plan.rules.len(), 2);
         assert!(plan
             .rules
@@ -1458,8 +1484,10 @@ mod tests {
 
     #[test]
     fn prefix_protection() {
-        // "for" blue + "format" red: the for rule must not fire inside format
-        let plan = plan_for(&[("for format", &[(0, 3, Some(BLUE)), (4, 10, Some(RED))])]);
+        // "for" blue + "format" red (adjacent — browsers split runs at
+        // spaces, so a space-separated pair could not be distinguished and
+        // would degrade; see space_separated_duplicates_degrade)
+        let plan = plan_for(&[("forformat", &[(0, 3, Some(BLUE)), (3, 10, Some(RED))])]);
         let for_rules: Vec<&Rule> = plan.rules.iter().filter(|r| r.input.len() == 3).collect();
         assert!(!for_rules.is_empty());
         assert!(
@@ -1702,13 +1730,14 @@ mod tests {
 
     #[test]
     fn identical_plain_run_gets_ligature_context() {
-        // "ab" ligates at 0 but not at 3 (contextual calt): the lig rule
+        // "ab" ligates at 0 but not at 2 (contextual calt): the lig rule
         // must grow a window so it does not fire over the plain "ab"
+        // (adjacent — a space would split the runs in a browser)
         let plan = plan_for_themes(
-            &[("ab ab", &[(0, 2, Some(BLUE)), (3, 5, Some(BLUE))])],
+            &[("abab", &[(0, 2, Some(BLUE)), (2, 4, Some(BLUE))])],
             &[],
             &[],
-            Some(&[sg(90, 0), sg(2, 2), sg(10, 3), sg(11, 4)]),
+            Some(&[sg(90, 0), sg(10, 2), sg(11, 3)]),
         );
         assert_eq!(plan.lig_rules.len(), 1);
         let rule = &plan.lig_rules[0];
@@ -1718,9 +1747,48 @@ mod tests {
         );
         // the coloring rules now reference the ligature glyph (unit 0) and
         // the plain a/b units separately — the space glyph breaks the run
-        assert_eq!(plan.units.len(), 4);
+        assert_eq!(plan.units.len(), 3);
         assert_eq!(plan.units[0].glyph, 90);
-        assert_eq!(plan.units[2].glyph, 10);
+        assert_eq!(plan.units[1].glyph, 10);
+    }
+
+    #[test]
+    fn space_separated_duplicates_degrade() {
+        // browsers split shaping runs at spaces: no rule context can span
+        // one, so identical runs on both sides wanting different colors
+        // cannot be told apart — both degrade with warnings instead of
+        // misfiring in half the browsers
+        let plan = plan_for(&[("ab ab", &[(0, 2, Some(BLUE)), (3, 5, Some(RED))])]);
+        assert!(!plan.warnings.is_empty());
+        assert!(
+            plan.cells
+                .iter()
+                .all(|c| c.pal.is_none() || is_run_split(c.ch)),
+            "ambiguous occurrences must degrade"
+        );
+        assert!(plan.rules.is_empty());
+    }
+
+    #[test]
+    fn run_splits_are_barriers_and_uncolored() {
+        // a colored string containing a space: the space stays uncolored
+        // (no visible ink) and the two halves anchor independently — the
+        // second half's rule carries no backtrack and still fires at its
+        // run start in a browser
+        let plan = plan_for(&[("\"a b\"", &[(0, 5, Some(BLUE))])]);
+        assert!(plan
+            .cells
+            .iter()
+            .all(|c| is_run_split(c.ch) || c.pal == Some(0)));
+        let space = plan.cells.iter().find(|c| c.ch == ' ').unwrap();
+        assert_eq!(space.pal, None);
+        // both words carry rules with empty backtrack
+        assert!(
+            plan.rules.iter().all(|r| r.backtrack.is_empty()),
+            "{:?}",
+            plan.rules
+        );
+        assert!(plan.rules.len() >= 2, "{:?}", plan.rules);
     }
 
     #[test]

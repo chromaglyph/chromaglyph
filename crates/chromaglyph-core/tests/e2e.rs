@@ -982,7 +982,17 @@ fn exact_mode_restores_contextual_alternates() {
         "the fixture ligates the operators"
     );
     assert!(out.report.lig_rules > 0);
-    assert!(out.report.warnings.is_empty(), "{:?}", out.report.warnings);
+    // cross-space ambiguity (the bare `2` vs the `2` inside `u32`) now
+    // degrades — browsers split runs at spaces and could never tell such
+    // duplicates apart either
+    assert!(
+        out.report
+            .warnings
+            .iter()
+            .all(|w| w.contains("cannot be uniquely distinguished")),
+        "{:?}",
+        out.report.warnings
+    );
 
     // the woff round-trips through the standalone intent oracle
     let result = verify(
