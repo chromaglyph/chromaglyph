@@ -25,11 +25,6 @@ export default defineConfig({
       md.use(chromaglyph, {
         font,
         themes: ['dark-plus', 'light-plus'],
-        // browsers split shaping runs at spaces, so identical space-isolated
-        // words in different contexts cannot be told apart by any font.
-        // One font per language removes the cross-language share of those
-        // collisions (comment words vs other languages' keywords).
-        grouping: 'lang',
         // Vue compiles markdown output as a template: a <style> tag is
         // rejected by the client compiler / entity-escaped by SSR, only a
         // <link rel="stylesheet"> reaches the browser (see plugin README)
