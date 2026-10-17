@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 napi = { version = "3", default-features = false, features = ["napi4"] }
 napi-derive = "3"
 chromaglyph-core.workspace = true
-chromaglyph-treesitter = { path = "../chromaglyph-treesitter", version = "0.2.1" }
+chromaglyph-treesitter = { path = "../chromaglyph-treesitter", version = "0.2.2" }
 sha2 = "0.10"
 serde.workspace = true
 serde_json.workspace = true

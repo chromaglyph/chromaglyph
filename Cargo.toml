@@ -3,13 +3,13 @@ resolver = "2"
 members = ["crates/chromaglyph-core", "crates/chromaglyph", "crates/chromaglyph-node", "crates/chromaglyph-treesitter"]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/chromaglyph/chromaglyph"
 
 [workspace.dependencies]
-chromaglyph-core = { path = "crates/chromaglyph-core", version = "0.2.1" }
+chromaglyph-core = { path = "crates/chromaglyph-core", version = "0.2.2" }
 read-fonts = "0.45"
 skrifa = "0.48"
 write-fonts = "0.54"

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.2 (2026-10-17)
+
 - **plugins: `grouping: 'page' | 'lang'`** (`@chromaglyph/remark`,
   `@chromaglyph/markdown-it`, default `'page'`): opt into one font per
   language instead of one per document. Fences carry
