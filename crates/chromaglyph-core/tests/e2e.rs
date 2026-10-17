@@ -362,6 +362,7 @@ fn generic_mode_new_languages() {
         (chromaglyph_core::generic::python(), 200),
         (chromaglyph_core::generic::go(), 180),
         (chromaglyph_core::generic::java(), 250),
+        (chromaglyph_core::generic::c(), 300),
     ] {
         let out = build(&BuildInput {
             font_bytes: FONT,
@@ -436,6 +437,27 @@ fn generic_mode_adversarial_new_languages() {
             "\nreturn at_line_start\ndef at_line_start\n42 at_line_start",
             "\"\"\"${x // not a comment}\"\"\" + '# str'",
             "lambda\nlambda lambdax xlambda",
+        ],
+    );
+    adversarial(
+        &chromaglyph_core::generic::c(),
+        &[
+            "'only char'",
+            "\"only string\"",
+            "char q = '\\''; char b = '\\\\';",
+            "char *s = \"a\\\"b\"; char t = 'x';",
+            "'a\"b' \"c'd' e\"",
+            "'' \"\"",
+            "return//c\nint",
+            "\"unterminated string return int",
+            "// 'unterminated' comment return int",
+            "/* unterminated block return int",
+            "returnreturn return_ _return 1return",
+            "x = '\"' / \"'\" // \"'\nq = '\\\"'",
+            "#include \"file.h\" // include undef",
+            "ifdef include undef define pragma",
+            "\nreturn at_line_start\nint at_line_start\n42 at_line_start",
+            "sizeof\nsizeof sizex xsizeof",
         ],
     );
 }

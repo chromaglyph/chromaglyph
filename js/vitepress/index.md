@@ -10,7 +10,7 @@ hero:
       text: How it works
       link: /guide/how-it-works
     - theme: alt
-      text: Six languages
+      text: Seven languages
       link: /guide/languages
     - theme: alt
       text: VitePress integration

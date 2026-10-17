@@ -1,6 +1,6 @@
-# Six languages
+# Seven languages
 
-The six blocks on this page are batched into **one font** per render
+The seven blocks on this page are batched into **one font** per render
 (cross-language global disambiguation). Every block copies out as plain
 text.
 
@@ -105,5 +105,24 @@ public final class Parser {
         }
         return depth == 0;
     }
+}
+```
+
+## C
+
+Preprocessor directive words color purple like an editor's directives —
+the `#` glyph is not part of the identifier to the font and stays plain.
+`sizeof` is blue, `true`/`false`/`NULL` are language constants.
+
+```c
+#include <stdio.h>
+#define MAX_STACK 64
+
+typedef struct { int items[MAX_STACK]; int top; } stack_t;
+
+int push(stack_t *s, int value) {
+    if (s->top == MAX_STACK || s == NULL) return -1;
+    s->items[s->top++] = value;
+    return 0; /* block comment closes textually on this line */
 }
 ```

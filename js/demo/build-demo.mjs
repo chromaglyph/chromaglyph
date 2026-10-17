@@ -162,6 +162,16 @@ namespace Demo { // namespace too — but indented keywords color below
         // interpolation: \${ and } keep the string color, the expression is plain
     }
 }`,
+  c: `// build config (top-level keywords at column 0 stay plain: no anchor)
+#include <stdio.h> // include colors purple; the # glyph stays plain
+#define MAX 42
+int main(void) { // int AFTER a space anchors fine
+    char *msg = "hi \\"chromaglyph\\"";
+    char q = '\\''; char c = 'x';
+    if (msg == NULL) return 1; // NULL blue, msg an identifier (plain)
+    for (int i = 0; i < MAX; i++) printf("%d\\n", i); // numbers color
+    return 0; /* block comment colors to its closer on this line */
+}`,
 }
 
 const sections = []
@@ -182,12 +192,12 @@ const genericPage = `<!doctype html><meta charset="utf-8"><title>chromaglyph × 
   @media (prefers-color-scheme: light) {
     body { background: #ffffff; color: #1e1e1e; }
     pre { background: #ffffff; }
-    ${sections.map((s) => `pre.${s.lang} { font-palette: --${s.family}-light-plus; }`).join('\n    ')}
+    ${sections.map((s) => `pre.${s.lang} { font-palette: --${s.family}-light; }`).join('\n    ')}
   }
 </style>
 ${sections.map((s) => `<style>\n${s.css}\n</style>`).join('\n')}
 <h1>chromaglyph × generic mode</h1>
-<p>Three fonts, zero compiled-in content: each font highlights ANY text of
+<p>Seven fonts, zero compiled-in content: each font highlights ANY text of
 its language — keywords, comments, strings, numbers — via a synthesized
 state machine. Browsers shape every source line as its own run, so the
 highlighting is line-scoped: a keyword colors when the glyphs beside it

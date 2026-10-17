@@ -42,7 +42,8 @@ enum Command {
         lang: String,
         /// Generic mode: build a font that highlights ANY text of this
         /// language (keywords, comments, strings, numbers) instead of
-        /// compiling --input; one of `rust`, `js`, `ts`, `python`, `go`, `java`
+        /// compiling --input; one of `rust`, `js`, `ts`, `python`, `go`,
+        /// `java`, `c`
         #[arg(long, conflicts_with = "input")]
         generic: Option<String>,
         /// Theme: builtin name (`dark-plus`, `light-plus`) or a path to a

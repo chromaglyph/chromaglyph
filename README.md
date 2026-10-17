@@ -96,7 +96,7 @@ tokenize+theme → compile → fontbuild → verify
     整形 run」机制后被 M4d 的浏览器实测推翻——跨行在真实浏览器中不可实现
   - 多主题依旧一套规则 + 每主题一个 CPAL 调色板
 - [x] **M4d** 多语言 generic（v1.2）：`--generic` 支持 **js / ts / python /
-  go / java**，spec 模型从「单引号字符」泛化为：
+  go / java / c**，spec 模型从「单引号字符」泛化为：
   - **多引号字符串**：JS 的 `"` `'` `` ` `` 各自成态、互不干扰（`'a"b'` 里
     双引号是字符串体）
   - **模板插值**（JS/TS）：`` `hi ${name} bye` `` 与编辑器一致——字符串段
@@ -166,7 +166,7 @@ chromaglyph build --font JetBrainsMono-Regular.ttf \
 chromaglyph verify --font out.woff --input examples/hello.rs
 
 # 通用模式：不指定内容，字体高亮该语言的任意文本（关键字/注释/字符串/数字；
-# rust | js | ts | python | go | java；着色为行内语义——见 M4d 的浏览器实测说明）
+# rust | js | ts | python | go | java | c；着色为行内语义——见 M4d 的浏览器实测说明）
 chromaglyph build --font JetBrainsMono-Regular.ttf --generic rust \
     --output generic.woff --css generic.css
 ```

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **generic mode: C** (`--generic c`, node `buildFont({generic: 'c'})`):
+  `"` strings and `'` char literals with escapes, both comment kinds,
+  control-flow / storage-type / storage-modifier keyword groups,
+  `sizeof` (blue via `keyword.other.c` — `keyword.operator.word`
+  resolves to the default foreground in dark-plus and would not color),
+  `true`/`false`/`NULL` constants and numbers. Preprocessor directive
+  words (`include`, `define`, `ifdef`, `endif`, `pragma`, …) color
+  purple like an editor's directives — the `#` glyph is not part of the
+  identifier to the font and stays plain; the words color wherever they
+  appear as identifiers, so plausible-identifier directives (`error`,
+  `warning`, `line`) were left out on purpose. Curated + spec-derived
+  oracle samples and an adversarial suite (quote interleaving,
+  unterminated states, directive-word soup, line-start keywords);
+  326 rules on the fixture font.
+
 - **css: var-driven palette + background — class-toggle dark mode with
   zero JS**. The companion CSS (CLI `--css` and both JS plugins) now
   reads `font-palette: var(--chromaglyph-palette, …)` and

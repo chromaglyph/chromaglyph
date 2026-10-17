@@ -106,6 +106,7 @@ pub fn sample_texts(spec: &LanguageSpec) -> Vec<String> {
 
 fn curated(name: &str) -> Vec<String> {
     match name {
+        "c" => langs::c::samples(),
         "go" => langs::go::samples(),
         "java" => langs::java::samples(),
         "javascript" => langs::javascript::samples(),
