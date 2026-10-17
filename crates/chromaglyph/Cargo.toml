@@ -15,4 +15,4 @@ path = "src/main.rs"
 chromaglyph-core.workspace = true
 clap.workspace = true
 serde_json.workspace = true
-chromaglyph-treesitter = { path = "../chromaglyph-treesitter", version = "0.2.2" }
+chromaglyph-treesitter = { path = "../chromaglyph-treesitter", version = "0.2.3" }

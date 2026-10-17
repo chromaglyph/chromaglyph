@@ -1,6 +1,35 @@
 # Changelog
 
-## Unreleased
+## 0.2.3
+
+- **exact mode: `--ligatures` (node `ligatures: true`, plugins
+  `ligatures: true`)** — preserve the source font's ligatures. The build
+  now *shapes* each block with the source font (rustybuzz, the same
+  algorithm browsers run) and re-materializes every substitution the
+  shaper performed as one more minimal-window rule: the pristine per-char
+  glyphs become the shaped glyph through a nested single/ligature
+  substitution, audited globally like every other rule. This is the
+  same "content is known at build time" trick applied to shaping: no
+  source GSUB ships, nothing interferes with the coloring, and the
+  subset stays minimal (ligature glyphs and rule inputs simply join the
+  keep-set). A site whose member cells color uniformly restores the
+  ligature glyph itself and colors it like any base glyph (one glyph,
+  one color); a site with mixed colors degrades to plain per-char text
+  so every character keeps its color (colors win, warning emitted).
+  Ordering inside `calt` mirrors the shaper: restore rules run first —
+  lookahead compiled against the pristine stream, backtrack against the
+  restored one — then the coloring rules run entirely against the
+  restored stream. The build-time oracle now checks shaping units
+  (cluster spans) instead of per-char glyphs; the standalone `verify`
+  rebuilds color intents without the source font, so it checks them
+  against the font's own COLR claims (uncolored ligature outputs remain
+  trusted from the build there). Opt-in and exact-mode only — generic
+  mode's font must shape arbitrary text and keeps dropping the source
+  layout tables. On the JBM fixture `!=`/`->`/`<=` are per-char
+  contextual alternates (not n:1 ligatures) and are restored equally;
+  the e2e suite covers true ligatures through an injected-LigatureSubst
+  fixture: colored, uncolored, and mixed-color fates.
+
 
 - **fix: generic-mode fonts were rejected by browsers since 0.2.2** (the
   OTS console spam). The non-subset glyf path in `assemble` prefixed the
