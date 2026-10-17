@@ -746,6 +746,97 @@ fn exact_mode_subsets_the_font() {
     }
 }
 
+/// 0.2.3 regression, exact mode: the composite walker followed the wrong
+/// flag bit layout (MORE_COMPONENTS 0x0010 instead of 0x0020), so
+/// multi-component composites were truncated at the first component —
+/// the closure dropped real components and the subset rewrote only the
+/// first gid, leaving later ones pointing past the subset's glyph count.
+/// Browsers refused the whole font at OTS ("Invalid glyph id used in
+/// composite glyph") while the rustybuzz oracle stayed green (it never
+/// walks outlines). This test walks the produced font's composites with
+/// the implementation-standard bits and requires every component gid to
+/// stay inside the subset.
+#[test]
+fn subset_composites_stay_in_range() {
+    let themes = themes();
+    let out = build(&BuildInput {
+        font_bytes: FONT,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+        ligatures: false,
+    })
+    .expect("subset build");
+
+    use read_fonts::{FontRef, TableProvider};
+    let font = FontRef::new(&out.ttf).unwrap();
+    let num = font.maxp().unwrap().num_glyphs() as usize;
+    let head = font.head().unwrap();
+    let loca = font.loca(head.index_to_loc_format() == 1).unwrap();
+    let glyf = font
+        .data_for_tag(write_fonts::types::Tag::new(b"glyf"))
+        .unwrap()
+        .as_bytes()
+        .to_vec();
+
+    let mut composites = 0;
+    let mut multi = 0;
+    for gid in 0..num {
+        let (a, b) = (
+            loca.get_raw(gid).unwrap() as usize,
+            loca.get_raw(gid + 1).unwrap() as usize,
+        );
+        if b <= a {
+            continue;
+        }
+        let g = &glyf[a..b];
+        if g.len() < 12 || i16::from_be_bytes([g[0], g[1]]) >= 0 {
+            continue;
+        }
+        composites += 1;
+        let mut count = 0;
+        let mut pos = 10;
+        loop {
+            assert!(
+                pos + 4 <= g.len(),
+                "glyph {gid}: composite runs past its bytes"
+            );
+            let flags = u16::from_be_bytes([g[pos], g[pos + 1]]);
+            let comp = u16::from_be_bytes([g[pos + 2], g[pos + 3]]);
+            assert!(
+                (comp as usize) < num,
+                "glyph {gid}: component {comp} leaves the subset ({num} glyphs) — browsers reject this at OTS"
+            );
+            count += 1;
+            pos += 4 + if flags & 0x0001 != 0 { 4 } else { 2 };
+            if flags & 0x0008 != 0 {
+                pos += 2;
+            } else if flags & 0x0040 != 0 {
+                pos += 4;
+            } else if flags & 0x0080 != 0 {
+                pos += 8;
+            }
+            if flags & 0x0020 == 0 {
+                break;
+            }
+        }
+        if count > 1 {
+            multi += 1;
+        }
+    }
+    // the fixture carries 385 apple-layout composites; a real page sample
+    // keeps at least one multi-component glyph, which is what the wrong
+    // bits truncated
+    assert!(composites > 0);
+    assert!(
+        multi > 0,
+        "expected multi-component composites in the subset"
+    );
+}
+
 /// 0.2.2 regression, generic mode: the non-subset glyf path
 /// double-prefixed the loca offsets (an initial 0 plus the source loca's
 /// own leading 0), shifting every source glyph one gid up. Composite
@@ -824,19 +915,18 @@ fn generic_font_glyphs_stay_aligned() {
             let idx = u16::from_be_bytes([g[pos + 2], g[pos + 3]]) as usize;
             comps.push(idx);
             pos += 4;
-            for (bit, size) in [
-                (0x0001u16, 2usize),
-                (0x0002, 2),
-                (0x0008, 2),
-                (0x0040, 4),
-                (0x0080, 2),
-            ] {
-                if flags & bit != 0 {
-                    pos += size;
-                }
+            // args are 4 bytes with word args (0x0001), else 2; scale flags
+            // carry 2/4/8 bytes (0x0008 / 0x0040 / 0x0080)
+            pos += if flags & 0x0001 != 0 { 4 } else { 2 };
+            if flags & 0x0008 != 0 {
+                pos += 2;
+            } else if flags & 0x0040 != 0 {
+                pos += 4;
+            } else if flags & 0x0080 != 0 {
+                pos += 8;
             }
             if flags & 0x0020 == 0 {
-                break;
+                break; // 0x0020 = MORE_COMPONENTS
             }
         }
         comps

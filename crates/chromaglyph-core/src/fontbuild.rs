@@ -317,12 +317,14 @@ fn glyph_span(loaded: &LoadedFont<'_>, gid: u16) -> (usize, usize) {
     )
 }
 
-// composite component flags (glyf spec)
+// composite component flags, as every implementation actually numbers
+// them (Apple's TrueType spec; OTS/Chrome, FreeType and fonttools agree —
+// see the 0.2.3 regression): MORE_COMPONENTS is 0x0020, not 0x0010
 const ARG_1_AND_2_ARE_WORDS: u16 = 0x0001;
 const WE_HAVE_A_SCALE: u16 = 0x0008;
-const MORE_COMPONENTS: u16 = 0x0010;
-const WE_HAVE_AN_X_AND_Y_SCALE: u16 = 0x0020;
-const WE_HAVE_A_TWO_BY_TWO: u16 = 0x0040;
+const MORE_COMPONENTS: u16 = 0x0020;
+const WE_HAVE_AN_X_AND_Y_SCALE: u16 = 0x0040;
+const WE_HAVE_A_TWO_BY_TWO: u16 = 0x0080;
 
 /// Component glyph ids of a composite glyph (empty for simple/empty
 /// glyphs), parsed straight from the glyf bytes.
