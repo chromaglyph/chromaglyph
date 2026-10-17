@@ -48,7 +48,7 @@ Two modes:
 - **exact** (`--input`): content known at build time. Multiple languages
   share one font (disambiguated globally), and since 0.2.2 the font is
   **subset to just the glyphs the blocks use** (~8x smaller on real pages).
-- **generic** (`--generic rust|js|ts|python|go|java|c`): no content needed —
+- **generic** (`--generic rust|js|ts|python|go|java|c|cpp`): no content needed —
   the font highlights **any** text of that language (keywords, comments,
   strings, numbers) by advancing state purely through glyph substitution,
   like the original project's FSM but synthesized from a language spec in

@@ -3,6 +3,7 @@
 //! here, a `spec_by_name` arm and a re-export in `../mod.rs`.
 
 pub mod c;
+pub mod cpp;
 pub mod go;
 pub mod java;
 pub mod javascript;

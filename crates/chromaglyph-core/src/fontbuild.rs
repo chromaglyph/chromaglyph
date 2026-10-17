@@ -405,7 +405,16 @@ pub fn assemble(
             if !glyf.len().is_multiple_of(2) {
                 glyf.push(0);
             }
-            offsets.extend(loaded.loca_offsets.iter().copied());
+            // the source loca starts with its own leading 0 (loca[0] == 0
+            // by spec) — skip it, the initial `offsets.push(0)` above is
+            // already this font's loca[0]. Extending with all of it double
+            // prefixed the offsets and shifted every source glyph one gid
+            // up: composite component gids inside the verbatim glyf then
+            // pointed at the wrong glyphs (self-references included), and
+            // browsers rejected the whole font at OTS (0.2.2 generic-mode
+            // regression; the rustybuzz oracle only diffs glyph ids and
+            // never walks outlines, so it stayed green)
+            offsets.extend(loaded.loca_offsets.iter().skip(1).copied());
         }
     }
     let last = *offsets.last().expect("loca is never empty");

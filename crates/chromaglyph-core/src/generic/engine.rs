@@ -250,6 +250,14 @@ pub fn synthesize(
         .enumerate()
         .map(|(i, &c)| (c, first_letter_class + i as u16))
         .collect();
+    // digits that appear inside keywords (C++ `char8_t`) carry keyword
+    // classes — they must still OPEN a number after a boundary like any
+    // other digit, or `8;` would stay plain while `48;` colors
+    let digit_letter_classes: Vec<u16> = keyword_letters
+        .iter()
+        .filter(|c| c.is_ascii_digit())
+        .map(|&c| letter_class[&c])
+        .collect();
     next_class += keyword_letters.len() as u16;
     // state classes (exclusive sets of colored copies)
     let str_state: Vec<u16> = (0..spec.strings.len())
@@ -303,10 +311,17 @@ pub fn synthesize(
         }
         let class = if let Some(&id) = char_class.get(&ch) {
             id
+        } else if let Some(&id) = letter_class.get(&ch) {
+            // keyword letters BEFORE the digit test: a digit inside a
+            // keyword (`char8_t`) must carry its keyword class, or the
+            // keyword rule's input sequence can never match what the
+            // shaper sees. For letter-only keywords this is the same
+            // class the is_ident branch below would pick
+            id
         } else if ch.is_ascii_digit() {
             c_digit
         } else if is_ident(ch, spec.ident_extra) {
-            letter_class.get(&ch).copied().unwrap_or(C_IDENT)
+            C_IDENT
         } else {
             C_NOTWORD
         };
@@ -804,12 +819,13 @@ pub fn synthesize(
                 .or_default()
                 .extend(rules.iter().cloned());
         }
-        // a number opens after a word boundary (or at a line start)
-        if class == c_digit && spec.numbers {
+        // a number opens after a word boundary (or at a line start) —
+        // including on keyword-embedded digits' classes (char8_t's 8)
+        if spec.numbers && (class == c_digit || digit_letter_classes.contains(&class)) {
             for &bt in &boundaries {
                 by_class.entry(class).or_default().push(Rule {
                     backtrack: vec![bt],
-                    input: vec![c_digit],
+                    input: vec![class],
                     lookahead: vec![],
                     pal: layout.num,
                 });

@@ -39,7 +39,7 @@ tokenize+theme → compile → fontbuild → verify
 
 - **exact**（`--input`）：内容构建期已知。多语言共用一个字体（全局消歧），
   0.2.2 起字体**只保留代码块实际用到的字形**（真实页面 ~8 倍缩小）。
-- **generic**（`--generic rust|js|ts|python|go|java|c`）：不需要指定内容——
+- **generic**（`--generic rust|js|ts|python|go|java|c|cpp`）：不需要指定内容——
   一个字体高亮该语言的**任意**文本（关键字、注释、字符串、数字），纯靠字形
   替换推进状态，思路即原项目的 FSM，但从语言 spec 自动合成，只需约 100 条
   规则。一语言一字体。着色为行内语义：浏览器对 `pre` 逐行整形，状态在换行处

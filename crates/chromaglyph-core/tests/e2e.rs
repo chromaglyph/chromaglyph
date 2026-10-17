@@ -363,6 +363,7 @@ fn generic_mode_new_languages() {
         (chromaglyph_core::generic::go(), 180),
         (chromaglyph_core::generic::java(), 250),
         (chromaglyph_core::generic::c(), 300),
+        (chromaglyph_core::generic::cpp(), 380),
     ] {
         let out = build(&BuildInput {
             font_bytes: FONT,
@@ -458,6 +459,32 @@ fn generic_mode_adversarial_new_languages() {
             "ifdef include undef define pragma",
             "\nreturn at_line_start\nint at_line_start\n42 at_line_start",
             "sizeof\nsizeof sizex xsizeof",
+        ],
+    );
+    adversarial(
+        &chromaglyph_core::generic::cpp(),
+        &[
+            "'only char'",
+            "\"only string\"",
+            "char q = '\\''; char b = '\\\\';",
+            "char *s = \"a\\\"b\"; char t = 'x';",
+            "'a\"b' \"c'd' e\"",
+            "'' \"\"",
+            "return//c\nint",
+            "\"unterminated string return int",
+            "// 'unterminated' comment return int",
+            "/* unterminated block return int",
+            "classclass class_ _class 1class",
+            // keywords with embedded digits: the digit glyph carries the
+            // keyword class, and still opens numbers after a boundary
+            "char8_tchar8_t char8_t_ _char8_t 1char8_t",
+            "char16_t x; char32_t y; char8_t z = 8;",
+            "8 48 x8 8x 0x18 42 8;",
+            "x = '\"' / \"'\" // \"'\nq = '\\\"'",
+            "#include \"file.h\" // include undef",
+            "namespace template typename operator public private",
+            "\nreturn at_line_start\nclass at_line_start\n42 at_line_start",
+            "nullptr\nnullptr nullptrx xnullptr",
         ],
     );
 }
@@ -694,5 +721,109 @@ fn exact_mode_subsets_the_font() {
     let loca = font.loca(head.index_to_loc_format() == 1).unwrap();
     for gid in 0..maxp.num_glyphs() {
         assert!(loca.get_raw(gid as usize).is_some(), "loca covers {gid}");
+    }
+}
+
+/// 0.2.2 regression, generic mode: the non-subset glyf path
+/// double-prefixed the loca offsets (an initial 0 plus the source loca's
+/// own leading 0), shifting every source glyph one gid up. Composite
+/// component gids inside the verbatim glyf bytes then pointed at the
+/// wrong glyphs — including self-references — and browsers rejected the
+/// whole font at OTS (fallback rendering, console spam), while the
+/// rustybuzz oracle stayed green because it only diffs glyph ids and
+/// never walks outlines. Lock the alignment and the composite graph.
+#[test]
+fn generic_font_glyphs_stay_aligned() {
+    let themes = themes();
+    let spec = chromaglyph_core::generic::rust();
+    let out = build(&BuildInput {
+        font_bytes: FONT,
+        themes: &themes,
+        blocks: &[],
+        run_verify: false,
+        generic: Some(&spec),
+        font_name: None,
+        semantic: None,
+    })
+    .expect("generic build");
+
+    use read_fonts::TableProvider;
+    use write_fonts::types::Tag;
+    let src = read_fonts::FontRef::new(FONT).unwrap();
+    let dst = read_fonts::FontRef::new(&out.ttf).unwrap();
+    let num_src = src.maxp().unwrap().num_glyphs() as usize;
+    let num_dst = dst.maxp().unwrap().num_glyphs() as usize;
+    assert!(num_dst > num_src, "alt copies appended");
+
+    let loca_of = |f: &read_fonts::FontRef<'_>| -> Vec<u32> {
+        let head = f.head().unwrap();
+        let loca = f.loca(head.index_to_loc_format() == 1).unwrap();
+        (0..=f.maxp().unwrap().num_glyphs() as usize)
+            .map(|i| loca.get_raw(i).expect("loca entry"))
+            .collect()
+    };
+    let dloca = loca_of(&dst);
+    assert_eq!(dloca.len(), num_dst + 1, "one offset per glyph plus the end");
+    assert_eq!(dloca[0], 0, "loca starts at 0 (no double prefix)");
+
+    // every source-range glyph is byte-identical at the SAME gid
+    let sloca = loca_of(&src);
+    let sg: &[u8] = src.data_for_tag(Tag::new(b"glyf")).unwrap().as_bytes();
+    let dg: &[u8] = dst.data_for_tag(Tag::new(b"glyf")).unwrap().as_bytes();
+    for gid in 0..num_src {
+        let (a, b) = (sloca[gid] as usize, sloca[gid + 1] as usize);
+        let (c, d) = (dloca[gid] as usize, dloca[gid + 1] as usize);
+        assert_eq!(
+            &sg[a..b],
+            &dg[c..d],
+            "source glyph {gid} must stay at gid {gid} in the output"
+        );
+    }
+
+    // no composite points outside the source range and none is cyclic
+    fn components(glyf: &[u8], loca: &[u32], gid: usize) -> Vec<usize> {
+        let (a, b) = (loca[gid] as usize, loca[gid + 1] as usize);
+        if b <= a + 10 {
+            return Vec::new();
+        }
+        let g = &glyf[a..b];
+        if i16::from_be_bytes([g[0], g[1]]) >= 0 {
+            return Vec::new();
+        }
+        let mut pos = 10;
+        let mut comps = Vec::new();
+        loop {
+            let flags = u16::from_be_bytes([g[pos], g[pos + 1]]);
+            let idx = u16::from_be_bytes([g[pos + 2], g[pos + 3]]) as usize;
+            comps.push(idx);
+            pos += 4;
+            for (bit, size) in [(0x0001u16, 2usize), (0x0002, 2), (0x0008, 2), (0x0040, 4), (0x0080, 2)] {
+                if flags & bit != 0 {
+                    pos += size;
+                }
+            }
+            if flags & 0x0020 == 0 {
+                break;
+            }
+        }
+        comps
+    }
+    for gid in 0..num_src {
+        let comps = components(dg, &dloca, gid);
+        for c in &comps {
+            assert!(
+                *c < num_src,
+                "glyph {gid} component {c} leaves the source range"
+            );
+        }
+        // a component chain must never revisit its starting glyph
+        let mut stack = comps.clone();
+        let mut visited = std::collections::HashSet::new();
+        while let Some(g) = stack.pop() {
+            assert!(g != gid, "composite cycle revisits glyph {gid}");
+            if visited.insert(g) {
+                stack.extend(components(dg, &dloca, g));
+            }
+        }
     }
 }

@@ -172,6 +172,25 @@ int main(void) { // int AFTER a space anchors fine
     for (int i = 0; i < MAX; i++) printf("%d\\n", i); // numbers color
     return 0; /* block comment colors to its closer on this line */
 }`,
+  cpp: `// C++: keywords can carry digits — char8_t colors whole (8 included)
+#include <vector>
+namespace demo { // namespace at column 0 stays plain (no anchor glyph)
+template <typename T> class Stack { // template/typename/class blue
+  public: // access modifiers blue
+    constexpr static std::size_t MAX = 64; // 64 colors as a number
+    void push(const T &value) { items[top_++] = value; }
+    auto size() const noexcept { return top_; }
+  private:
+    std::vector<T> items;
+    char8_t tag = 'x'; char16_t w = 'w';
+};
+} // namespace demo
+int run() {
+    auto *s = new demo::Stack<int>(); // new blue, auto/indented keywords color
+    if (s == nullptr) return 0; // nullptr blue
+    delete s;
+    return sizeof(int) * 2; // numbers color
+}`,
 }
 
 const sections = []
@@ -197,7 +216,7 @@ const genericPage = `<!doctype html><meta charset="utf-8"><title>chromaglyph × 
 </style>
 ${sections.map((s) => `<style>\n${s.css}\n</style>`).join('\n')}
 <h1>chromaglyph × generic mode</h1>
-<p>Seven fonts, zero compiled-in content: each font highlights ANY text of
+<p>Eight fonts, zero compiled-in content: each font highlights ANY text of
 its language — keywords, comments, strings, numbers — via a synthesized
 state machine. Browsers shape every source line as its own run, so the
 highlighting is line-scoped: a keyword colors when the glyphs beside it

@@ -1,6 +1,6 @@
-# Seven languages
+# Eight languages
 
-The seven blocks on this page are batched into **one font** per render
+The eight blocks on this page are batched into **one font** per render
 (cross-language global disambiguation). Every block copies out as plain
 text.
 
@@ -134,5 +134,34 @@ int push(stack_t *s, int value) {
     if (s->top == MAX_STACK || s == NULL) return -1;
     s->items[s->top++] = value;
     return 0; /* block comment closes textually on this line */
+}
+```
+
+## C++
+
+Keywords may carry digits: `char8_t` colors as one word (the digit glyph
+joins the keyword's class and still opens numbers elsewhere). Raw
+strings `R"(...)"` and digit separators `1'000` are deliberately not
+modeled — a glyph FSM cannot know a user-chosen raw delimiter.
+
+```cpp
+#include <vector>
+
+namespace demo {
+template <typename T> class Stack {
+  public:
+    void push(const T &value) { items.emplace_back(value); }
+    auto size() const noexcept { return items.size(); }
+  private:
+    std::vector<T> items;
+};
+}
+
+int run(demo::Stack<int> &s) {
+    constexpr int LIMIT = 64;
+    auto total = s.size() + LIMIT;
+    if (total == 0) return -1;
+    delete nullptr; // never reached — nullptr is a constant, delete blue
+    return sizeof(int) * 2;
 }
 ```

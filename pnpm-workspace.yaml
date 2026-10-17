@@ -2,12 +2,12 @@ packages:
   - crates/chromaglyph-node
   - js/*
 minimumReleaseAgeExclude:
-  - '@chromaglyph/node-darwin-arm64@0.1.0 || 0.2.0 || 0.2.1'
-  - '@chromaglyph/node-darwin-x64@0.2.0 || 0.2.1'
-  - '@chromaglyph/node-linux-arm64-gnu@0.2.0 || 0.2.1'
-  - '@chromaglyph/node-linux-arm64-musl@0.2.0 || 0.2.1'
-  - '@chromaglyph/node-linux-x64-gnu@0.2.0 || 0.2.1'
-  - '@chromaglyph/node-linux-x64-musl@0.2.0 || 0.2.1'
-  - '@chromaglyph/node-win32-x64-msvc@0.2.0 || 0.2.1'
+  - '@chromaglyph/node-darwin-arm64@0.1.0 || 0.2.0 || 0.2.1 || 0.2.2'
+  - '@chromaglyph/node-darwin-x64@0.2.0 || 0.2.1 || 0.2.2'
+  - '@chromaglyph/node-linux-arm64-gnu@0.2.0 || 0.2.1 || 0.2.2'
+  - '@chromaglyph/node-linux-arm64-musl@0.2.0 || 0.2.1 || 0.2.2'
+  - '@chromaglyph/node-linux-x64-gnu@0.2.0 || 0.2.1 || 0.2.2'
+  - '@chromaglyph/node-linux-x64-musl@0.2.0 || 0.2.1 || 0.2.2'
+  - '@chromaglyph/node-win32-x64-msvc@0.2.0 || 0.2.1 || 0.2.2'
 allowBuilds:
   esbuild: true

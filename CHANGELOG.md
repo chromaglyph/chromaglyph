@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+- **fix: generic-mode fonts were rejected by browsers since 0.2.2** (the
+  OTS console spam). The non-subset glyf path in `assemble` prefixed the
+  loca offsets twice (its own leading 0 plus the source loca's), shifting
+  every source glyph one gid up: composite component gids inside the
+  verbatim glyf then pointed at the wrong glyphs — including
+  self-references — and browsers refused the whole font at OTS (console:
+  "Component depth exceeds maxp maxComponentDepth", climbing limits;
+  pages silently fell back to plain monospace — text readable, zero
+  highlighting). The rustybuzz oracle stayed green because it only diffs
+  glyph ids and never walks outlines, and exact-mode fonts were immune
+  (the subset path builds its own offsets). Fixed by skipping the source
+  loca's leading 0; a regression test now locks source glyphs
+  byte-identical at the same gids, the loca entry count, and a
+  composite-cycle walk — it fails on the old bytes. **Upgraders: any
+  `--generic` font built by 0.2.2 is broken in browsers and should be
+  rebuilt** (delete the `.chromaglyph-cache`; the version bump rotates
+  the hash). Verified end-to-end: all eight generic demo fonts load
+  (`document.fonts.check`), colors render, and a vision pass reads the
+  exact sample text off the pixels.
+
+- **generic mode: C++** (`--generic cpp` / `c++` / `cxx`, node
+  `buildFont({generic: 'cpp'})`): C's lexical core plus
+  class/template/namespace keyword groups — control flow, storage types
+  (incl. `auto`, `decltype`, `typename`, the `char8_t`/`char16_t`/
+  `char32_t` family), access modifiers and qualifiers (`public`,
+  `constexpr`, `override`, `final`, …), `new`/`delete`/`this`/
+  `namespace`/`template`/`operator`, preprocessor directive words (same
+  trade-off as C), `true`/`false`/`nullptr`/`NULL`, numbers. Two C++
+  constructs are deliberately not modeled (a glyph FSM cannot see them,
+  same decision class as Python's f-strings): raw strings `R"(...)"` —
+  `R` is a plain identifier, so the quote behaves like a normal escaped
+  string (visually right unless the raw body contains a bare quote,
+  whose closer delimiter is user-chosen and unknowable to the font) —
+  and digit separators `1'000`, where the `'` opens a char-literal
+  state like any other quote. 404 rules / 18 slots on the fixture font;
+  oracle green over curated + spec-derived samples plus a 19-piece
+  adversarial suite.
+
+- **engine: keywords with embedded digits work** — found by the C++
+  oracle the moment `char8_t` entered a keyword list (the first
+  digit-containing keyword in any spec): glyph classification sent
+  digits to the number class before consulting keyword-letter classes,
+  so the keyword rule's input sequence could never match what the
+  shaper sees (`char8_t` stayed plain while the reference lexer colored
+  it — oracle red, loudly). Keyword letters are now classified before
+  the digit test, and keyword-embedded digits' classes also open the
+  number state after a boundary (`8;` colors; `x8` stays plain;
+  `char8_t` colors whole). No behavior change for letter-only keywords.
+
 ## 0.2.2 (2026-10-17)
 
 - **plugins: `grouping: 'page' | 'lang'`** (`@chromaglyph/remark`,
