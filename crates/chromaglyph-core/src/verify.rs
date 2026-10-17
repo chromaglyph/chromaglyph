@@ -137,16 +137,8 @@ pub fn verify_plan(ttf: &[u8], blocks: &[PreparedBlock<'_>], plan: &GlyphPlan) -
                     }
                 }
                 // an unmapped cell: the shaper emits .notdef here (browsers
-                // render it through a fallback font instead); a
-                // run-splitting char renders its own plain glyph in its
-                // own shaping run
-                None => {
-                    if crate::compile::is_run_split(cell.ch) {
-                        cell.gid.unwrap_or(0)
-                    } else {
-                        0
-                    }
-                }
+                // render it through a fallback font instead)
+                None => 0,
             };
             if got != expected {
                 result.fail(format!(

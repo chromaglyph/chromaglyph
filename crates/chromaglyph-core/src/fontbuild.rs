@@ -211,15 +211,6 @@ pub fn subset_glyphs(
             used.insert(g);
         }
     }
-    // run-splitting chars (spaces) render their own glyphs in their own
-    // shaping runs: the DOM text still contains them, so they must ship
-    for cell in &plan.cells {
-        if crate::compile::is_run_split(cell.ch) {
-            if let Some(gid) = cell.gid {
-                used.insert(gid);
-            }
-        }
-    }
     for &(_, _, gid) in variants.iter() {
         used.insert(gid);
     }
