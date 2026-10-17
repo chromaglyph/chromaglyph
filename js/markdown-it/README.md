@@ -115,6 +115,7 @@ pipeline keeps working for anything this plugin skips.
 | `verify` | `true` | Run the rustybuzz oracle over the produced font before shipping it. |
 | `semantic` | `false` | Overlay tree-sitter semantic colors (parameters, variables-as-scoped, types, calls) on top of the syntactic highlighting — rust/js/ts/python/java only; other languages silently stay syntactic. |
 | `cacheDir` | — | Optional on-disk cache directory for incremental site builds. Ignored when `NODE_ENV=development` (dev-server HMR would write one font per intermediate edit state). |
+| `grouping` | `'page'` | `'page'` batches all fences of a render into ONE font; `'lang'` builds one font per language — fences carry `data-chromaglyph-lang` and the CSS scopes each font to its own language's blocks. Editing one language's snippet then rebuilds only that language's font (the others hit the cache), and identical text under different languages can highlight each its own way. Costs one subset base font (~10K) per extra language on a page. |
 
 ## License
 

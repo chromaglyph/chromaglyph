@@ -85,6 +85,28 @@ test('second run hits the content-hash cache', async () => {
   assert.equal(first.data.contentHash, second.data.contentHash)
 })
 
+test("grouping: 'lang' builds one scoped font per language", async () => {
+  clearCache()
+  const { html, data } = await render(MARKDOWN, { font: FONT, grouping: 'lang' })
+  assert.equal(data.grouping, 'lang')
+  assert.equal(data.fonts.length, 2, 'one font per language')
+  const langs = data.fonts.map((f) => f.lang).sort()
+  assert.deepEqual(langs, ['javascript', 'rust'])
+  assert.ok(html.includes('data-chromaglyph-lang="rust"'), 'rust block tagged')
+  assert.ok(html.includes('data-chromaglyph-lang="javascript"'), 'js block tagged')
+  assert.equal((data.css.match(/@font-face/g) || []).length, 2)
+  assert.ok(data.css.includes('[data-chromaglyph-lang="rust"]'))
+  assert.ok(!data.css.includes(':root'), 'aliases are lang-scoped, not :root')
+  // two distinct families, one style tag injected
+  const families = new Set(data.css.match(/font-family: chromaglyph-[0-9a-f]{8}/g))
+  assert.equal(families.size, 2)
+  assert.equal((html.match(/<style>/g) || []).length, 1)
+})
+
+test('grouping rejects unknown values', async () => {
+  await assert.rejects(() => render(MARKDOWN, { font: FONT, grouping: 'nope' }), /unknown grouping/)
+})
+
 test('degrades silently on invalid font input', async () => {
   const file = await unified()
     .use(remarkParse)

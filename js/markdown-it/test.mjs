@@ -162,6 +162,52 @@ test('dev (NODE_ENV=development) skips the disk cache; production writes it', ()
   }
 })
 
+test("grouping: 'lang' ships one scoped font per language", () => {
+  clearCache()
+  const html = makeMd({ grouping: 'lang', style: 'link' }).render(MARKDOWN)
+  // one stylesheet link per language, both injected before the first fence
+  assert.equal((html.match(/<link rel="stylesheet" href="data:text\/css;base64,/g) || []).length, 2)
+  const css = [...html.matchAll(/href="data:text\/css;base64,([^"]+)"/g)]
+    .map((m) => Buffer.from(m[1], 'base64').toString('utf8'))
+    .join('\n')
+  assert.equal((css.match(/@font-face/g) || []).length, 2, 'one font-face per language')
+  assert.ok(html.includes('<pre v-pre data-chromaglyph="0" data-chromaglyph-lang="rust"'), 'rust fence tagged')
+  assert.ok(html.includes('data-chromaglyph-lang="javascript"'), 'js fence tagged')
+  assert.ok(css.includes('[data-chromaglyph-lang="rust"]'), 'rust rules scoped')
+  assert.ok(css.includes('[data-chromaglyph-lang="javascript"]'), 'js rules scoped')
+  // palette aliases live on the lang scope, not :root, so the fonts never
+  // fight over the alias names
+  assert.ok(!css.includes(':root'), 'no :root aliases in lang mode')
+  assert.ok(css.includes('[data-chromaglyph-lang="rust"] {\n  --chromaglyph-dark-palette:'))
+  // two distinct families
+  const families = new Set(css.match(/font-family: chromaglyph-[0-9a-f]{8}/g))
+  assert.equal(families.size, 2)
+  // introspection: one BuildResult per language
+  const md2 = makeMd({ grouping: 'lang' })
+  md2.render(MARKDOWN)
+  assert.equal(md2.chromaglyph().length, 2)
+})
+
+test("grouping: 'lang' rebuilds only the edited language's font", () => {
+  clearCache()
+  const md = makeMd({ grouping: 'lang' })
+  const page = (rustBody) => `\`\`\`rust\n${rustBody}\n\`\`\`\n\n\`\`\`javascript\nconst n = 42; // the answer\n\`\`\`\n`
+  md.render(page('let a = 1;'))
+  const first = md.chromaglyph().map((r) => r.contentHash)
+  md.render(page('let a = 1;'))
+  assert.ok(md.chromaglyph().every((r) => r.cached), 'unchanged page hits the cache')
+  md.render(page('let a = 2;'))
+  const after = md.chromaglyph()
+  assert.equal(after[0].cached, false, 'edited rust group rebuilds')
+  assert.equal(after[1].cached, true, 'untouched js group hits the cache')
+  assert.notEqual(after[0].contentHash, first[0])
+  assert.equal(after[1].contentHash, first[1])
+})
+
+test('grouping rejects unknown values', () => {
+  assert.throws(() => makeMd({ grouping: 'nope' }), /unknown grouping/)
+})
+
 test('semantic option produces its own build (distinct hash)', () => {
   const md = new MarkdownIt({ html: true })
   md.use(chromaglyph, { font: FONT, verify: false })

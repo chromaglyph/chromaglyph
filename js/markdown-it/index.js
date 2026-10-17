@@ -16,9 +16,12 @@
  * ```
  *
  * All fenced code blocks of one `md.render()` call are batched into ONE
- * font; `font-family` is scoped to `[data-chromaglyph]` so prose is never
- * affected; failures degrade silently (no stylesheet, normal rendering);
- * builds are content-hash cached.
+ * font (`grouping: 'page'`, the default), or one font per language
+ * (`grouping: 'lang'` — fences carry `data-chromaglyph-lang` and the CSS
+ * scopes each font to its own language's blocks); `font-family` is scoped
+ * to `[data-chromaglyph]` so prose is never affected; failures degrade
+ * silently (no stylesheet, normal rendering); builds are content-hash
+ * cached.
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
@@ -38,6 +41,7 @@ import { buildCssAssets } from '@chromaglyph/node/css'
  *  semantic?: boolean,
  *  cacheDir?: string,   // on-disk cache for cross-process builds; ignored when NODE_ENV=development
  *  cwd?: string,
+ *  grouping?: 'page' | 'lang',
  * }} [options]
  */
 function markdownItChromaglyph(md, options = {}) {
@@ -57,10 +61,18 @@ function markdownItChromaglyph(md, options = {}) {
     semantic = false,
     cacheDir,
     cwd = process.cwd(),
+    // 'page'（默认）：整页所有代码块合成一个字体；'lang'：按语言分组，一语言
+    // 一字体（fence 带 data-chromaglyph-lang，CSS 按语言 scope）。改某语言的
+    // 片段只重建该语言的字体，其余语言命中缓存；不同语言的相同文本也可各自
+    // 着色。代价是每多一种语言多一份（子集化后 ~10K 的）基础字体。
+    grouping = 'page',
   } = options
 
   if (!font) {
     throw new Error('markdownItChromaglyph: the `font` option (path or buffer of a static TTF) is required')
+  }
+  if (grouping !== 'page' && grouping !== 'lang') {
+    throw new Error(`markdownItChromaglyph: unknown grouping '${grouping}' (expected 'page' or 'lang')`)
   }
 
   // The disk cache exists for cross-process builds (CI, `vitepress build`).
@@ -82,11 +94,30 @@ function markdownItChromaglyph(md, options = {}) {
       ? font
       : readFileSync(isAbsolute(String(font)) ? String(font) : resolve(cwd, String(font)))
 
+  // fence 语言要进 HTML 属性和 CSS 选择器,收窄到肯定安全的字符集
+  const scopeValue = (lang) => lang.replace(/[^a-zA-Z0-9_+#.-]/g, '') || 'x'
+
+  // stylesheet tag for one build (inline <style>, data-URI <link>, or a
+  // written-out css file + <link>); per-language mode concatenates one
+  // tag per font, the page mode emits exactly one
+  const styleTag = (assets) => {
+    if (style === 'link') {
+      if (embed) {
+        return `<link rel="stylesheet" href="data:text/css;base64,${Buffer.from(assets.css).toString('base64')}">`
+      }
+      writeFileSync(resolve(cwd, outDir, `chromaglyph-${assets.hash8}.css`), assets.css)
+      return `<link rel="stylesheet" href="./chromaglyph-${assets.hash8}.css">`
+    }
+    return `<style>\n${assets.css}</style>`
+  }
+
   // per-render context consumed by the fence renderer below; saved and
   // restored so nested md.render calls (e.g. snippet includes) stay isolated
   let current = null
-  // last successful build, for tests/introspection after render finished
+  // last successful build(s): one BuildResult (page mode) or one per
+  // language (lang mode), for tests/introspection after render finished
   let lastResult = null
+  let lastResults = null
 
   const origRender = md.render.bind(md)
   md.render = (src, env) => {
@@ -102,30 +133,56 @@ function markdownItChromaglyph(md, options = {}) {
       blocks.push({ id: `block-${blocks.length}`, lang, text: token.content })
     }
 
-    // phase 2: one batched build; silent degradation on failure
+    // phase 2: builds; silent degradation on failure (one font read per
+    // render, shared by every language group)
+    const fontBytes = loadFont()
+    const emit = (group, scope) => {
+      const built = buildFontSafe({ font: fontBytes, themes, blocks: group, verify, semantic, cacheDir: diskCache })
+      if (!built) return null
+      const assets = buildCssAssets(built, { embed, outDir, cwd, ...(scope ? { lang: scope } : {}) })
+      return { built, tag: styleTag(assets) }
+    }
+
     let css = null
     let result = null
+    let results = null
     if (blocks.length > 0) {
-      result = buildFontSafe({ font: loadFont(), themes, blocks, verify, semantic, cacheDir: diskCache })
-      if (result) {
-        const assets = buildCssAssets(result, { embed, outDir, cwd })
-        if (style === 'link') {
-          if (embed) {
-            css = `<link rel="stylesheet" href="data:text/css;base64,${Buffer.from(assets.css).toString('base64')}">`
-          } else {
-            writeFileSync(resolve(cwd, outDir, `chromaglyph-${assets.hash8}.css`), assets.css)
-            css = `<link rel="stylesheet" href="./chromaglyph-${assets.hash8}.css">`
-          }
-        } else {
-          css = `<style>\n${assets.css}</style>`
+      if (grouping === 'lang') {
+        // group by language in first-appearance order; plain blocks form
+        // their own zero-rule group; one failing language never takes the
+        // others down
+        const byLang = new Map()
+        for (const block of blocks) {
+          if (!byLang.has(block.lang)) byLang.set(block.lang, [])
+          byLang.get(block.lang).push(block)
         }
-        lastResult = result
+        results = []
+        const tags = []
+        for (const [lang, group] of byLang) {
+          const made = emit(
+            group.map((b, i) => ({ id: `block-${i}`, lang: b.lang, text: b.text })),
+            scopeValue(lang),
+          )
+          if (!made) continue
+          results.push(made.built)
+          tags.push(made.tag)
+        }
+        if (results.length === 0) results = null
+        if (tags.length > 0) css = tags.join('\n')
+      } else {
+        const made = emit(blocks)
+        if (made) {
+          result = made.built
+          css = made.tag
+        }
       }
     }
+    lastResult = result
+    lastResults = results
 
     // phase 3: render from the already-parsed tokens with our fence rule
     const previous = current
-    current = { css, result, fenceIndex, injected: false }
+    current = { css, result, results, fenceIndex, injected: false }
     try {
       return md.renderer.render(tokens, md.options, env)
     } finally {
@@ -144,9 +201,11 @@ function markdownItChromaglyph(md, options = {}) {
     if (!current.fenceIndex.has(token)) return base
     const index = current.fenceIndex.get(token)
     // v-pre：Vue 系框架按模板编译 markdown 产物，代码里的 {{ }} 会被当成
-    // 插值；纯 HTML 管线里它只是一个无害的自定义属性
+    // 插值；纯 HTML 管线里它只是一个无害的自定义属性。lang 分组模式下
+    // 额外携带语言标记，CSS 据此把每语言的字体 scope 到自己的代码块
+    const scopeAttr = grouping === 'lang' ? ` data-chromaglyph-lang="${scopeValue(String(token.info || '').trim().split(/\s+/)[0] || 'plain')}"` : ''
     let out = base.includes('<pre')
-      ? base.replace('<pre', `<pre v-pre data-chromaglyph="${index}"`)
+      ? base.replace('<pre', `<pre v-pre data-chromaglyph="${index}"${scopeAttr}`)
       : base
     if (!current.injected && current.css) {
       current.injected = true
@@ -155,8 +214,8 @@ function markdownItChromaglyph(md, options = {}) {
     return out
   }
 
-  // expose the last successful build result for tests/introspection
-  md.chromaglyph = () => lastResult
+  // expose the last successful build result(s) for tests/introspection
+  md.chromaglyph = () => (grouping === 'lang' ? lastResults : lastResult)
 }
 
 export { markdownItChromaglyph }

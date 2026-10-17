@@ -2,13 +2,15 @@
  * @chromaglyph/remark — highlight code blocks by compiling them into a
  * chromaglyph color font.
  *
- * All fenced code blocks of a document are batched into ONE font (global
- * disambiguation across languages is handled by the engine). The generated
- * CSS scopes `font-family` to `[data-chromaglyph]`, so prose and code the
- * font was not built for are never affected. Builds are content-hash cached
- * (in-process + optional on-disk), and any failure degrades silently: the
- * document renders without font-based highlighting instead of breaking the
- * site build.
+ * All fenced code blocks of a document are batched into ONE font
+ * (`grouping: 'page'`, the default) with global disambiguation handled by
+ * the engine, or one font per language (`grouping: 'lang'` — code blocks
+ * carry `data-chromaglyph-lang` and the CSS scopes each font to its own
+ * language). The generated CSS scopes `font-family` to `[data-chromaglyph]`,
+ * so prose and code the font was not built for are never affected. Builds
+ * are content-hash cached (in-process + optional on-disk), and any failure
+ * degrades silently: the document renders without font-based highlighting
+ * instead of breaking the site build.
  *
  * ```js
  * unified().use(remarkParse).use(remarkChromaglyph, { font: './JBM.ttf' })
@@ -32,6 +34,7 @@ import { buildCssAssets } from '@chromaglyph/node/css'
  *   verify?: boolean,
  *   semantic?: boolean,
  *   cacheDir?: string, // on-disk cache for cross-process builds; ignored when NODE_ENV=development
+ *   grouping?: 'page' | 'lang',
  * }} [options]
  */
 function remarkChromaglyph(options = {}) {
@@ -44,10 +47,17 @@ function remarkChromaglyph(options = {}) {
     verify = true,
     semantic = false,
     cacheDir,
+    // 'page'（默认）：整篇文档合成一个字体；'lang'：按语言分组，一语言一
+    // 字体（<pre> 带 data-chromaglyph-lang，CSS 按语言 scope）——改某语言
+    // 的片段只重建该语言字体，不同语言的相同文本也可各自着色。
+    grouping = 'page',
   } = options
 
   if (!font) {
     throw new Error('remarkChromaglyph: the `font` option (path or buffer of a static TTF) is required')
+  }
+  if (grouping !== 'page' && grouping !== 'lang') {
+    throw new Error(`remarkChromaglyph: unknown grouping '${grouping}' (expected 'page' or 'lang')`)
   }
 
   // The disk cache exists for cross-process builds (CI, static site
@@ -63,6 +73,9 @@ function remarkChromaglyph(options = {}) {
     )
   }
 
+  // fence 语言要进 HTML 属性和 CSS 选择器,收窄到肯定安全的字符集
+  const scopeValue = (lang) => lang.replace(/[^a-zA-Z0-9_+#.-]/g, '') || 'x'
+
   return async (tree, file) => {
     const blocks = []
     visit(tree, 'code', (node) => {
@@ -73,6 +86,9 @@ function remarkChromaglyph(options = {}) {
       node.data = node.data || {}
       node.data.hProperties = node.data.hProperties || {}
       node.data.hProperties['data-chromaglyph'] = String(index)
+      if (grouping === 'lang') {
+        node.data.hProperties['data-chromaglyph-lang'] = scopeValue(lang)
+      }
     })
     if (blocks.length === 0) return
 
@@ -80,12 +96,65 @@ function remarkChromaglyph(options = {}) {
       ? font
       : readFileSync(isAbsolute(String(font)) ? String(font) : resolve(file.cwd || '.', String(font)))
 
+    // one build per language (first-appearance order), each scoped to its
+    // own blocks; one failing language never takes the others down
+    const build = (group, scope) => {
+      const result = buildFontSafe({
+        font: fontBytes,
+        themes,
+        blocks: group.map((b, i) => ({ id: `block-${i}`, lang: b.lang, text: b.text })),
+        verify,
+        semantic,
+        cacheDir: diskCache,
+      })
+      if (!result) return null
+      return { result, assets: buildCssAssets(result, { embed, outDir, cwd: file.cwd || process.cwd(), ...(scope ? { lang: scope } : {}) }) }
+    }
+
+    if (grouping === 'lang') {
+      const byLang = new Map()
+      for (const block of blocks) {
+        if (!byLang.has(block.lang)) byLang.set(block.lang, [])
+        byLang.get(block.lang).push(block)
+      }
+      const fonts = []
+      for (const [lang, group] of byLang) {
+        const made = build(group, scopeValue(lang))
+        if (!made) continue
+        const report = JSON.parse(made.result.report)
+        fonts.push({
+          lang,
+          cached: made.result.cached,
+          contentHash: made.result.contentHash,
+          css: made.assets.css,
+          fontUrl: made.assets.fontUrl,
+          family: made.assets.family,
+          warnings: report.warnings || [],
+        })
+      }
+      if (fonts.length === 0) return
+      const css = fonts.map((f) => f.css).join('\n')
+      tree.children.unshift({ type: 'html', value: `<style>\n${css}</style>` })
+      file.data.chromaglyph = {
+        grouping: 'lang',
+        fonts,
+        css,
+        embed,
+        outDir: embed ? null : outDir,
+      }
+      for (const f of fonts) {
+        for (const warning of f.warnings) {
+          file.message(`chromaglyph: ${warning}`)
+        }
+      }
+      return
+    }
+
     // silent degradation: any failure returns null and the document renders
     // with its usual (uncolored) code styling
-    const result = buildFontSafe({ font: fontBytes, themes, blocks, verify, semantic, cacheDir: diskCache })
-    if (!result) return
-
-    const assets = buildCssAssets(result, { embed, outDir, cwd: file.cwd || process.cwd() })
+    const made = build(blocks)
+    if (!made) return
+    const { result, assets } = made
 
     // inject the stylesheet as the document's first node; pipelines must
     // keep raw html (remarkRehype + rehypeStringify with allowDangerousHtml,

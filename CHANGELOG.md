@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+- **plugins: `grouping: 'page' | 'lang'`** (`@chromaglyph/remark`,
+  `@chromaglyph/markdown-it`, default `'page'`): opt into one font per
+  language instead of one per document. Fences carry
+  `data-chromaglyph-lang` and the generated CSS scopes each font (and its
+  palette aliases) to its own language's blocks, so several fonts coexist
+  on one page while a site-level `--chromaglyph-palette` /
+  `--chromaglyph-bg` still overrides every scope. Editing one language's
+  snippet rebuilds only that language's font — the others hit the cache —
+  and identical text under different languages can now highlight each
+  its own way (impossible in one font, where the same glyph sequence
+  always substitutes identically). Per-language failures degrade
+  per-language. Post-subsetting the cost is ~10K of base font per extra
+  language on a page; `md.chromaglyph()` returns one `BuildResult` per
+  language and remark's `file.data.chromaglyph` gains `{ grouping:
+  'lang', fonts: [...] }` in this mode.
+
+- **glyph subsetting (exact mode)**: the produced font now ships only the
+  glyphs the blocks' text resolves to — plus `.notdef` and the transitive
+  components of composite glyphs — renumbered and rewritten consistently
+  through cells, classes, alt copies, hmtx, COLR and the generated GSUB.
+  The cmap is rebuilt from the survivors and re-emits the used cmap14
+  variation sequences as a format-14 subtable, so `base + VS` text keeps
+  resolving to its variant glyph (e2e-tested). Real pages drop ~8x: the
+  demo's 7-language page goes from ~106K to ~15K woff (base64-embedded
+  into HTML: ~142K → ~20K), a typical 3-language page from ~105K to
+  ~13K. Generic mode keeps the full charset (its font must highlight any
+  text); source fonts carrying other glyph-referencing tables (embedded
+  bitmaps, SVG, an existing COLR, MATH) skip subsetting and ship whole,
+  exactly as before. `Report.total_glyphs` is now the produced font's
+  count (subset + colored copies); `source_glyphs` keeps describing the
+  source font. Note: the content hash covers inputs, not engine bytes —
+  caches built from a source snapshot between 0.2.1 and this change share
+  hashes with subset builds; delete such a `.chromaglyph-cache` once.
+
 - **generic mode: C** (`--generic c`, node `buildFont({generic: 'c'})`):
   `"` strings and `'` char literals with escapes, both comment kinds,
   control-flow / storage-type / storage-modifier keyword groups,
