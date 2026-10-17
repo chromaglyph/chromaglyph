@@ -28,20 +28,19 @@
 - **reverted: the "coloring stopped at spaces in browsers" fix was
   wrong** — an earlier 0.2.3 entry here (since removed) claimed browsers
   split shaping runs at spaces and lost cross-space coloring, based on
-  canvas/span probes. That is only true for *wrappable* text
-  (`white-space: normal`/`pre-wrap`): in `white-space: pre` — the
-  context of every real code block — Blink shapes whole lines and
-  cross-space contextual rules apply, so every released version's
-  comments/strings colored correctly all along (verified in Chromium
-  with a minimal-GSUB probe matrix and DOM pixel counts). The
-  space-as-barrier change caused widespread false degradation
-  (comment/keyword words colliding with code vocabulary lost their
-  color) and has been reverted; degradation counts on the demo site are
-  back to zero. What remains true: applying the font to *wrapping* text
-  degrades coloring to space-free segments, documented as a known
-  limitation, and the smoke test now renders in a real `white-space:
-  pre` element so the oracle measures the context code blocks actually
-  use.
+  canvas/span probes. Neither was representative: DOM rendering
+  carries spaces through shaping in every `white-space` mode
+  (pre/normal/pre-wrap — the original "normal breaks it" probe text
+  started with a space, which CSS strips at line start, so the rule's
+  backtrack glyph never existed), and cross-space contextual rules
+  apply everywhere in the DOM. Only `canvas fillText` splits shaping at
+  spaces. Every released version's comments/strings colored correctly
+  in real pages all along; the space-as-barrier change caused
+  widespread false degradation and has been reverted (degradation on
+  the demo site: 65 occurrences → zero). The known limitation is now
+  stated accurately (canvas fillText only), and the smoke test renders
+  in a real DOM element so the oracle measures what pages actually
+  do.
 
 - **browser smoke test** (`pnpm smoke`, `scripts/browser-smoke.mjs`, new
   `browser-smoke.yml` CI job): builds fonts with the CLI, loads them in
