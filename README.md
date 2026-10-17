@@ -174,14 +174,10 @@ per-version known limitations.
 - Static TrueType input only; WOFF1 output only.
 - Generic mode is line-scoped (see above) and one language per font —
   merging languages would color `type` in a Rust block via TS rules.
-- DOM rendering is fully supported in every `white-space` mode
-  (`pre`, `normal`, `pre-wrap`): contextual rules see across spaces.
-  `canvas fillText` is the exception — Chromium splits the shaping
-  there at spaces, so coloring degrades to the space-free segments;
-  render highlighted code as text, not as canvas draws. Generic mode
-  keywords/numbers need a preceding in-line boundary glyph, so a
-  keyword at the very start of a line stays plain (a designed limit of
-  the in-font lexer; everything after it colors normally).
+- Generic mode keywords/numbers need a preceding in-line boundary
+  glyph, so a keyword at the very start of a line stays plain (a
+  designed limit of the in-font lexer; everything after it colors
+  normally).
 
 ## Size comparison (`examples/hello.rs`, 114 chars, two themes)
 

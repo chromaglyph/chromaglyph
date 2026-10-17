@@ -37,10 +37,8 @@
   spaces. Every released version's comments/strings colored correctly
   in real pages all along; the space-as-barrier change caused
   widespread false degradation and has been reverted (degradation on
-  the demo site: 65 occurrences → zero). The known limitation is now
-  stated accurately (canvas fillText only), and the smoke test renders
-  in a real DOM element so the oracle measures what pages actually
-  do.
+  the demo site: 65 occurrences → zero). The smoke test renders in a
+  real DOM element so the oracle measures what pages actually do.
 
 - **browser smoke test** (`pnpm smoke`, `scripts/browser-smoke.mjs`, new
   `browser-smoke.yml` CI job): builds fonts with the CLI, loads them in

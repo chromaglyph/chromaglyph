@@ -153,11 +153,8 @@ const file = await unified()
 - 只收静态 TrueType；只出 WOFF1。
 - generic 模式为行内语义（见上）、一语言一字体——合并语言会让 TS 的 `type`
   给 Rust 块里的 `type` 上色。
-- DOM 渲染在所有 `white-space` 模式（pre/normal/pre-wrap）下都完整支持：
-  上下文规则可以跨空格匹配。唯一例外是 `canvas fillText`——Chromium 在
-  canvas 里按空格切分 shaping，着色会退化为空格分隔的片段；高亮代码请用
-  文本渲染而非 canvas 绘制。通用模式的关键词/数字需要行内有前置边界字形，
-  行首关键字保持无色（字体内置词法器的既有限制，其后内容正常着色）。
+- 通用模式的关键词/数字需要行内有前置边界字形，行首关键字保持无色
+  （字体内置词法器的既有限制，其后内容正常着色）。
 
 ## 尺寸对比（examples/hello.rs，114 字符，双主题）
 
