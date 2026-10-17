@@ -8,8 +8,16 @@
  * browser uses, and samples rendered pixels against the Dark+ palette:
  *
  *   1. document.fonts.check()  — the font survives OTS sanitization
- *   2. canvas pixel probes     — keywords/strings/comments actually paint
- *      in their theme colors (dark-plus: #569cd6 / #ce9178 / #6a9955)
+ *   2. <pre> pixel probes      — keywords/strings/comments/numbers paint
+ *      in their theme colors (dark-plus: #569cd6 / #ce9178 / #6a9955 /
+ *      #b5cea8)
+ *
+ * Rendering happens inside a `white-space: pre` element — the context of
+ * every real code block. That distinction matters: Blink splits shaping
+ * runs at spaces only in wrappable text (white-space: normal/pre-wrap,
+ * and canvas fillText); in pre-formatted text cross-space contextual
+ * rules apply, which is what chromaglyph's rules rely on. Measuring in
+ * canvas would under-color on purpose.
  *
  * Three fonts cover the layout paths: exact mode (subset), exact mode
  * with --ligatures (restore rules + subset), and generic rust (full
@@ -26,44 +34,31 @@ const bin = process.env.CHROMAGLYPH_BIN
   ?? resolve(root, 'target/release/chromaglyph')
 const font = resolve(root, 'crates/chromaglyph-core/tests/fixtures/JetBrainsMono-Regular.ttf')
 
+// note: generic-mode keywords need a preceding in-line boundary glyph
+// (line starts have none — a designed limitation of the FSM), so the
+// sample carries mid-line keywords too
 const SAMPLE = `// chromaglyph browser smoke
 fn main() {
-    let msg = "hello browser";
-    let n = 42;
+    let msg = "hello browser"; let n = 42;
     println!("{} {}", msg, n); // -> != <=
 }
 `
 
-
-// Dark+ palette anchors the pixel probes (stable VS Code colors). Exact
-// mode anchors keywords by content, so line-start `fn`/`let` color there;
-// generic mode's FSM needs a boundary glyph on both sides of a keyword,
-// so its probes cover strings/comments/numbers instead.
-// probe floors: before the run-split fix, only the first space-free
-// segment of a string/comment colored (457/117px); healthy full-span
-// coloring is ~1.6KB/850px — the floor sits well above the broken value
-const EXACT_PROBES = [
-  { name: 'keyword blue', css: '#569cd6', min: 800 },
-  { name: 'string orange', css: '#ce9178', min: 900 },
-  { name: 'comment green', css: '#6a9955', min: 400 },
-]
-// generic mode: keywords/numbers need cross-space anchoring the browser
-// cannot provide (runs split at spaces) — a known limitation pending an
-// engine revision; strings/comments color within their first run
-const GENERIC_PROBES = [
+const PROBES = [
+  { name: 'keyword blue', css: '#569cd6' },
   { name: 'string orange', css: '#ce9178' },
   { name: 'comment green', css: '#6a9955' },
+  { name: 'number green', css: '#b5cea8' },
 ]
 
 const CASES = [
-  { id: 'exact', args: ['--input', resolve(root, 'examples/hello.rs')], probes: EXACT_PROBES },
+  { id: 'exact', args: ['--input', resolve(root, 'examples/hello.rs')] },
   {
     id: 'exact-lig',
     args: ['--input', resolve(outDir, 'sample.rs'), '--ligatures'],
     text: SAMPLE,
-    probes: EXACT_PROBES,
   },
-  { id: 'generic', args: ['--generic', 'rust'], probes: GENERIC_PROBES },
+  { id: 'generic', args: ['--generic', 'rust'] },
 ]
 
 function buildFont({ id, args, text }) {
@@ -81,47 +76,25 @@ function buildFont({ id, args, text }) {
 async function main() {
   mkdirSync(outDir, { recursive: true })
 
-  // the probe page: loads the font, waits for OTS, then renders the sample
-  // on a canvas at a size where colored pixel cores are unambiguous
-  const pageHtml = (woffName) => `<!doctype html>
-<meta charset="utf-8">
-<style>
-@font-face {
-  font-family: 'chromaglyph';
-  src: url('${woffName}') format('woff');
-}
-body { background: #1e1e1e; margin: 0; }
-</style>
-<canvas id="c" width="1400" height="400"></canvas>
-<script>
-// classic script: ES modules are blocked on file:// (opaque origin CORS)
-const SAMPLE = ${JSON.stringify(SAMPLE)}
-const canvas = document.getElementById('c')
-const ctx = canvas.getContext('2d', { willReadFrequently: true })
-window.probe = async () => {
-  await document.fonts.load("48px chromaglyph")
-  await document.fonts.ready
-  const loaded = document.fonts.check('48px chromaglyph')
-  ctx.fillStyle = '#1e1e1e'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-  ctx.font = '48px chromaglyph, monospace'
-  ctx.textBaseline = 'top'
-  const lines = SAMPLE.split('\\n')
-  for (const [i, line] of lines.entries()) ctx.fillText(line, 16, 16 + i * 60)
-  return { loaded, data: ctx.getImageData(0, 0, canvas.width, canvas.height).data }
-}
-</script>`
-
   const browser = await chromium.launch()
   let failures = 0
   try {
     for (const case_ of CASES) {
       const woff = buildFont(case_)
-      const html = resolve(outDir, `${case_.id}.html`)
-      writeFileSync(html, pageHtml(`${case_.id}.woff`))
-      const page = await browser.newPage()
-      await page.goto(`file://${html}`)
-      const { loaded, data } = await page.evaluate(() => window.probe())
+      const page = await browser.newPage({ viewport: { width: 1400, height: 400 } })
+      const body = `<style>body{margin:0;background:#1e1e1e;font-size:40px}pre{white-space:pre;margin:0}</style><pre id="a">${SAMPLE.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`
+      // encodeURIComponent keeps newlines (and #, &) alive through the
+      // data: URL — raw newlines are stripped, &#10; is cut at the #
+      await page.goto('data:text/html,' + encodeURIComponent(body))
+      const loaded = await page.evaluate(async (b64) => {
+        const face = new FontFace('chromaglyph', 'url(data:font/woff;base64,' + b64 + ')')
+        await face.load()
+        document.fonts.add(face)
+        document.getElementById('a').style.fontFamily = 'chromaglyph'
+        await document.fonts.ready
+        await new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)))
+        return document.fonts.check('40px chromaglyph')
+      }, readFileSync(woff).toString('base64'))
 
       if (!loaded) {
         console.error(`FAIL ${case_.id}: the browser refused the font (OTS rejection)`)
@@ -129,20 +102,44 @@ window.probe = async () => {
         await page.close()
         continue
       }
-      const counts = case_.probes.map((probe) => {
-        const [r, g, b] = [1, 3, 5].map((i) => parseInt(probe.css.slice(i, i + 2), 16))
-        let n = 0
-        for (let p = 0; p < data.length; p += 4) {
-          if (
-            Math.abs(data[p] - r) <= 32 &&
-            Math.abs(data[p + 1] - g) <= 32 &&
-            Math.abs(data[p + 2] - b) <= 32
-          )
-            n++
-        }
-        return { name: probe.name, n }
-      })
-      const missing = counts.filter((c) => c.n < (case_.probes.find((p) => p.name === c.name).min ?? 20))
+      // pixel-probe the DOM rendering itself: screenshot the <pre>, decode
+      // and count pixels near each palette color — the glyphs must come
+      // from the font, laid out by the real text stack
+      const shot = await page.screenshot()
+      const counts = await page.evaluate(
+        (args) => {
+          const [b64, probeList] = args
+          const img = new Image()
+          const done = new Promise((ok) => {
+            img.onload = ok
+            img.src = 'data:image/png;base64,' + b64
+          })
+          return done.then(() => {
+            const c = document.createElement('canvas')
+            c.width = img.width
+            c.height = img.height
+            const ctx = c.getContext('2d', { willReadFrequently: true })
+            ctx.drawImage(img, 0, 0)
+            const d = ctx.getImageData(0, 0, c.width, c.height).data
+            return probeList.map(({ name, css }) => {
+              const [r, g, b] = [1, 3, 5].map((i) => parseInt(css.slice(i, i + 2), 16))
+              let n = 0
+              for (let p = 0; p < d.length; p += 4) {
+                if (
+                  Math.abs(d[p] - r) <= 32 &&
+                  Math.abs(d[p + 1] - g) <= 32 &&
+                  Math.abs(d[p + 2] - b) <= 32
+                )
+                  n++
+              }
+              return { name, n }
+            })
+          })
+        },
+        [shot.toString('base64'), PROBES],
+      )
+
+      const missing = counts.filter((c) => c.n < 20)
       if (missing.length > 0) {
         console.error(
           `FAIL ${case_.id}: font loads but colors do not render: ` +

@@ -4,12 +4,54 @@
 
 - **browser smoke test** (`pnpm smoke`, `scripts/browser-smoke.mjs`, new
   `browser-smoke.yml` CI job): builds fonts with the CLI, loads them in
-  headless Chromium through the real FontFace/OTS path, and samples
-  rendered pixels against the Dark+ palette — the check the rustybuzz
-  oracle cannot make. It caught two shipped-on-sight bugs on its first
-  run (below); pixel-count floors now pin cross-space coloring so a
-  regression fails CI. Covers exact mode, exact mode with --ligatures,
-  and generic rust.
+  headless Chromium through the real FontFace/OTS path, renders the
+  sample inside a `white-space: pre` element (the context real code
+  blocks use) and samples rendered pixels against the Dark+ palette —
+  the check the rustybuzz oracle cannot make. It caught a
+  shipped-on-sight bug on its first run (the composite-flag rejection
+  below). Covers exact mode, exact mode with --ligatures, and generic
+  rust.
+
+- **fix: exact-mode subsets were browser-rejected since 0.2.2** — the
+  composite walker followed the wrong flag bit layout (MORE_COMPONENTS
+  0x0010 instead of 0x0020; scale flags 0x0020/0x0040 instead of
+  0x0040/0x0080 — every implementation numbers them the Apple way:
+  OTS/Chrome, FreeType, fonttools). Multi-component composites were
+  truncated at the first component, so the subset dropped real
+  components and left un-remapped gids pointing past the subset
+  ("Invalid glyph id used in composite glyph" at OTS; whole-font
+  rejection, silent fallback to plain monospace). The fixture carries
+  385 apple-layout composites; the rustybuzz oracle never walks
+  outlines, so e2e stayed green. **Upgraders: rebuild any 0.2.2/0.2.3
+  exact-mode font.**
+
+- **reverted: the "coloring stopped at spaces in browsers" fix was
+  wrong** — an earlier 0.2.3 entry here (since removed) claimed browsers
+  split shaping runs at spaces and lost cross-space coloring, based on
+  canvas/span probes. That is only true for *wrappable* text
+  (`white-space: normal`/`pre-wrap`): in `white-space: pre` — the
+  context of every real code block — Blink shapes whole lines and
+  cross-space contextual rules apply, so every released version's
+  comments/strings colored correctly all along (verified in Chromium
+  with a minimal-GSUB probe matrix and DOM pixel counts). The
+  space-as-barrier change caused widespread false degradation
+  (comment/keyword words colliding with code vocabulary lost their
+  color) and has been reverted; degradation counts on the demo site are
+  back to zero. What remains true: applying the font to *wrapping* text
+  degrades coloring to space-free segments, documented as a known
+  limitation, and the smoke test now renders in a real `white-space:
+  pre` element so the oracle measures the context code blocks actually
+  use.
+
+- **browser smoke test** (`pnpm smoke`, `scripts/browser-smoke.mjs`, new
+  `browser-smoke.yml` CI job): builds fonts with the CLI, loads them in
+  headless Chromium through the real FontFace/OTS path, renders the
+  sample inside a `white-space: pre` element (the context real code
+  blocks use) and samples rendered pixels against the Dark+ palette —
+  the check the rustybuzz oracle cannot make. It caught a
+  shipped-on-sight bug on its first run (the composite-flag rejection
+  below). Covers exact mode, exact mode with --ligatures, and generic
+  rust.
 
 - **fix: exact-mode subsets were browser-rejected since 0.2.2** — the
   composite walker followed the wrong flag bit layout (MORE_COMPONENTS

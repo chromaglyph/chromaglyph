@@ -174,14 +174,14 @@ per-version known limitations.
 - Static TrueType input only; WOFF1 output only.
 - Generic mode is line-scoped (see above) and one language per font —
   merging languages would color `type` in a Rust block via TS rules.
-- Browsers split shaping runs at spaces, and no contextual rule can see
-  across one. Exact mode treats spaces as barriers (coloring splits
-  around them; duplicates distinguishable only across a space degrade
-  with a warning). Generic mode's keyword/number rules still anchor on
-  boundary glyphs across spaces — until its engine learns run-start
-  anchoring, keywords and numbers in generic fonts color only when
-  adjacent to punctuation within a run (strings and comments color
-  normally).
+- The highlighting assumes pre-formatted rendering (`white-space: pre`,
+  i.e. real code blocks): Blink splits shaping runs at spaces only in
+  wrappable text (`normal`/`pre-wrap`), and no contextual rule can see
+  across a run split — apply the font to wrapping text and coloring
+  degrades to the space-free segments. Generic mode keywords/numbers
+  need a preceding in-line boundary glyph, so a keyword at the very
+  start of a line stays plain (a designed limit of the in-font lexer;
+  everything after it colors normally).
 
 ## Size comparison (`examples/hello.rs`, 114 chars, two themes)
 

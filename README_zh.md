@@ -153,6 +153,11 @@ const file = await unified()
 - 只收静态 TrueType；只出 WOFF1。
 - generic 模式为行内语义（见上）、一语言一字体——合并语言会让 TS 的 `type`
   给 Rust 块里的 `type` 上色。
+- 高亮假定按格式化文本渲染（`white-space: pre`，即真实的代码块环境）：Blink
+  只在可换行文本（normal/pre-wrap）里按空格切分 shaping run，跨 run 的上下
+  文规则无法生效——若把字体用在可换行文本上，着色会退化为空格分隔的片段。
+  通用模式的关键词/数字需要行内有前置边界字形，行首关键字保持无色（字体内
+  置词法器的既有限制，其后内容正常着色）。
 
 ## 尺寸对比（examples/hello.rs，114 字符，双主题）
 
