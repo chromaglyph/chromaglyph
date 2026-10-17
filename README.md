@@ -134,11 +134,11 @@ tokenize+theme → compile → fontbuild → verify
     着色、续行无色，缩进关键字与 `*/ let` 中缀关键字着色，列 0 关键字、
     `$use`、f-string 前缀无色，JS 控制流紫/声明蓝颜色分明
 - [x] **M4c** tree-sitter 语义 token（`--semantic` / `buildFont({semantic: true})`，
- 覆盖 Rust / JS / TS / Python）：
+ 覆盖 Rust / JS / TS / Python / Java）：
   - 可选 crate `chromaglyph-treesitter`（workspace 里唯一带 C 依赖的 crate，
     core 保持纯 Rust）；解析代码树 → 语义 span（函数定义/调用/方法、参数、
-    类型、常量、枚举成员、字段）→ 覆盖在 syntect 语法色之上，主题不认识
-    的 scope 自动跳过——看起来像开了语言服务器的编辑器
+    类型、常量、枚举成员、字段、变量读写）→ 覆盖在 syntect 语法色之上，
+    主题不认识的 scope 自动跳过——看起来像开了语言服务器的编辑器
   - core 只暴露 `BuildInput.semantic` 回调钩子（`SemanticLayer` 类型），
     与具体解析器完全解耦；oracle 全链路验证（新颜色→新 slot→新规则）
 - **M4 收官**。范围决策记录：
@@ -175,12 +175,25 @@ chromaglyph build --font JetBrainsMono-Regular.ttf --generic rust \
 
 ```css
 @font-face { font-family: 'chromaglyph'; src: url('out.woff') format('woff'); }
-@font-palette-values --chromaglyph-dark  { font-family: chromaglyph; base-palette: 0; }
-@font-palette-values --chromaglyph-light { font-family: chromaglyph; base-palette: 1; }
-pre, code { font-family: chromaglyph, monospace; background: #1e1e1e; }
-@media (prefers-color-scheme: light) {
-  pre, code { font-palette: --chromaglyph-light; background: #ffffff; }
+@font-palette-values --chromaglyph-dark-plus  { font-family: chromaglyph; base-palette: 0; }
+@font-palette-values --chromaglyph-light-plus { font-family: chromaglyph; base-palette: 1; }
+:root { /* 免哈希别名；明暗接管见下 */
+  --chromaglyph-dark-palette: --chromaglyph-dark-plus;
+  --chromaglyph-light-palette: --chromaglyph-light-plus;
 }
+pre, code {
+  font-family: chromaglyph, monospace;
+  font-palette: var(--chromaglyph-palette, var(--chromaglyph-dark-palette));
+  background: var(--chromaglyph-bg, #1e1e1e);
+}
+@media (prefers-color-scheme: light) {
+  pre, code { font-palette: var(--chromaglyph-palette, var(--chromaglyph-light-palette));
+              background: var(--chromaglyph-bg, #ffffff); }
+}
+/* class 切换明暗的站点（VitePress 的 html.dark 等）只需在主题 CSS 里：
+   :root     { --chromaglyph-palette: var(--chromaglyph-light-palette);
+               --chromaglyph-bg: <你的代码块背景变量>; }
+   html.dark { --chromaglyph-palette: var(--chromaglyph-dark-palette); } */
 ```
 
 输出扩展名选 `.ttf` 则写裸 sfnt，`.woff`（默认）写 WOFF1（zlib）。纯 Rust 生态还没有成熟的
@@ -188,7 +201,7 @@ WOFF2 编码器（需要 Brotli + woff2 变换栈），v1 先退 WOFF1，浏览�
 
 ```sh
 cargo build --release
-cargo test                                        # 61 tests（含 6 语言 generic oracle + 4 语言语义层）
+cargo test                                        # 68 tests（含 6 语言 generic oracle + 5 语言语义层）
 cargo run -p chromaglyph -- build --font crates/chromaglyph-core/tests/fixtures/JetBrainsMono-Regular.ttf \
     --input examples/hello.rs --output target/demo/chromaglyph-demo.woff --css target/demo/chromaglyph-demo.css
 python3 -m http.server -d target/demo 8143        # 打开 index.html 看明暗双调色板

@@ -48,16 +48,42 @@ inside code as interpolation.
 
 ## The appearance toggle
 
-The plugin's generated CSS follows `prefers-color-scheme` (OS level),
-while VitePress's toggle button switches the `html.dark` class. Note that
-the plugin's scope rule paints the background on both the `<pre>` and its
-`<code>` child — a shim that only flips the `<pre>` leaves a dark `<code>`
-behind. This site's `.vitepress/theme/chromaglyph-palette.ts` is a ~40-line
-example that wires them together: at runtime it reads the injected
-`@font-palette-values` rule names and generates a `html.dark` /
-`html:not(.dark)` scoped stylesheet (prefixing every selector in the
-comma list, so both `pre` and `code` flip) — a palette flip with zero
-reflow.
+The plugin's generated CSS defaults to `prefers-color-scheme` (OS level)
+for the light/dark flip and bakes the theme's editor background into the
+rules. Both are just **defaults behind CSS variables** — a class-toggle
+framework overrides them in one place, with no runtime JS:
+
+```css
+/* .vitepress/theme/chromaglyph.css, imported from theme/index.ts */
+:root {
+  --chromaglyph-palette: var(--chromaglyph-light-palette);
+  --chromaglyph-bg: var(--vp-code-block-bg); /* VitePress's own block bg */
+}
+html.dark {
+  --chromaglyph-palette: var(--chromaglyph-dark-palette);
+}
+```
+
+Why this works:
+
+- The injected stylesheet defines **hash-free aliases**
+  `--chromaglyph-dark-palette` / `--chromaglyph-light-palette` pointing at
+  that page's palettes (they live in the same per-page stylesheet as the
+  font, so SPA page swaps stay correct) and reads the applied palette as
+  `font-palette: var(--chromaglyph-palette, …)`, the background as
+  `background: var(--chromaglyph-bg, …)`.
+- Once your CSS defines `--chromaglyph-palette`, it wins over **both** the
+  dark default and the `prefers-color-scheme` branch — the media query
+  becomes irrelevant and VitePress's `html.dark` class drives the flip
+  (still a zero-reflow palette flip).
+- `--chromaglyph-bg` detaches from the theme-baked `#1e1e1e`/`#ffffff`:
+  pointing it at `var(--vp-code-block-bg)` makes the code block follow
+  VitePress's own background system (radius, dark variant and all), on
+  the `<pre>` **and** its `<code>` child together.
+
+The same two vars work for any class-based toggle (Nuxt's `dark-mode`,
+a `.dark` class you toggle yourself, …); frameworks that already follow
+the OS scheme need nothing at all.
 
 ## Guarantees
 

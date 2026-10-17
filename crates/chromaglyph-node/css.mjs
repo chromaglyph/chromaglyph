@@ -37,14 +37,28 @@ export function buildCssAssets(result, options = {}) {
   }
   const dark = result.themes[0]
   const light = result.themes[1]
+  // hash-free aliases for the first (dark) / second (light) theme. Sites
+  // drive palette + background through --chromaglyph-palette /
+  // --chromaglyph-bg below and never touch the hash-derived names; the
+  // aliases live in the same per-page stylesheet as the font they point
+  // at, so SPA page swaps stay correct with zero runtime JS
+  css += `:root {\n  --chromaglyph-dark-palette: --${family}-${slug(dark.name)};\n`
+  if (light) css += `  --chromaglyph-light-palette: --${family}-${slug(light.name)};\n`
+  css += `}\n`
   // scope to the attribute the plugins add to highlighted <pre>; `code` is
-  // included because site CSS often sets font-family on code directly
+  // included because site CSS often sets font-family on code directly.
+  // The var() indirection is the class-toggle escape hatch: a site that
+  // defines --chromaglyph-palette (e.g. per html.dark) overrides BOTH the
+  // dark default here and the prefers-color-scheme branch below in one
+  // place; --chromaglyph-bg detaches from the theme-baked background
   css += `[data-chromaglyph], [data-chromaglyph] code {\n  font-family: ${family}, monospace;\n`
-  if (dark && dark.background) css += `  background: ${dark.background};\n`
+  css += `  font-palette: var(--chromaglyph-palette, var(--chromaglyph-dark-palette));\n`
+  if (dark && dark.background) css += `  background: var(--chromaglyph-bg, ${dark.background});\n`
   css += `}\n`
   if (light) {
-    css += `@media (prefers-color-scheme: light) {\n  [data-chromaglyph], [data-chromaglyph] code {\n    font-palette: --${family}-${slug(light.name)};\n`
-    if (light.background) css += `    background: ${light.background};\n`
+    css += `@media (prefers-color-scheme: light) {\n  [data-chromaglyph], [data-chromaglyph] code {\n`
+    css += `    font-palette: var(--chromaglyph-palette, var(--chromaglyph-light-palette));\n`
+    if (light.background) css += `    background: var(--chromaglyph-bg, ${light.background});\n`
     css += `  }\n}\n`
   }
   return { css, fontUrl, family, hash8 }

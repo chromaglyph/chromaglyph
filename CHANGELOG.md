@@ -2,6 +2,65 @@
 
 ## Unreleased
 
+- **css: var-driven palette + background — class-toggle dark mode with
+  zero JS**. The companion CSS (CLI `--css` and both JS plugins) now
+  reads `font-palette: var(--chromaglyph-palette, …)` and
+  `background: var(--chromaglyph-bg, …)`, and defines hash-free aliases
+  `--chromaglyph-dark-palette` / `--chromaglyph-light-palette` in the
+  same stylesheet as the font (per-page, so SPA page swaps stay correct).
+  A site that toggles a class instead of following the OS scheme —
+  VitePress's `html.dark`, Nuxt color mode — takes over BOTH the dark
+  default and the `prefers-color-scheme` branch in one place:
+
+  ```css
+  :root     { --chromaglyph-palette: var(--chromaglyph-light-palette);
+              --chromaglyph-bg: var(--vp-code-block-bg); }
+  html.dark { --chromaglyph-palette: var(--chromaglyph-dark-palette); }
+  ```
+
+  This replaces the ~40-line runtime shim the VitePress demo shipped in
+  0.2.1 (it scanned `document.styleSheets` for the hash-derived palette
+  names — different per page — plus a MutationObserver for SPA
+  navigation, with backgrounds hardcoded). `--chromaglyph-bg` also
+  detaches from the theme-baked `#1e1e1e`/`#ffffff`: pointing it at the
+  framework's own code-block variable makes the block follow the
+  framework's theming (radius, dark variants) on the `<pre>` and its
+  `<code>` child together. Plain sites that define neither var render
+  exactly as before. Note: the on-disk cache stores the CSS verbatim —
+  caches built by ≤0.2.1 serve the old shape until the version bump
+  rotates the content hash (as usual for the node package).
+
+- **semantic layer: Java** (`--semantic` with `java` blocks /
+  `buildFont({semantic: true})`): method/constructor declarations and
+  invocation names, class/interface/enum/record names and `new` types,
+  parameters (typed, `String...` spread, single-param lambdas), field
+  declarations vs `static final` literal constants vs lambda/method-ref
+  bindings, enum constants, field accesses (`obj.x`, `this.x`), and
+  variable reads/writes — locals, loop bindings and call receivers get
+  the semantic variable blue. Import/package paths and annotations stay
+  in their syntactic colors (no symbol table; a receiver like `System`
+  renders as a variable read). New `tree-sitter-java` dependency in the
+  optional crate — core stays pure Rust.
+- **semantic layer: Python variables** (promised in 0.2.1): bare
+  identifiers read/write as `variable.other.readwrite` — locals, loop
+  bindings, assignment targets and call receivers (`obj.run()`: `obj` is
+  a read). Keyword-argument labels, import paths and decorator names
+  keep their syntactic colors; parameters were extended to
+  `typed_default_parameter` and `*args`/`**kw` splats. Base classes in a
+  class header now read as types.
+- **fix: Python UPPER_CASE constants rendered as variables** — the
+  CONSTANT span for `MAX = 100` was pushed and then overwritten by a
+  VARIABLE span for the same binding site (later spans win in apply
+  order); the old test asserted `contains` and never caught it. The
+  assignment target is now excluded from the variable branch and a
+  regression test asserts exactly one span covers the binding site.
+- **fix: Rust method receivers colored as variables** — `v.iter()` used
+  to leave `v` uncolored (every identifier under a field access was
+  excluded, including the receiver); only the field position is excluded
+  now, so the receiver reads as a variable like in an editor.
+- docs: the CLI `--semantic` help still said "currently rust" (stale
+  since 0.2.0) — now lists rust, js/ts, python, java.
+
 ## 0.2.1 (2026-10-17)
 
 - **plugins: opt-in `semantic` option** (`@chromaglyph/remark`,

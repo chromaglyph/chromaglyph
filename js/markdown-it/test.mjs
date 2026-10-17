@@ -58,6 +58,26 @@ test('style: link injects a stylesheet link, not a <style> tag (Vue-template fra
   assert.ok(/<pre v-pre data-chromaglyph="\d+"/.test(html), 'pre carries v-pre')
 })
 
+test('generated css is var-driven with hash-free palette aliases', () => {
+  clearCache()
+  const html = makeMd({ style: 'link' }).render(MARKDOWN)
+  const b64 = html.match(/href="data:text\/css;base64,([^"]+)"/)[1]
+  const css = Buffer.from(b64, 'base64').toString('utf8')
+  // hash-free aliases let a site override the palettes without knowing
+  // the per-page hash — the class-toggle dark mode recipe uses them
+  assert.ok(css.includes('--chromaglyph-dark-palette: --chromaglyph-'))
+  assert.ok(css.includes('--chromaglyph-light-palette: --chromaglyph-'))
+  assert.ok(
+    css.includes('font-palette: var(--chromaglyph-palette, var(--chromaglyph-dark-palette))'),
+    'dark default defers to --chromaglyph-palette',
+  )
+  assert.ok(
+    css.includes('font-palette: var(--chromaglyph-palette, var(--chromaglyph-light-palette))'),
+    'prefers-color-scheme branch defers to the same var',
+  )
+  assert.ok(css.includes('background: var(--chromaglyph-bg, '), 'background is var-driven')
+})
+
 test('style: link with embed: false writes a css file next to the woff', () => {
   clearCache()
   const outDir = '/tmp/cg-mdit-link-file'

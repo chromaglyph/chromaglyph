@@ -19,6 +19,9 @@ test('generic mode builds a font that highlights any text', () => {
   assert.ok(report.verify.ok, 'oracle green')
   assert.equal(report.palettes.length, 2, 'one palette per theme')
   assert.ok(out.css.includes('@font-palette-values'), 'css companion present')
+  assert.ok(out.css.includes('--chromaglyph-dark-palette: --chromaglyph-'), 'hash-free palette alias')
+  assert.ok(out.css.includes('font-palette: var(--chromaglyph-palette,'), 'palette is var-driven')
+  assert.ok(out.css.includes('background: var(--chromaglyph-bg,'), 'background is var-driven')
 })
 
 test('generic language is part of the content hash', () => {

@@ -55,6 +55,33 @@ export default defineConfig({
 
 A runnable site lives in `js/vitepress` in the repo.
 
+### Dark mode: `prefers-color-scheme` by default, one var to take over
+
+With two themes the generated CSS flips dark/light automatically with the
+**OS** color scheme and bakes each theme's editor background in. Sites
+that toggle a **class** (VitePress's `html.dark`, Nuxt's color mode, …)
+override both through two CSS variables — no runtime JS, and the override
+wins in both modes at once:
+
+```css
+:root {
+  --chromaglyph-palette: var(--chromaglyph-light-palette);
+  --chromaglyph-bg: var(--vp-code-block-bg); /* or any bg you want */
+}
+html.dark {
+  --chromaglyph-palette: var(--chromaglyph-dark-palette);
+}
+```
+
+The injected stylesheet defines the hash-free aliases
+`--chromaglyph-dark-palette` / `--chromaglyph-light-palette` (pointing at
+that page's palettes — they live in the same per-page stylesheet as the
+font, so SPA page swaps stay correct) and reads palette and background as
+`var(--chromaglyph-palette, …)` / `var(--chromaglyph-bg, …)`. Pointing
+`--chromaglyph-bg` at your framework's own code-block background variable
+makes the block follow the framework's theming instead of the baked
+`#1e1e1e`/`#ffffff`.
+
 The plugin wraps `md.render` — the markdown is parsed once, every
 fenced code block batches into a single font (cross-language
 disambiguation included), and already-highlighted fences from other
@@ -85,7 +112,7 @@ pipeline keeps working for anything this plugin skips.
 | `outDir` | `'chromaglyph-out'` | Where emitted font/CSS assets go (`embed: false`). |
 | `style` | `'inline'` | `'inline'` injects a `<style>` tag; `'link'` injects a `<link rel="stylesheet">` (data: URI stylesheet, or a `.css` file with `embed: false`) — required for Vue-template frameworks like VitePress. |
 | `verify` | `true` | Run the rustybuzz oracle over the produced font before shipping it. |
-| `semantic` | `false` | Overlay tree-sitter semantic colors (parameters, variables-as-scoped, types, calls) on top of the syntactic highlighting — rust/js/ts/python only; other languages silently stay syntactic. |
+| `semantic` | `false` | Overlay tree-sitter semantic colors (parameters, variables-as-scoped, types, calls) on top of the syntactic highlighting — rust/js/ts/python/java only; other languages silently stay syntactic. |
 | `cacheDir` | — | Optional on-disk cache directory for incremental site builds. |
 
 ## License
