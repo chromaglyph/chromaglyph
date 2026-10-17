@@ -1,0 +1,45 @@
+name: browser smoke
+
+# The rustybuzz oracle only diffs glyph ids — it stays green on fonts a
+# browser refuses at OTS (the 0.2.2 generic-mode regression shipped that
+# way). This job loads the built fonts in headless Chromium through the
+# real FontFace/OTS path and samples rendered pixels against the Dark+
+# palette: `scripts/browser-smoke.mjs` covers exact mode, exact mode with
+# --ligatures, and generic rust.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: browser-smoke
+
+      - name: Build the CLI
+        run: cargo build --release -p chromaglyph
+
+      - name: Install browser dependencies
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run the smoke test
+        run: node scripts/browser-smoke.mjs

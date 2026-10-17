@@ -2,6 +2,44 @@
 
 ## 0.2.3
 
+- **browser smoke test** (`pnpm smoke`, `scripts/browser-smoke.mjs`, new
+  `browser-smoke.yml` CI job): builds fonts with the CLI, loads them in
+  headless Chromium through the real FontFace/OTS path, and samples
+  rendered pixels against the Dark+ palette — the check the rustybuzz
+  oracle cannot make. It caught two shipped-on-sight bugs on its first
+  run (below); pixel-count floors now pin cross-space coloring so a
+  regression fails CI. Covers exact mode, exact mode with --ligatures,
+  and generic rust.
+
+- **fix: exact-mode subsets were browser-rejected since 0.2.2** — the
+  composite walker followed the wrong flag bit layout (MORE_COMPONENTS
+  0x0010 instead of 0x0020; scale flags 0x0020/0x0040 instead of
+  0x0040/0x0080 — every implementation numbers them the Apple way:
+  OTS/Chrome, FreeType, fonttools). Multi-component composites were
+  truncated at the first component, so the subset dropped real
+  components and left un-remapped gids pointing past the subset
+  ("Invalid glyph id used in composite glyph" at OTS; whole-font
+  rejection, silent fallback to plain monospace). The fixture carries
+  385 apple-layout composites; the rustybuzz oracle never walks
+  outlines, so e2e stayed green. **Upgraders: rebuild any 0.2.2/0.2.3
+  exact-mode font.**
+
+- **fix: coloring stopped at every space in real browsers** — Blink
+  shapes space-delimited sub-runs, so no contextual rule can anchor
+  across a space (verified with a minimal GSUB probe: backtrack on the
+  space class never fires in Chromium; intra-word backtrack does).
+  Rules anchored across spaces never matched, and colored spans
+  containing spaces lost everything after the first one (strings/
+  comments colored only their first word) while the rustybuzz oracle —
+  shaping the whole text as one run — reported green. Run-splitting
+  chars (space, tab, Zs, U+3000) are now hard separators in exact mode:
+  occurrences split at them, rule windows stop at them, and they carry
+  no color (no visible ink — visually identical). Duplicates that can
+  only be told apart across a space now degrade with warnings, which is
+  exactly what a browser could ever distinguish. Generic mode still
+  anchors keywords/numbers across spaces — its engine needs a revision
+  for run-start anchoring (known limitation below).
+
 - **exact mode: `--ligatures` (node `ligatures: true`, plugins
   `ligatures: true`)** — preserve the source font's ligatures. The build
   now *shapes* each block with the source font (rustybuzz, the same

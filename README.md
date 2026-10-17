@@ -174,6 +174,14 @@ per-version known limitations.
 - Static TrueType input only; WOFF1 output only.
 - Generic mode is line-scoped (see above) and one language per font —
   merging languages would color `type` in a Rust block via TS rules.
+- Browsers split shaping runs at spaces, and no contextual rule can see
+  across one. Exact mode treats spaces as barriers (coloring splits
+  around them; duplicates distinguishable only across a space degrade
+  with a warning). Generic mode's keyword/number rules still anchor on
+  boundary glyphs across spaces — until its engine learns run-start
+  anchoring, keywords and numbers in generic fonts color only when
+  adjacent to punctuation within a run (strings and comments color
+  normally).
 
 ## Size comparison (`examples/hello.rs`, 114 chars, two themes)
 
