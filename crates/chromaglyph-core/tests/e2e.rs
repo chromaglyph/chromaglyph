@@ -641,3 +641,58 @@ fn semantic_layer_overlays_syntactic_colors() {
         layered.report.palettes
     );
 }
+
+/// Exact mode subsets the font to the glyphs the blocks use: the produced
+/// glyph count collapses while every char of the sample still resolves in
+/// the rebuilt cmap, and the oracle (which shapes the subset font itself)
+/// stays green. The jetbrains fixture carries ~650 glyphs; the sample
+/// touches a few dozen.
+#[test]
+fn exact_mode_subsets_the_font() {
+    let themes = themes();
+    let out = build(&BuildInput {
+        font_bytes: FONT,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+    })
+    .expect("subset build + oracle");
+
+    assert!(out.report.source_glyphs > 300, "fixture glyph count");
+    assert!(
+        out.report.total_glyphs < out.report.source_glyphs / 2,
+        "glyph set collapses: {} of {}",
+        out.report.total_glyphs,
+        out.report.source_glyphs
+    );
+    // alt copies ride after the surviving source glyphs
+    let kept_source = out.report.total_glyphs - out.report.alt_glyphs as u16;
+    assert!(kept_source < out.report.source_glyphs / 2);
+    assert!(out.report.verify.ok);
+
+    // every char of the sample resolves in the produced font's cmap (and
+    // unmapped chars — the \n — legitimately do not)
+    use read_fonts::{FontRef, TableProvider};
+    let font = FontRef::new(&out.ttf).expect("produced font parses");
+    let charmap = skrifa::charmap::Charmap::new(&font);
+    for ch in SAMPLE.chars() {
+        if ch == '\n' {
+            continue;
+        }
+        assert!(
+            charmap.map(ch).is_some(),
+            "sample char {ch:?} must survive subsetting"
+        );
+    }
+    // the subset font keeps its outlines addressable: loca covers every
+    // glyph id the cmap hands out
+    let maxp = font.maxp().unwrap();
+    let head = font.head().unwrap();
+    let loca = font.loca(head.index_to_loc_format() == 1).unwrap();
+    for gid in 0..maxp.num_glyphs() {
+        assert!(loca.get_raw(gid as usize).is_some(), "loca covers {gid}");
+    }
+}

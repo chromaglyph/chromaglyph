@@ -2,23 +2,29 @@
 //! plus the glyph plan.
 //!
 //! v1 strategy: keep the source font's tables byte-for-byte where possible
-//! (cmap, name, OS/2, gasp, hinting programs, ...) and rewrite only what the
-//! plan touches. The colored copies are *empty* glyphs whose COLR layer
+//! (name, OS/2, gasp, hinting programs, ...) and rewrite only what the
+//! plan touches. Exact mode subsets the glyph set to what the blocks use
+//! (see [`subset_glyphs`]); the cmap is rebuilt whenever glyph ids move,
+//! otherwise (and in generic mode) it is copied byte-for-byte, cmap14
+//! included. The colored copies are *empty* glyphs whose COLR layer
 //! references the base glyph — near-zero size cost per color. The source
 //! font's own GSUB/GPOS/GDEF (and any AAT layout tables) are dropped so
 //! nothing interferes with the generated `calt`; M2 adds a
 //! `--keep-base-features` escape hatch.
 
 use read_fonts::{FontRef, TableProvider};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use write_fonts::tables::cmap::Cmap;
+use write_fonts::tables::cmap::{
+    Cmap, Cmap14, CmapSubtable, EncodingRecord, NonDefaultUvs, PlatformId, UvsMapping,
+    VariationSelector,
+};
 use write_fonts::tables::colr::{BaseGlyph, Colr, Layer};
 use write_fonts::tables::cpal::{ColorRecord, Cpal};
 use write_fonts::tables::gsub::Gsub;
 use write_fonts::tables::hmtx::{Hmtx, LongMetric};
 use write_fonts::tables::loca::{Loca, LocaFormat};
-use write_fonts::types::{GlyphId, GlyphId16, Tag};
+use write_fonts::types::{GlyphId, GlyphId16, Tag, Uint24};
 use write_fonts::FontBuilder;
 
 use crate::compile::GlyphPlan;
@@ -136,22 +142,272 @@ fn metric_for(font: &FontRef<'_>, num_long: usize, gid: usize) -> (u16, i16) {
     }
 }
 
-/// Assemble the final TTF.
+/// Source-font tables that carry their own glyph-id references we do not
+/// rewrite (embedded bitmaps, SVG outlines, an existing color layer, math
+/// parts). When any is present subsetting is skipped — the full glyph set
+/// ships, exactly today's behavior — instead of producing stale ids.
+const SUBSET_BLOCKING_TABLES: &[Tag] = &[
+    Tag::new(b"EBDT"),
+    Tag::new(b"EBLC"),
+    Tag::new(b"EBSC"),
+    Tag::new(b"CBDT"),
+    Tag::new(b"CBLC"),
+    Tag::new(b"sbix"),
+    Tag::new(b"SVG "),
+    Tag::new(b"COLR"),
+    Tag::new(b"CPAL"),
+    Tag::new(b"MATH"),
+];
+
+/// Sentinel in `Subset::map` for glyphs that did not survive subsetting.
+const DROPPED: u16 = u16::MAX;
+
+/// Glyph id remapping for a subset font (exact mode only).
+pub struct Subset {
+    /// old gid -> new gid; `DROPPED` marks glyphs not kept.
+    map: Vec<u16>,
+    /// new gid -> old gid (`unmap[new] == old`), for source lookups.
+    unmap: Vec<u16>,
+    /// Number of surviving source glyphs.
+    kept: u16,
+}
+
+/// Subset the plan's glyphs: keep .notdef, every glyph the blocks' text
+/// resolved to (cells and cmap14 variants), and the transitive components
+/// of composite glyphs; renumber the survivors and rewrite the plan
+/// (cells, classes, alt copies, injected plains) to the new ids so every
+/// downstream consumer — GSUB, COLR, hmtx, the verify oracle — sees one
+/// consistent numbering.
+///
+/// Returns `None` when subsetting does not apply or cannot win: fonts
+/// carrying other glyph-referencing tables, a keep-set covering (almost)
+/// everything, or no mapped text at all. The caller then keeps the full
+/// glyph set. Generic plans never subset: their font must highlight any
+/// text of the language, so the whole charset stays.
+pub fn subset_glyphs(
+    loaded: &LoadedFont<'_>,
+    plan: &mut GlyphPlan,
+    variants: &mut Vec<(char, char, u16)>,
+) -> Option<Subset> {
+    for tag in SUBSET_BLOCKING_TABLES {
+        if loaded.font.data_for_tag(*tag).is_some() {
+            return None;
+        }
+    }
+
+    let num = loaded.num_glyphs as usize;
+    let mut used: BTreeSet<u16> = BTreeSet::new();
+    used.insert(0); // .notdef always ships
+    for cell in &plan.cells {
+        if let Some(gid) = cell.gid {
+            used.insert(gid);
+        }
+    }
+    for &(_, _, gid) in variants.iter() {
+        used.insert(gid);
+    }
+    if used.len() <= 1 {
+        return None; // nothing maps; a subset cmap would strand every char
+    }
+
+    // composites reference their components by glyph id; keep them all
+    let mut queue: Vec<u16> = used.iter().copied().collect();
+    while let Some(gid) = queue.pop() {
+        for component in components_of(loaded, gid) {
+            if used.insert(component) {
+                queue.push(component);
+            }
+        }
+    }
+    if used.len() >= num {
+        return None; // nothing to drop
+    }
+
+    let mut map = vec![DROPPED; num];
+    let mut unmap = Vec::with_capacity(used.len());
+    for (new, &old) in used.iter().enumerate() {
+        map[old as usize] = new as u16;
+        unmap.push(old);
+    }
+    let kept = used.len() as u16;
+
+    for cell in plan.cells.iter_mut() {
+        if let Some(gid) = cell.gid {
+            cell.gid = Some(map[gid as usize]);
+        }
+    }
+
+    // alt copies: bases remap (they are colored cells' glyphs, always
+    // kept), the (base, slot) order is restored, alt ids are reissued
+    // directly after the surviving source glyphs
+    let old_num_source = plan.num_source_glyphs;
+    for triple in plan.alt_glyphs.iter_mut() {
+        debug_assert!(map[triple.0 as usize] != DROPPED, "alt base is a kept cell glyph");
+        triple.0 = map[triple.0 as usize];
+    }
+    plan.alt_glyphs.sort_unstable_by_key(|t| (t.0, t.1));
+    let mut alt_remap: HashMap<u16, u16> = HashMap::with_capacity(plan.alt_glyphs.len());
+    for (i, triple) in plan.alt_glyphs.iter_mut().enumerate() {
+        let old_alt = triple.2;
+        triple.2 = kept + i as u16;
+        alt_remap.insert(old_alt, triple.2);
+    }
+
+    // classes are keyed by glyph id: source glyphs through the map, alt
+    // copies through their reissued ids; the class values stay as they are
+    plan.class_of = std::mem::take(&mut plan.class_of)
+        .into_iter()
+        .filter_map(|(gid, class)| {
+            let new = if gid < old_num_source {
+                map[gid as usize]
+            } else {
+                alt_remap.get(&gid).copied().unwrap_or(DROPPED)
+            };
+            (new != DROPPED).then_some((new, class))
+        })
+        .collect();
+
+    // injected plain glyphs keep trailing after the alt copies
+    let num_alt = plan.alt_glyphs.len() as u16;
+    for (i, (_, gid)) in plan.plain_glyphs.iter_mut().enumerate() {
+        *gid = kept + num_alt + i as u16;
+    }
+    plan.num_source_glyphs = kept;
+
+    for (_, _, gid) in variants.iter_mut() {
+        *gid = map[*gid as usize];
+    }
+    variants.sort_unstable();
+    variants.dedup();
+
+    Some(Subset { map, unmap, kept })
+}
+
+/// Byte span of one glyph inside the source glyf.
+fn glyph_span(loaded: &LoadedFont<'_>, gid: u16) -> (usize, usize) {
+    let g = gid as usize;
+    (
+        loaded.loca_offsets[g] as usize,
+        loaded.loca_offsets[g + 1] as usize,
+    )
+}
+
+// composite component flags (glyf spec)
+const ARG_1_AND_2_ARE_WORDS: u16 = 0x0001;
+const WE_HAVE_A_SCALE: u16 = 0x0008;
+const MORE_COMPONENTS: u16 = 0x0010;
+const WE_HAVE_AN_X_AND_Y_SCALE: u16 = 0x0020;
+const WE_HAVE_A_TWO_BY_TWO: u16 = 0x0040;
+
+/// Component glyph ids of a composite glyph (empty for simple/empty
+/// glyphs), parsed straight from the glyf bytes.
+fn components_of(loaded: &LoadedFont<'_>, gid: u16) -> Vec<u16> {
+    let (a, b) = glyph_span(loaded, gid);
+    let data = &loaded.glyf_data[a..b];
+    if data.len() < 12 || i16::from_be_bytes([data[0], data[1]]) >= 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut pos = 10;
+    loop {
+        if pos + 4 > data.len() {
+            break;
+        }
+        let flags = u16::from_be_bytes([data[pos], data[pos + 1]]);
+        out.push(u16::from_be_bytes([data[pos + 2], data[pos + 3]]));
+        pos += 4;
+        pos += if flags & ARG_1_AND_2_ARE_WORDS != 0 { 4 } else { 2 };
+        pos += if flags & WE_HAVE_A_SCALE != 0 {
+            2
+        } else if flags & WE_HAVE_AN_X_AND_Y_SCALE != 0 {
+            4
+        } else if flags & WE_HAVE_A_TWO_BY_TWO != 0 {
+            8
+        } else {
+            0
+        };
+        if flags & MORE_COMPONENTS == 0 {
+            break;
+        }
+    }
+    out
+}
+
+/// Copy one glyph's bytes, rewriting composite component ids to the
+/// subset's new numbering (simple glyphs pass through untouched).
+fn subset_glyph_bytes(loaded: &LoadedFont<'_>, old: u16, map: &[u16]) -> Vec<u8> {
+    let (a, b) = glyph_span(loaded, old);
+    let data = &loaded.glyf_data[a..b];
+    if data.len() < 12 || i16::from_be_bytes([data[0], data[1]]) >= 0 {
+        return data.to_vec();
+    }
+    let mut out = data.to_vec();
+    let mut pos = 10;
+    loop {
+        if pos + 4 > out.len() {
+            break;
+        }
+        let flags = u16::from_be_bytes([out[pos], out[pos + 1]]);
+        let new = map[u16::from_be_bytes([out[pos + 2], out[pos + 3]]) as usize];
+        debug_assert!(new != DROPPED, "component survived the keep-set closure");
+        out[pos + 2..pos + 4].copy_from_slice(&new.to_be_bytes());
+        pos += 4;
+        pos += if flags & ARG_1_AND_2_ARE_WORDS != 0 { 4 } else { 2 };
+        pos += if flags & WE_HAVE_A_SCALE != 0 {
+            2
+        } else if flags & WE_HAVE_AN_X_AND_Y_SCALE != 0 {
+            4
+        } else if flags & WE_HAVE_A_TWO_BY_TWO != 0 {
+            8
+        } else {
+            0
+        };
+        if flags & MORE_COMPONENTS == 0 {
+            break;
+        }
+    }
+    out
+}
+
+/// Assemble the final TTF. `subset` (exact mode, when applicable) ships
+/// only the kept glyphs; `variants` are the cmap14 (base, selector, gid)
+/// triples the compile resolved, re-emitted into a rebuilt cmap.
 pub fn assemble(
     loaded: &LoadedFont<'_>,
     plan: &GlyphPlan,
     gsub: Option<&Gsub>,
+    subset: Option<&Subset>,
+    variants: &[(char, char, u16)],
 ) -> Result<Vec<u8>, BuildError> {
     let num_alt = plan.alt_glyphs.len();
     let num_plain = plan.plain_glyphs.len();
-    let total_glyphs = loaded.num_glyphs as usize + num_alt + num_plain;
+    // alt/plain ids trail `plan.num_source_glyphs`, which the subset path
+    // has already rewritten to the surviving source glyph count
+    let total_glyphs = plan.num_source_glyphs as usize + num_alt + num_plain;
 
     // ---- glyf (raw, padded even) + loca (extended with empty glyphs) -----
-    let mut glyf = loaded.glyf_data.to_vec();
-    if !glyf.len().is_multiple_of(2) {
-        glyf.push(0);
+    let mut glyf: Vec<u8> = Vec::new();
+    let mut offsets: Vec<u32> = Vec::with_capacity(total_glyphs + 1);
+    offsets.push(0);
+    match subset {
+        Some(sub) => {
+            for new_gid in 0..sub.kept {
+                let bytes = subset_glyph_bytes(loaded, sub.unmap[new_gid as usize], &sub.map);
+                glyf.extend_from_slice(&bytes);
+                if !glyf.len().is_multiple_of(2) {
+                    glyf.push(0);
+                }
+                offsets.push(glyf.len() as u32);
+            }
+        }
+        None => {
+            glyf.extend_from_slice(loaded.glyf_data);
+            if !glyf.len().is_multiple_of(2) {
+                glyf.push(0);
+            }
+            offsets.extend(loaded.loca_offsets.iter().copied());
+        }
     }
-    let mut offsets = loaded.loca_offsets.clone();
     let last = *offsets.last().expect("loca is never empty");
     for _ in 0..(num_alt + num_plain) {
         offsets.push(last);
@@ -172,15 +428,30 @@ pub fn assemble(
 
     // ---- hmtx: long metrics for every glyph (alts copy their base) -------
     let mut h_metrics: Vec<LongMetric> = Vec::with_capacity(total_glyphs);
-    for &(advance, lsb) in &loaded.metrics {
-        h_metrics.push(LongMetric::new(advance, lsb));
+    match subset {
+        Some(sub) => {
+            for new_gid in 0..sub.kept {
+                let (advance, lsb) = loaded.metrics[sub.unmap[new_gid as usize] as usize];
+                h_metrics.push(LongMetric::new(advance, lsb));
+            }
+        }
+        None => {
+            for &(advance, lsb) in &loaded.metrics {
+                h_metrics.push(LongMetric::new(advance, lsb));
+            }
+        }
     }
     for &(base_gid, _pal, _alt) in &plan.alt_glyphs {
+        // alt bases are new (subset) ids — map back for the metric lookup.
         // an alt may copy an injected plain glyph (the newline's body
         // copies) — those are zero-width placeholders, not source glyphs
+        let old_base = match subset {
+            Some(sub) => sub.unmap[base_gid as usize] as usize,
+            None => base_gid as usize,
+        };
         let (advance, lsb) = loaded
             .metrics
-            .get(base_gid as usize)
+            .get(old_base)
             .copied()
             .unwrap_or((0, 0));
         h_metrics.push(LongMetric::new(advance, lsb));
@@ -197,20 +468,72 @@ pub fn assemble(
     // ---- post: synthesized 3.0 (no per-glyph names) ----------------------
     let post = synth_post_v3(loaded);
 
-    // ---- cmap: raw copy, or resynthesized when glyphs were injected ------
-    let cmap = if plan.plain_glyphs.is_empty() {
-        None
-    } else {
-        let mut mappings: BTreeMap<char, GlyphId> = skrifa::charmap::Charmap::new(&loaded.font)
-            .mappings()
-            .filter_map(|(cp, gid)| Some((char::from_u32(cp)?, GlyphId::new(gid.to_u32()))))
-            .collect();
+    // ---- cmap: rebuilt whenever glyph ids moved; raw copy (cmap14
+    // included) only when nothing was subset or injected -------------------
+    let rebuild_cmap = subset.is_some() || !plan.plain_glyphs.is_empty();
+    let cmap = if rebuild_cmap {
+        let mut mappings: BTreeMap<char, GlyphId> = BTreeMap::new();
+        for (cp, gid) in skrifa::charmap::Charmap::new(&loaded.font).mappings() {
+            let old = gid.to_u32() as u16;
+            let new = match subset {
+                Some(sub) => sub.map[old as usize],
+                None => old,
+            };
+            if new == DROPPED {
+                continue;
+            }
+            if let Some(ch) = char::from_u32(cp) {
+                mappings.insert(ch, GlyphId::new(new as u32));
+            }
+        }
         for &(cp, gid) in &plan.plain_glyphs {
             if let Some(ch) = char::from_u32(cp) {
                 mappings.insert(ch, GlyphId::new(gid as u32));
             }
         }
-        Some(Cmap::from_mappings(mappings).map_err(|e| BuildError::TableWrite(e.to_string()))?)
+        // used variation sequences ride along as a format-14 subtable so
+        // base+VS text keeps resolving to its variant glyph in the subset
+        let mut records: Vec<VariationSelector> = Vec::new();
+        if !variants.is_empty() {
+            let mut by_selector: BTreeMap<char, Vec<(char, u16)>> = BTreeMap::new();
+            for &(base, selector, gid) in variants {
+                by_selector.entry(selector).or_default().push((base, gid));
+            }
+            for (selector, pairs) in by_selector {
+                let maps = pairs
+                    .into_iter()
+                    .map(|(base, gid)| UvsMapping::new(Uint24::new(base as u32), gid))
+                    .collect::<Vec<_>>();
+                records.push(VariationSelector::new(
+                    Uint24::new(selector as u32),
+                    None,
+                    Some(NonDefaultUvs::new(maps.len() as u32, maps)),
+                ));
+            }
+        }
+        let cmap = if mappings.is_empty() {
+            // every survivor is a variant glyph: ship the (0, 5) UVS
+            // record alone instead of an empty char subtable
+            Cmap::new(vec![EncodingRecord::new(
+                PlatformId::Unicode,
+                5,
+                CmapSubtable::Format14(Cmap14::new(records)),
+            )])
+        } else {
+            let mut cmap = Cmap::from_mappings(mappings)
+                .map_err(|e| BuildError::TableWrite(e.to_string()))?;
+            if !records.is_empty() {
+                cmap.encoding_records.push(EncodingRecord::new(
+                    PlatformId::Unicode,
+                    5,
+                    CmapSubtable::Format14(Cmap14::new(records)),
+                ));
+            }
+            cmap
+        };
+        Some(cmap)
+    } else {
+        None
     };
 
     // ---- COLR v0 + CPAL ----------------------------------------------------

@@ -14,8 +14,9 @@
 //! 2. [`compile`] — colors → chain-context rules with minimal distinguishing
 //!    contexts, audited globally against false matches (slot model: one rule
 //!    set serves every theme)
-//! 3. [`fontbuild`] — assemble the output font (empty colored copies + COLR
-//!    layers referencing base glyphs)
+//! 3. [`fontbuild`] — assemble the output font, subset to the glyphs the
+//!    blocks use (empty colored copies + COLR layers referencing base
+//!    glyphs; generic mode keeps the full charset)
 //! 4. [`verify`] — rustybuzz oracle + per-palette color readback
 
 #![forbid(unsafe_code)]
@@ -110,6 +111,10 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
     // stages 1–3: tokenize + compile (exact mode), or synthesize the
     // generic-mode state machine
     let mut prepared: Vec<PreparedBlock<'_>> = Vec::new();
+    // cmap14 (base, selector, variant gid) hits the resolver made, so the
+    // subset cmap can re-emit them
+    let mut variants: Vec<(char, char, u16)> = Vec::new();
+    let mut subset = None;
     let plan = match input.generic {
         Some(spec) => {
             let mappings: Vec<(u32, u16)> = charmap
@@ -138,8 +143,10 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
                 })
                 .collect::<Result<_, BuildError>>()?;
 
-            // stage 3: compile to rules (slot model)
-            compile::compile(
+            // stage 3: compile to rules (slot model); the resolver records
+            // cmap14 variant hits for the subset cmap
+            let variant_log = std::cell::RefCell::new(Vec::new());
+            let mut plan = compile::compile(
                 &prepared,
                 &|ch, vs| {
                     // base + variation selector: resolve through cmap14 when
@@ -148,7 +155,12 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
                         if let Some(skrifa::charmap::MapVariant::Variant(g)) =
                             charmap.map_variant(ch, vs)
                         {
-                            return Some(g.to_u32() as u16).filter(|g| *g != 0);
+                            let gid = g.to_u32() as u16;
+                            if gid == 0 {
+                                return None;
+                            }
+                            variant_log.borrow_mut().push((ch, vs, gid));
+                            return Some(gid);
                         }
                     }
                     charmap
@@ -158,13 +170,16 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
                 },
                 loaded.num_glyphs,
                 &theme_fgs,
-            )?
+            )?;
+            variants = variant_log.into_inner();
+            subset = fontbuild::subset_glyphs(&loaded, &mut plan, &mut variants);
+            plan
         }
     };
 
     // stage 4: assemble font
     let gsub = gsub::build_gsub(&plan);
-    let ttf = fontbuild::assemble(&loaded, &plan, gsub.as_ref())?;
+    let ttf = fontbuild::assemble(&loaded, &plan, gsub.as_ref(), subset.as_ref(), &variants)?;
 
     // stage 5: verify (default on)
     let verify_result = if input.run_verify {
@@ -222,7 +237,8 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
         rules: plan.rules.len(),
         alt_glyphs: plan.alt_glyphs.len(),
         source_glyphs: loaded.num_glyphs,
-        total_glyphs: loaded.num_glyphs + plan.alt_glyphs.len() as u16,
+        total_glyphs: (plan.num_source_glyphs as usize + plan.alt_glyphs.len()
+            + plan.plain_glyphs.len()) as u16,
         palettes: (0..input.themes.len())
             .map(|t| {
                 plan.slots
