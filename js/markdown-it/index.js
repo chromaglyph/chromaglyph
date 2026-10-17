@@ -36,7 +36,7 @@ import { buildCssAssets } from '@chromaglyph/node/css'
  *  style?: 'inline' | 'link',
  *  verify?: boolean,
  *  semantic?: boolean,
- *  cacheDir?: string,
+ *  cacheDir?: string,   // on-disk cache for cross-process builds; ignored when NODE_ENV=development
  *  cwd?: string,
  * }} [options]
  */
@@ -61,6 +61,20 @@ function markdownItChromaglyph(md, options = {}) {
 
   if (!font) {
     throw new Error('markdownItChromaglyph: the `font` option (path or buffer of a static TTF) is required')
+  }
+
+  // The disk cache exists for cross-process builds (CI, `vitepress build`).
+  // In a dev server every save is a new content state that will never be
+  // requested again, so writing it grows the cache dir without bound —
+  // HMR edits would leave one font per intermediate state. The in-memory
+  // LRU still serves repeat renders inside the dev server process.
+  const diskCache =
+    cacheDir && process.env.NODE_ENV === 'development' ? undefined : cacheDir
+  if (cacheDir && !diskCache) {
+    console.info(
+      'chromaglyph: NODE_ENV=development — disk cache disabled (cacheDir ignored); ' +
+        'the in-memory cache still serves repeat renders',
+    )
   }
 
   const loadFont = () =>
@@ -92,7 +106,7 @@ function markdownItChromaglyph(md, options = {}) {
     let css = null
     let result = null
     if (blocks.length > 0) {
-      result = buildFontSafe({ font: loadFont(), themes, blocks, verify, semantic, cacheDir })
+      result = buildFontSafe({ font: loadFont(), themes, blocks, verify, semantic, cacheDir: diskCache })
       if (result) {
         const assets = buildCssAssets(result, { embed, outDir, cwd })
         if (style === 'link') {

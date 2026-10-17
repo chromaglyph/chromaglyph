@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkRehype from 'remark-rehype'
@@ -50,6 +51,29 @@ test('code text stays byte-identical in the DOM', async () => {
   assert.ok(html.includes('const n = 42; // the answer'))
   // inline code in prose is NOT marked (never audited => never font-scoped)
   assert.ok(!/<code>fn main\(\)<\/code>/.test(html.replace(/<code data-chromaglyph[^>]*>/g, '')) || true)
+})
+
+test('dev (NODE_ENV=development) skips the disk cache; production writes it', async () => {
+  clearCache()
+  const cacheDir = '/tmp/cg-remark-dev-cache'
+  rmSync(cacheDir, { recursive: true, force: true })
+  const prev = process.env.NODE_ENV
+  process.env.NODE_ENV = 'development'
+  try {
+    const { data } = await render(MARKDOWN, { font: FONT, cacheDir })
+    assert.ok(data, 'render still succeeds (in-memory path)')
+    assert.ok(!existsSync(join(cacheDir, 'chromaglyph')), 'dev writes nothing to disk')
+  } finally {
+    process.env.NODE_ENV = prev
+  }
+  process.env.NODE_ENV = 'production'
+  try {
+    clearCache()
+    await render(MARKDOWN, { font: FONT, cacheDir })
+    assert.ok(existsSync(join(cacheDir, 'chromaglyph')), 'production writes the disk cache')
+  } finally {
+    process.env.NODE_ENV = prev
+  }
 })
 
 test('second run hits the content-hash cache', async () => {

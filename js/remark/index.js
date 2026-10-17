@@ -31,7 +31,7 @@ import { buildCssAssets } from '@chromaglyph/node/css'
  *   outDir?: string,
  *   verify?: boolean,
  *   semantic?: boolean,
- *   cacheDir?: string,
+ *   cacheDir?: string, // on-disk cache for cross-process builds; ignored when NODE_ENV=development
  * }} [options]
  */
 function remarkChromaglyph(options = {}) {
@@ -48,6 +48,19 @@ function remarkChromaglyph(options = {}) {
 
   if (!font) {
     throw new Error('remarkChromaglyph: the `font` option (path or buffer of a static TTF) is required')
+  }
+
+  // The disk cache exists for cross-process builds (CI, static site
+  // builds). In a dev server every save is a new content state that will
+  // never be requested again, so writing it grows the cache dir without
+  // bound. The in-memory LRU still serves repeat renders in-process.
+  const diskCache =
+    cacheDir && process.env.NODE_ENV === 'development' ? undefined : cacheDir
+  if (cacheDir && !diskCache) {
+    console.info(
+      'chromaglyph: NODE_ENV=development — disk cache disabled (cacheDir ignored); ' +
+        'the in-memory cache still serves repeat renders',
+    )
   }
 
   return async (tree, file) => {
@@ -69,7 +82,7 @@ function remarkChromaglyph(options = {}) {
 
     // silent degradation: any failure returns null and the document renders
     // with its usual (uncolored) code styling
-    const result = buildFontSafe({ font: fontBytes, themes, blocks, verify, semantic, cacheDir })
+    const result = buildFontSafe({ font: fontBytes, themes, blocks, verify, semantic, cacheDir: diskCache })
     if (!result) return
 
     const assets = buildCssAssets(result, { embed, outDir, cwd: file.cwd || process.cwd() })

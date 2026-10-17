@@ -94,7 +94,8 @@ pipeline keeps working for anything this plugin skips.
 - **Silent degradation**: any build failure renders the document
   unhighlighted — your site build never breaks.
 - **Cached**: content-hash cache (in-process, plus an optional on-disk
-  `cacheDir`).
+  `cacheDir`; the disk cache is skipped when `NODE_ENV=development` so a
+  dev server's HMR edits cannot grow it without bound).
 - `font-family` is scoped to `[data-chromaglyph]` so prose is never
   affected; themes become `@font-palette-values` (dark/light
   auto-switching when two themes are given).
@@ -113,7 +114,7 @@ pipeline keeps working for anything this plugin skips.
 | `style` | `'inline'` | `'inline'` injects a `<style>` tag; `'link'` injects a `<link rel="stylesheet">` (data: URI stylesheet, or a `.css` file with `embed: false`) — required for Vue-template frameworks like VitePress. |
 | `verify` | `true` | Run the rustybuzz oracle over the produced font before shipping it. |
 | `semantic` | `false` | Overlay tree-sitter semantic colors (parameters, variables-as-scoped, types, calls) on top of the syntactic highlighting — rust/js/ts/python/java only; other languages silently stay syntactic. |
-| `cacheDir` | — | Optional on-disk cache directory for incremental site builds. |
+| `cacheDir` | — | Optional on-disk cache directory for incremental site builds. Ignored when `NODE_ENV=development` (dev-server HMR would write one font per intermediate edit state). |
 
 ## License
 

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import MarkdownIt from 'markdown-it'
 import { clearCache } from '@chromaglyph/node'
@@ -138,6 +138,28 @@ test('file mode emits assets', () => {
   const md = makeMd({ embed: false, outDir })
   const html = md.render(MARKDOWN)
   assert.match(html, /src: url\(\.\/chromaglyph-[0-9a-f]+\.woff\)/)
+})
+
+test('dev (NODE_ENV=development) skips the disk cache; production writes it', () => {
+  clearCache()
+  const cacheDir = '/tmp/cg-mdit-dev-cache'
+  rmSync(cacheDir, { recursive: true, force: true })
+  const prev = process.env.NODE_ENV
+  process.env.NODE_ENV = 'development'
+  try {
+    makeMd({ cacheDir }).render(MARKDOWN)
+    assert.ok(!existsSync(join(cacheDir, 'chromaglyph')), 'dev writes nothing to disk')
+  } finally {
+    process.env.NODE_ENV = prev
+  }
+  process.env.NODE_ENV = 'production'
+  try {
+    clearCache()
+    makeMd({ cacheDir }).render(MARKDOWN)
+    assert.ok(existsSync(join(cacheDir, 'chromaglyph')), 'production writes the disk cache')
+  } finally {
+    process.env.NODE_ENV = prev
+  }
 })
 
 test('semantic option produces its own build (distinct hash)', () => {

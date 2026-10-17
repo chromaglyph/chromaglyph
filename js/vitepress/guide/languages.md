@@ -53,6 +53,16 @@ const backtick = `sum is ${1 + 2}`
 const $dollar = 'is an identifier character, $return is a name not a keyword'
 
 console.log(single, double, backtick, $dollar)
+
+function demo() {
+    const name = 'chromaglyph';
+    let tmpl = `one-line template ${name}`;
+    let empty = ""; let mixed = 'a"b';
+    let q = 'it\'s'; let r = "a\"b";
+    if ($use) return 42;
+    let multi = `line one,
+after the newline`;
+}
 ```
 
 ## Python
