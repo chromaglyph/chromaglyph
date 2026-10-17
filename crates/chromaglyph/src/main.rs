@@ -64,7 +64,7 @@ enum Command {
         no_verify: bool,
         /// Overlay tree-sitter semantic colors (parameters, types, calls,
         /// constants) on top of the syntactic highlighting; requires a
-        /// language tree-sitter knows (currently rust)
+        /// language tree-sitter knows (currently rust, js/ts, python, java)
         #[arg(long)]
         semantic: bool,
     },

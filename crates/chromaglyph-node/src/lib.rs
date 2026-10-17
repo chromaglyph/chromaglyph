@@ -58,7 +58,7 @@ pub struct BuildOptions {
     pub verify: Option<bool>,
     /// Overlay tree-sitter semantic colors (parameters, types, calls,
     /// constants) on top of the syntactic highlighting (default false;
-    /// rust/js/ts/python).
+    /// rust/js/ts/python/java).
     pub semantic: Option<bool>,
     /// Optional on-disk cache directory; enables cross-process caching.
     pub cache_dir: Option<String>,
