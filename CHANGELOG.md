@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.1 (2026-10-17)
+
 - **plugins: opt-in `semantic` option** (`@chromaglyph/remark`,
   `@chromaglyph/markdown-it`): pass-through to `buildFont({semantic:
   true})`, default off — same-page cross-language consistency and
