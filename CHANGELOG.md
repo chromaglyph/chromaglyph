@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 (2026-10-18)
+
 - **font compatibility: OTF/CFF, variable TrueType, WOFF1 and `.ttc`
   inputs** — the pipeline no longer requires a static TrueType TTF:
 
