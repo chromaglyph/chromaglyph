@@ -139,3 +139,11 @@ test('semantic option produces its own build (distinct hash, same pipeline)', as
   assert.ok(semantic.data.css.includes('@font-face'))
   assert.notEqual(plain.data.contentHash, semantic.data.contentHash, 'semantic joins the content hash')
 })
+
+test("format: 'woff2' embeds a woff2 data URI", async () => {
+  clearCache()
+  const { data } = await render(MARKDOWN, { font: FONT, format: 'woff2' })
+  assert.ok(data.css.includes('data:font/woff2;base64,'), 'woff2 data URI')
+  assert.ok(data.css.includes("format('woff2')"), 'css names the woff2 container')
+  assert.ok(!data.css.includes('data:font/woff;'), 'not the woff1 mime')
+})

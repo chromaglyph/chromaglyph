@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **WOFF2 output** (`--output font.woff2`; `format: 'woff2'` in
+  `@chromaglyph/node` and both markdown plugins): the shipped font can
+  ride in a WOFF2 container — one Brotli stream over all tables, 15–30%
+  smaller than WOFF1 on the same build (exact 7,112 → 6,064 B; generic
+  rust 162,888 → 117,588 B). Encoding goes through the pure-Rust
+  `ttf2woff2` crate with tables untransformed (the glyf/loca transform
+  stays off: upstream reports reconstructed glyf can exceed the
+  short-loca limit without switching formats, which Chromium rejects
+  while fonttools reads it fine, and the untransformed path costs only
+  a few percent). Two honest edges:
+  - WOFF2 carries TrueType-flavored fonts only. A CFF-flavored build
+    (OTF source) falls back to WOFF1 bytes with a report warning — the
+    container never fails a build — and the generated CSS says
+    `format('woff')` because that is what actually shipped.
+  - `chromaglyph verify` reads `.woff2` fonts back through `wuff`
+    (already an input-side dependency, verified byte-identical to
+    google/woff2); the rustybuzz oracle runs on the decoded sfnt
+    exactly as for WOFF1.
+  The format is an explicit `OutputFormat` on `BuildInput`
+  (`Sfnt | Woff | Woff2`); `.ttf` now skips the container wrap entirely
+  (previously a WOFF1 was always computed then discarded) and its CSS
+  says `format('truetype')`. In the node binding the format joins the
+  content hash (both variants cache independently) and
+  `buildCssAssets` sniffs the returned bytes for the `wOF2` magic so
+  the data-URI mime, `format()` and the emitted file extension always
+  name the container that actually shipped. The browser smoke test
+  grows `exact-woff2` and `generic-woff2` cases — OTS sanitizes the
+  Brotli path separately from WOFF1's zlib, and both render with
+  palette-correct pixels in headless Chromium; e2e additionally
+  round-trips every table through decode and byte-compares against the
+  raw sfnt (head.checkSumAdjustment masked: decoders recompute it).
+
 - **generic mode: CSS** (`--generic css`) — the second non-keyword
   language, on a new `BlockKind` (property-sheet) construct: selector
   words color after a boundary or `.`/`:`; property names are keywords

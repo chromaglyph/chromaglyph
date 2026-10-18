@@ -26,6 +26,10 @@ export interface MarkdownItChromaglyphOptions {
   /** Preserve the source font's ligatures (`!=`, `->`, …) in exact mode
    *  (see the remark plugin's option of the same name). Default false. */
   ligatures?: boolean
+  /** Output container: `'woff2'` (Brotli, smaller) or `'woff'` (zlib,
+   *  default). CFF-flavored output (OTF sources) falls back to WOFF1 with
+   *  a report warning. */
+  format?: 'woff' | 'woff2'
   /** On-disk cache directory for incremental rebuilds. */
   cacheDir?: string
   /** Base directory for relative `font`/`outDir` paths (default: cwd). */

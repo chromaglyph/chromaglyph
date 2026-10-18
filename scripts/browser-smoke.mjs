@@ -25,7 +25,9 @@
  * surgery + subset), exact mode from a variable TrueType source (pinned
  * to the default instance, subset) and generic html (the markup tag
  * state machine: tag names probe as keyword blue, attribute values as
- * string orange, comments as comment green). Run: `pnpm smoke` (or pass
+ * string orange, comments as comment green). Two more run the exact and
+ * generic paths through the WOFF2 container (Brotli) — OTS sanitizes
+ * that path separately from WOFF1's zlib. Run: `pnpm smoke` (or pass
  * CHROMAGLYPH_BIN).
  */
 import { spawnSync } from 'node:child_process'
@@ -93,11 +95,21 @@ const CASES = [
     args: ['--input', resolve(outDir, 'sample.rs')],
     text: SAMPLE,
   },
+  {
+    id: 'exact-woff2',
+    args: ['--input', resolve(root, 'examples/hello.rs')],
+    ext: '.woff2',
+  },
+  {
+    id: 'generic-woff2',
+    args: ['--generic', 'rust'],
+    ext: '.woff2',
+  },
 ]
 
-function buildFont({ id, font: src = font, args, text }) {
+function buildFont({ id, font: src = font, args, text, ext = '.woff' }) {
   if (text !== undefined) writeFileSync(resolve(outDir, 'sample.rs'), text)
-  const out = resolve(outDir, `${id}.woff`)
+  const out = resolve(outDir, `${id}${ext}`)
   const run = spawnSync(bin, ['build', '--font', src, ...args, '--output', out], {
     encoding: 'utf8',
   })
@@ -121,15 +133,22 @@ async function main() {
       // encodeURIComponent keeps newlines (and #, &) alive through the
       // data: URL — raw newlines are stripped, &#10; is cut at the #
       await page.goto('data:text/html,' + encodeURIComponent(body))
-      const loaded = await page.evaluate(async (b64) => {
-        const face = new FontFace('chromaglyph', 'url(data:font/woff;base64,' + b64 + ')')
-        await face.load()
-        document.fonts.add(face)
-        document.getElementById('a').style.fontFamily = 'chromaglyph'
-        await document.fonts.ready
-        await new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)))
-        return document.fonts.check('40px chromaglyph')
-      }, readFileSync(woff).toString('base64'))
+      // the container follows --output's extension; OTS handles the
+      // woff2 (Brotli) path separately from woff1's zlib
+      const fontBytes = readFileSync(woff)
+      const mime = fontBytes.subarray(0, 4).equals(Buffer.from('wOF2')) ? 'font/woff2' : 'font/woff'
+      const loaded = await page.evaluate(
+        async ([mime, b64]) => {
+          const face = new FontFace('chromaglyph', `url(data:${mime};base64,${b64})`)
+          await face.load()
+          document.fonts.add(face)
+          document.getElementById('a').style.fontFamily = 'chromaglyph'
+          await document.fonts.ready
+          await new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)))
+          return document.fonts.check('40px chromaglyph')
+        },
+        [mime, fontBytes.toString('base64')],
+      )
 
       if (!loaded) {
         console.error(`FAIL ${case_.id}: the browser refused the font (OTS rejection)`)

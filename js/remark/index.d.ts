@@ -20,6 +20,10 @@ export interface RemarkChromaglyphOptions {
    *  staying highlighted. Sites spanning multiple colors degrade to plain
    *  per-char text (colors win). Default false. */
   ligatures?: boolean
+  /** Output container: `'woff2'` (Brotli, smaller) or `'woff'` (zlib,
+   *  default). CFF-flavored output (OTF sources) falls back to WOFF1 with
+   *  a report warning. */
+  format?: 'woff' | 'woff2'
   /** On-disk cache directory for incremental rebuilds. */
   cacheDir?: string
 }

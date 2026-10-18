@@ -40,6 +40,7 @@ import { buildCssAssets } from '@chromaglyph/node/css'
  *  verify?: boolean,
  *  semantic?: boolean,
  *  ligatures?: boolean,
+ *  format?: 'woff' | 'woff2',
  *  cacheDir?: string,   // on-disk cache for cross-process builds; ignored when NODE_ENV=development
  *  cwd?: string,
  *  grouping?: 'page' | 'lang',
@@ -62,6 +63,9 @@ function markdownItChromaglyph(md, options = {}) {
     semantic = false,
     // 保留源字体的连字(如 != -> ===):同 remark 插件的 ligatures 选项。
     ligatures = false,
+    // 输出容器:woff2(Brotli,更小)或 woff(zlib)。CFF 风味的输出会
+    // 自动回退 woff 并带一条 report 警告。
+    format = 'woff',
     cacheDir,
     cwd = process.cwd(),
     // 'page'（默认）：整页所有代码块合成一个字体；'lang'：按语言分组，一语言
@@ -140,7 +144,7 @@ function markdownItChromaglyph(md, options = {}) {
     // render, shared by every language group)
     const fontBytes = loadFont()
     const emit = (group, scope) => {
-      const built = buildFontSafe({ font: fontBytes, themes, blocks: group, verify, semantic, ligatures, cacheDir: diskCache })
+      const built = buildFontSafe({ font: fontBytes, themes, blocks: group, verify, semantic, ligatures, format, cacheDir: diskCache })
       if (!built) return null
       const assets = buildCssAssets(built, { embed, outDir, cwd, ...(scope ? { lang: scope } : {}) })
       return { built, tag: styleTag(assets) }

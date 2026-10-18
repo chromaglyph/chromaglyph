@@ -109,8 +109,11 @@ pre, code {
    html.dark { --chromaglyph-palette: var(--chromaglyph-dark-palette); } */
 ```
 
-输出扩展名选 `.ttf` 则写裸 sfnt，`.woff`（默认）写 WOFF1（zlib）。纯 Rust
-生态还没有成熟的 WOFF2 编码器，v1 先退 WOFF1，浏览器全部支持。
+输出扩展名选 `.ttf` 则写裸 sfnt，`.woff`（默认）写 WOFF1（zlib），`.woff2`
+写 WOFF2（Brotli，再小 15–30%——单流压缩让全部表共享一个窗口）。WOFF2 只
+装 TrueType 风味的字体，CFF 风味的产物（OTF 源）会退回 WOFF1 并在报告里
+给出警告。glyf/loca 表变换保持关闭（省下几个百分点的体积，换来绕开
+Chromium 解码器的已知坑）。
 
 从源码构建：
 
@@ -158,8 +161,9 @@ const file = await unified()
   带 CJK 的等宽字体（如 Sarasa Mono SC）。
 - 输入支持静态 TrueType（TTF）、name-keyed CFF（OTF）、WOFF1、WOFF2
   与 `.ttc` 集合（`--font-index` 选择成员）；可变 TrueType 钉到默认实例。
-  CFF2（可变 OTF）与 CID-keyed CFF 拒绝。输出为 WOFF1（或裸 sfnt）——
-  纯 Rust 生态暂无 WOFF2 编码器。
+  CFF2（可变 OTF）与 CID-keyed CFF 拒绝。输出：WOFF1（默认）、WOFF2
+  （`.woff2`，仅 TrueType 风味——CFF 风味退回 WOFF1 并警告）或裸
+  sfnt（`.ttf`）。
 - generic 模式为行内语义（见上）、一语言一字体——合并语言会让 TS 的 `type`
   给 Rust 块里的 `type` 上色。
 - 通用模式的关键词/数字需要行内有前置边界字形，行首关键字保持无色
@@ -181,7 +185,8 @@ const file = await unified()
 ## 技术选型
 
 `read-fonts` / `skrifa` / `write-fonts`（fontations 系）· rustybuzz（整形
-预言机）· syntect（语法/主题）· 可选 tree-sitter（语义层）· flate2（WOFF1）。
+预言机）· syntect（语法/主题）· 可选 tree-sitter（语义层）· flate2（WOFF1）
+· ttf2woff2（WOFF2 编码）· wuff（WOFF2 解码）。
 
 ## License
 

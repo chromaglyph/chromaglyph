@@ -16,6 +16,7 @@ const result = buildFontSafe({
   ],
   verify: true,                          // rustybuzz oracle (default on)
   ligatures: true,                       // keep the font's != -> ligatures, highlighted
+  format: 'woff2',                       // output container: 'woff' (default) | 'woff2'
   cacheDir: '.cache',                    // optional on-disk cache
 })
 // → { woff, ttf, css, themes, report, contentHash, cached }
@@ -27,6 +28,11 @@ const result = buildFontSafe({
   containers and `.ttc` collections (`fontIndex`) are unwrapped, variable
   TrueType fonts are pinned to their default instance. CFF2 (variable
   OTF) and CID-keyed CFF are rejected with an explicit error.
+- `format: 'woff2'` wraps the output in WOFF2 (Brotli, 15–30% smaller
+  than the default WOFF1); `result.woff` then carries the WOFF2 bytes.
+  TrueType-flavored builds only — CFF-flavored output (OTF sources)
+  falls back to WOFF1 with a report warning. The format is part of the
+  content hash, so both variants cache independently.
 - `ligatures: true` re-materializes the source font's ligatures
   (`!=`, `->`) as build-time rules, so they render exactly as the font
   intends while staying highlighted; sites spanning multiple colors

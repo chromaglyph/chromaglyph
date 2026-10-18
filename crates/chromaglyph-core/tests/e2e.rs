@@ -3,7 +3,7 @@
 //! `build`), then re-verified standalone from the woff bytes.
 
 use chromaglyph_core::theme::ThemeSpec;
-use chromaglyph_core::{build, verify, Block, BuildInput};
+use chromaglyph_core::{build, verify, Block, BuildInput, OutputFormat};
 use read_fonts::TableProvider;
 
 const FONT: &[u8] = include_bytes!("fixtures/JetBrainsMono-Regular.ttf");
@@ -44,6 +44,7 @@ fn two_themes_one_font() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("build + inline verify must succeed");
 
@@ -88,6 +89,7 @@ fn single_theme_still_works() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("single-theme build");
     assert_eq!(out.report.palettes.len(), 1);
@@ -107,6 +109,7 @@ fn cff_otf_builds_and_verifies() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("CFF (OTF) source must build");
 
@@ -144,6 +147,121 @@ fn cff_otf_builds_and_verifies() {
 }
 
 #[test]
+fn woff2_output_builds_and_verifies() {
+    let themes = themes();
+    let sample_blocks = blocks(SAMPLE);
+    let input = |format| BuildInput {
+        font_bytes: FONT,
+        font_index: 0,
+        themes: &themes,
+        blocks: &sample_blocks,
+        run_verify: true,
+        generic: None,
+        font_name: Some("out.woff2"),
+        semantic: None,
+        ligatures: false,
+        format,
+    };
+    let w1 = build(&input(OutputFormat::Woff)).expect("woff1 build");
+    let out = build(&input(OutputFormat::Woff2)).expect("woff2 build");
+
+    assert_eq!(&out.woff[0..4], b"wOF2");
+    assert!(
+        out.woff.len() < w1.woff.len(),
+        "woff2 {} must undercut woff1 {} on the same build",
+        out.woff.len(),
+        w1.woff.len()
+    );
+    // the CSS names the container that actually ships
+    assert!(out.css.contains("format('woff2')"), "{}", out.css);
+
+    // decode (wuff, the same oracle the input path trusts) and compare
+    // every table against the raw sfnt — the container is lossless
+    let decoded = wuff::decompress_woff2(&out.woff).expect("wuff decodes our woff2");
+    let a = read_fonts::FontRef::new(&out.ttf).unwrap();
+    let b = read_fonts::FontRef::new(&decoded).unwrap();
+    let tags: Vec<read_fonts::types::Tag> = a
+        .table_directory()
+        .table_records()
+        .iter()
+        .map(|r| r.tag())
+        .collect();
+    assert_eq!(tags.len(), b.table_directory().table_records().len());
+    for tag in tags {
+        let (mut x, mut y) = (
+            a.data_for_tag(tag).unwrap().as_bytes().to_vec(),
+            b.data_for_tag(tag).unwrap().as_bytes().to_vec(),
+        );
+        // whole-font checksum: decoders recompute it on reconstruction
+        if tag == read_fonts::types::Tag::new(b"head") && x.len() >= 12 {
+            x[8..12].fill(0);
+            y[8..12].fill(0);
+        }
+        assert_eq!(x, y, "table {tag} changed through the woff2 roundtrip");
+    }
+
+    // the standalone oracle runs from the woff2 bytes themselves
+    let result = verify(&out.woff, &blocks(SAMPLE), &themes).expect("standalone verify");
+    assert!(result.ok, "{:?}", result.failures);
+}
+
+#[test]
+fn woff2_cff_output_falls_back_to_woff1() {
+    let themes = themes();
+    let out = build(&BuildInput {
+        font_bytes: include_bytes!("fixtures/SourceCodePro-Regular.otf"),
+        font_index: 0,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+        ligatures: false,
+        format: OutputFormat::Woff2,
+    })
+    .expect("build still succeeds — the container never fails it");
+
+    // OTTO cannot ride in WOFF2 (TrueType flavor only): the fallback is
+    // WOFF1 bytes, an honest CSS format(), and a warning in the report
+    assert_eq!(&out.woff[0..4], b"wOFF", "falls back to WOFF1");
+    assert!(out.css.contains("format('woff')"), "{}", out.css);
+    assert!(
+        out.report
+            .warnings
+            .iter()
+            .any(|w| w.contains("WOFF1") && w.contains("WOFF2")),
+        "{:?}",
+        out.report.warnings
+    );
+    let result = verify(&out.woff, &blocks(SAMPLE), &themes).expect("standalone verify");
+    assert!(result.ok, "{:?}", result.failures);
+}
+
+#[test]
+fn sfnt_format_ships_no_container() {
+    let themes = themes();
+    let out = build(&BuildInput {
+        font_bytes: FONT,
+        font_index: 0,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: true,
+        generic: None,
+        font_name: Some("out.ttf"),
+        semantic: None,
+        ligatures: false,
+        format: OutputFormat::Sfnt,
+    })
+    .expect("sfnt build");
+
+    assert!(out.woff.is_empty(), "no container is computed for sfnt");
+    assert!(out.css.contains("format('truetype')"), "{}", out.css);
+    let result = verify(&out.ttf, &blocks(SAMPLE), &themes).expect("standalone verify");
+    assert!(result.ok, "{:?}", result.failures);
+}
+
+#[test]
 fn variable_ttf_is_pinned_to_default() {
     let themes = themes();
     let out = build(&BuildInput {
@@ -156,6 +274,7 @@ fn variable_ttf_is_pinned_to_default() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("variable TrueType source must build at its default instance");
 
@@ -195,6 +314,7 @@ fn woff_input_is_unwrapped() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("WOFF1 input must unwrap and build");
     assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
@@ -218,6 +338,7 @@ fn woff2_input_decodes_and_builds() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("WOFF2 input must decode and build");
     assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
@@ -276,6 +397,7 @@ fn ttc_input_extracts_the_indexed_font() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("ttc input must extract the requested member");
     assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
@@ -291,6 +413,7 @@ fn ttc_input_extracts_the_indexed_font() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     }) {
         Ok(_) => panic!("out-of-range font index must be rejected"),
         Err(err) => err,
@@ -344,6 +467,7 @@ fn ttc_apple_layout_shared_data_extracts() {
             font_name: None,
             semantic: None,
             ligatures: false,
+            format: OutputFormat::Woff,
         })
         .expect("Apple-layout ttcf member {index} must extract");
         assert!(
@@ -368,6 +492,7 @@ fn cff_ligatures_rematerialize_in_otf_builds() {
         font_name: None,
         semantic: None,
         ligatures: true,
+        format: OutputFormat::Woff,
     })
     .expect("ligature shaping must work against a CFF source");
     assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
@@ -401,6 +526,7 @@ fn cross_language_ambiguity_degrades_not_fails() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("build never fails on ambiguity");
     assert!(
@@ -426,6 +552,7 @@ fn real_tokenization_colors_function_names() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .unwrap();
     assert!(
@@ -451,6 +578,7 @@ fn emoji_and_variation_selectors_shape_and_color() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("emoji sample must build + verify");
 
@@ -486,6 +614,7 @@ fn cmap14_variation_sequence_resolves_to_variant_glyph() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("UVS sample must build + verify (oracle resolves cmap14)");
     assert!(out.report.verify.ok);
@@ -585,6 +714,7 @@ fn generic_mode_highlights_arbitrary_text() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("generic build + oracle over random samples");
 
@@ -649,6 +779,7 @@ fn generic_mode_new_languages() {
             font_name: None,
             semantic: None,
             ligatures: false,
+            format: OutputFormat::Woff,
         })
         .unwrap_or_else(|e| panic!("{}: generic build + oracle: {e}", spec.name));
         assert!(
@@ -929,6 +1060,7 @@ fn adversarial(spec: &chromaglyph_core::generic::LanguageSpec, samples: &[&str])
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("generic build");
 
@@ -995,6 +1127,7 @@ fn exact_mode_highlights_typescript() {
             font_name: None,
             semantic: None,
             ligatures: false,
+            format: OutputFormat::Woff,
         })
         .unwrap_or_else(|e| panic!("{lang}: {e}"));
         assert!(
@@ -1029,6 +1162,7 @@ fn cjk_text_is_a_barrier_and_the_warning_names_it() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("CJK sample builds and verifies");
     assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
@@ -1071,6 +1205,7 @@ fn semantic_layer_overlays_syntactic_colors() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .unwrap();
     let semantic =
@@ -1094,6 +1229,7 @@ fn semantic_layer_overlays_syntactic_colors() {
         font_name: None,
         semantic: Some(&semantic),
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("layered build + oracle");
 
@@ -1130,6 +1266,7 @@ fn exact_mode_subsets_the_font() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("subset build + oracle");
 
@@ -1192,6 +1329,7 @@ fn subset_composites_stay_in_range() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("subset build");
 
@@ -1283,6 +1421,7 @@ fn generic_font_glyphs_stay_aligned() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .expect("generic build");
 
@@ -1400,6 +1539,7 @@ fn exact_mode_restores_contextual_alternates() {
         font_name: None,
         semantic: None,
         ligatures: true,
+        format: OutputFormat::Woff,
     })
     .expect("ligature build + oracle");
 
@@ -1472,6 +1612,7 @@ fn exact_mode_restores_contextual_alternates() {
         font_name: None,
         semantic: None,
         ligatures: false,
+        format: OutputFormat::Woff,
     })
     .unwrap();
     assert_eq!(plain.report.lig_sites, 0);
@@ -1507,6 +1648,7 @@ fn injected_ligature_colored_uncolored_and_mixed() {
         font_name: None,
         semantic: None,
         ligatures: true,
+        format: OutputFormat::Woff,
     })
     .expect("colored ligature build + oracle");
     assert!(out.report.warnings.is_empty(), "{:?}", out.report.warnings);
@@ -1571,6 +1713,7 @@ fn injected_ligature_colored_uncolored_and_mixed() {
         font_name: None,
         semantic: None,
         ligatures: true,
+        format: OutputFormat::Woff,
     })
     .expect("uncolored ligature build + oracle");
     let font = FontRef::new(&out.ttf).unwrap();
@@ -1618,6 +1761,7 @@ fn injected_ligature_colored_uncolored_and_mixed() {
         font_name: None,
         semantic: Some(&overlay),
         ligatures: true,
+        format: OutputFormat::Woff,
     })
     .expect("mixed ligature build + oracle");
     assert!(

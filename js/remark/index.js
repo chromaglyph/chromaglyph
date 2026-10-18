@@ -34,6 +34,7 @@ import { buildCssAssets } from '@chromaglyph/node/css'
  *   verify?: boolean,
  *   semantic?: boolean,
  *   ligatures?: boolean,
+ *   format?: 'woff' | 'woff2',
  *   cacheDir?: string, // on-disk cache for cross-process builds; ignored when NODE_ENV=development
  *   grouping?: 'page' | 'lang',
  * }} [options]
@@ -51,6 +52,9 @@ function remarkChromaglyph(options = {}) {
     // 替换重物化为规则——连字照常渲染且保持高亮;跨颜色的连字退化为
     // 逐字符(颜色优先)。
     ligatures = false,
+    // 输出容器:woff2(Brotli,更小)或 woff(zlib)。CFF 风味的输出会
+    // 自动回退 woff 并带一条 report 警告。
+    format = 'woff',
     cacheDir,
     // 'page'（默认）：整篇文档合成一个字体；'lang'：按语言分组，一语言一
     // 字体（<pre> 带 data-chromaglyph-lang，CSS 按语言 scope）——改某语言
@@ -111,6 +115,7 @@ function remarkChromaglyph(options = {}) {
         verify,
         semantic,
         ligatures,
+        format,
         cacheDir: diskCache,
       })
       if (!result) return null

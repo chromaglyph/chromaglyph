@@ -125,8 +125,12 @@ pre, code {
    html.dark { --chromaglyph-palette: var(--chromaglyph-dark-palette); } */
 ```
 
-`.ttf` writes raw sfnt; `.woff` (default) writes WOFF1 — pure Rust has no
-mature WOFF2 encoder yet, and every browser supports WOFF1.
+`.ttf` writes raw sfnt; `.woff` (default) writes WOFF1 (zlib); `.woff2`
+writes WOFF2 (Brotli, ~15–30% smaller — one stream shares its compression
+window across all tables). WOFF2 carries TrueType-flavored fonts only, so
+a CFF-flavored build (OTF source) wraps WOFF1 with a report warning. The
+glyf/loca table transformation stays off (a known Chromium decoder hazard
+for a few percent of size).
 
 From source:
 
@@ -181,8 +185,9 @@ per-version known limitations.
 - Inputs: static TrueType (TTF), name-keyed CFF (OTF), WOFF1, WOFF2 and
   `.ttc` collections (`--font-index` picks the member); variable TrueType
   fonts are pinned to their default instance. CFF2 (variable-OTF) and
-  CID-keyed CFF sources are rejected. Output is WOFF1 (or raw sfnt) — no
-  pure-Rust WOFF2 encoder exists yet.
+  CID-keyed CFF sources are rejected. Output: WOFF1 (default), WOFF2
+  (`.woff2`, TrueType-flavored builds only — CFF-flavored output falls
+  back to WOFF1 with a warning) or raw sfnt (`.ttf`).
 - Generic mode is line-scoped (see above) and one language per font —
   merging languages would color `type` in a Rust block via TS rules.
 - Generic mode keywords/numbers need a preceding in-line boundary
@@ -208,7 +213,7 @@ audit uses a suffix-array index over glyph sequences — O(n log n) queries,
 
 `read-fonts` / `skrifa` / `write-fonts` (fontations) · rustybuzz (shaping
 oracle) · syntect (grammars & themes) · optional tree-sitter (semantic) ·
-flate2 (WOFF1).
+flate2 (WOFF1) · ttf2woff2 (WOFF2 encode) · wuff (WOFF2 decode).
 
 ## License
 

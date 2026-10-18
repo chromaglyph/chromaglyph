@@ -5,6 +5,9 @@
 //!       [--theme dark-plus --theme light-plus | --theme my-theme.json ...] \
 //!       [--css snippet.css] [--report r.json] [--no-verify]
 //!   chromaglyph verify --font out.woff --input code.rs [--lang rust] [--theme ...]
+//!
+//! The output container follows --output's extension: .ttf raw sfnt,
+//! .woff2 WOFF2, anything else WOFF1.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -58,7 +61,9 @@ enum Command {
         /// palettes; the first is the default.
         #[arg(long = "theme", default_values_t = default_themes())]
         themes: Vec<String>,
-        /// Output font path; .ttf writes raw sfnt, .woff (default) wraps WOFF1
+        /// Output font path; .ttf writes raw sfnt, .woff2 wraps WOFF2
+        /// (Brotli; CFF-flavored output falls back to WOFF1 with a
+        /// warning), any other extension wraps WOFF1
         #[arg(long, default_value = "chromaglyph.woff")]
         output: PathBuf,
         /// Optional path for the companion CSS (font-face + palettes)
@@ -86,7 +91,7 @@ enum Command {
     },
     /// Re-check a built font against input content (the rustybuzz oracle).
     Verify {
-        /// Font produced by `chromaglyph build` (.ttf or .woff)
+        /// Font produced by `chromaglyph build` (.ttf, .woff or .woff2)
         #[arg(long)]
         font: PathBuf,
         /// The same source file that was built with
@@ -233,6 +238,11 @@ fn cmd_build(
             .collect()
     };
 
+    let format = match output.extension().and_then(|e| e.to_str()) {
+        Some("ttf") => chromaglyph_core::OutputFormat::Sfnt,
+        Some("woff2") => chromaglyph_core::OutputFormat::Woff2,
+        _ => chromaglyph_core::OutputFormat::Woff,
+    };
     let out = build(&BuildInput {
         font_bytes: &font_bytes,
         font_index,
@@ -247,6 +257,7 @@ fn cmd_build(
             .as_deref(),
         semantic: semantic.then_some(&semantic_cb as chromaglyph_core::SemanticLayer),
         ligatures: ligatures && generic_spec.is_none(),
+        format,
     })?;
 
     let is_ttf = output.extension().map(|e| e == "ttf").unwrap_or(false);

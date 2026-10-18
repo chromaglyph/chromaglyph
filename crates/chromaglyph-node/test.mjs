@@ -40,3 +40,40 @@ test('unknown generic language degrades safely / throws loudly', () => {
   assert.equal(buildFontSafe({ font: FONT, themes: ['dark-plus'], blocks: [], generic: 'cobol' }), null)
   assert.throws(() => buildFont({ font: FONT, themes: ['dark-plus'], blocks: [], generic: 'cobol' }))
 })
+
+test('format woff2 ships a wOF2 container and its own cache entry', () => {
+  clearCache()
+  const base = {
+    font: FONT,
+    themes: ['dark-plus', 'light-plus'],
+    blocks: [{ id: 'b0', lang: 'rust', text: 'let x = "hi"; // c\n' }],
+  }
+  const w1 = buildFont(base)
+  const w2 = buildFont({ ...base, format: 'woff2' })
+  // the container follows the option: wOF2 magic, and smaller bytes
+  assert.equal(Buffer.from(w1.woff).subarray(0, 4).toString('latin1'), 'wOFF')
+  assert.equal(Buffer.from(w2.woff).subarray(0, 4).toString('latin1'), 'wOF2')
+  assert.ok(w2.woff.length < w1.woff.length, `woff2 ${w2.woff.length} < woff1 ${w1.woff.length}`)
+  // format is part of the content hash: no cross-container cache hits
+  assert.notEqual(w1.contentHash, w2.contentHash)
+  assert.ok(buildFont({ ...base, format: 'woff2' }).cached, 'same format hits the cache')
+  assert.ok(buildFont(base).cached, 'and so does the woff1 variant again')
+  assert.throws(() => buildFont({ ...base, format: 'eot' }), /unknown format/)
+})
+
+test('CFF-flavored woff2 request falls back to woff1 with a warning', () => {
+  clearCache()
+  const otf = readFileSync('../chromaglyph-core/tests/fixtures/SourceCodePro-Regular.otf')
+  const out = buildFont({
+    font: otf,
+    themes: ['dark-plus'],
+    blocks: [{ id: 'b0', lang: 'rust', text: 'let x = "hi"; // c\n' }],
+    format: 'woff2',
+  })
+  assert.equal(Buffer.from(out.woff).subarray(0, 4).toString('latin1'), 'wOFF')
+  const report = JSON.parse(out.report)
+  assert.ok(
+    report.warnings.some((w) => w.includes('WOFF1') && w.includes('WOFF2')),
+    JSON.stringify(report.warnings),
+  )
+})

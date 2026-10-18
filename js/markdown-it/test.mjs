@@ -219,3 +219,12 @@ test('semantic option produces its own build (distinct hash)', () => {
   const semantic = md2.chromaglyph().contentHash
   assert.notStrictEqual(plain, semantic, 'semantic joins the content hash')
 })
+
+test("format: 'woff2' embeds a woff2 data URI", () => {
+  clearCache()
+  const md = makeMd({ format: 'woff2' })
+  const html = md.render(MARKDOWN)
+  assert.ok(html.includes('data:font/woff2;base64,'), 'woff2 data URI')
+  assert.ok(html.includes("format('woff2')"), 'css names the woff2 container')
+  assert.ok(!html.includes('data:font/woff;'), 'not the woff1 mime')
+})

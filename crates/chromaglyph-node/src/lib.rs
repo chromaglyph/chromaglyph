@@ -26,7 +26,7 @@ use napi_derive::napi;
 use sha2::{Digest, Sha256};
 
 use chromaglyph_core::theme::{load_theme_arg, ThemeSpec};
-use chromaglyph_core::{build, Block, BuildInput};
+use chromaglyph_core::{build, Block, BuildInput, OutputFormat};
 
 /// Bump when the compiled artifacts' semantics change shape.
 const CACHE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -73,6 +73,10 @@ pub struct BuildOptions {
     /// so `!=`, `->`, … render exactly as the font intends while staying
     /// highlighted. Ignored with `generic`.
     pub ligatures: Option<bool>,
+    /// Output container: `'woff'` (default, per-table zlib) or `'woff2'`
+    /// (Brotli). CFF-flavored output (OTF sources) falls back to WOFF1
+    /// with a report warning.
+    pub format: Option<String>,
 }
 
 #[napi(object)]
@@ -85,6 +89,7 @@ pub struct ThemeInfo {
 
 #[napi(object)]
 pub struct BuildResult {
+    /// The shipping artifact: WOFF1 or WOFF2 bytes per `BuildOptions.format`.
     pub woff: Buffer,
     pub ttf: Buffer,
     /// Generic companion CSS from the core (for reference / custom setups).
@@ -157,6 +162,10 @@ fn content_hash(opts: &BuildOptions) -> String {
     });
     // font_index selects a different collection member (a different font)
     hasher.update(opts.font_index.unwrap_or(0).to_be_bytes());
+    // the container format changes the shipped bytes; it must change the
+    // hash too, or a woff2 build would wrongly hit the woff1 cache
+    hasher.update(opts.format.as_deref().unwrap_or("woff").as_bytes());
+    hasher.update([0]);
     if let Some(lang) = &opts.generic {
         hasher.update(lang.as_bytes());
         hasher.update([0]);
@@ -276,6 +285,16 @@ fn build_uncached(opts: &BuildOptions) -> napi::Result<BuildResult> {
         ),
         None => None,
     };
+    let format = match opts.format.as_deref() {
+        None | Some("woff") => OutputFormat::Woff,
+        Some("woff2") => OutputFormat::Woff2,
+        Some(other) => {
+            return Err(napi::Error::new(
+                Status::InvalidArg,
+                format!("unknown format '{other}' (expected 'woff' or 'woff2')"),
+            ))
+        }
+    };
 
     let out = build(&BuildInput {
         font_bytes: &font,
@@ -291,6 +310,7 @@ fn build_uncached(opts: &BuildOptions) -> napi::Result<BuildResult> {
             opts.semantic.unwrap_or(false).then_some(&semantic_cb)
         },
         ligatures: opts.ligatures.unwrap_or(false) && generic_spec.is_none(),
+        format,
     })
     .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
 

@@ -1,8 +1,14 @@
-//! WOFF1 (zlib) wrapping of the produced sfnt.
+//! WOFF wrapping of the produced sfnt.
 //!
-//! A mature pure-Rust woff2 *encoder* doesn't exist yet (it needs Brotli and
-//! the woff2 transform stack), so v1 ships WOFF1 — every browser accepts it
-//! and `@font-face` is identical. M-later can swap in woff2.
+//! Two containers, one function each: WOFF1 (per-table zlib) and WOFF2
+//! (single Brotli stream, via the pure-Rust `ttf2woff2` encoder). The
+//! glyf/loca table transformation is deliberately left off — upstream
+//! reports reconstructed glyf can exceed the short-loca limit without
+//! switching formats, which Chromium rejects (fonttools still reads it);
+//! the untransformed path costs only a few percent and is what every
+//! decoder agrees on. WOFF2 also carries only TrueType-flavored fonts in
+//! that encoder, so CFF-flavored output (OTF sources) wraps WOFF1 —
+//! decided in [`crate::build`], not here.
 
 use std::io::{Read, Write};
 
@@ -87,6 +93,14 @@ pub fn wrap(ttf: &[u8]) -> Result<Vec<u8>, BuildError> {
     woff.extend_from_slice(&body);
     debug_assert_eq!(woff.len(), total as usize);
     Ok(woff)
+}
+
+/// Wrap a built sfnt (ttf) into WOFF2 (single Brotli stream, tables
+/// untransformed). TrueType flavor only — the caller falls back to WOFF1
+/// for CFF-flavored output.
+pub fn wrap_woff2(ttf: &[u8]) -> Result<Vec<u8>, BuildError> {
+    ttf2woff2::encode(ttf, ttf2woff2::BrotliQuality::default())
+        .map_err(|e| BuildError::Woff(format!("woff2 encode: {e}")))
 }
 
 /// Unwrap a WOFF1 back into a standalone sfnt (for `chromaglyph verify`).
@@ -237,5 +251,60 @@ mod tests {
         let mut out = Vec::new();
         z.read_to_end(&mut out).unwrap();
         assert_eq!(out, data);
+    }
+
+    #[test]
+    fn woff2_wrap_decodes_back_losslessly() {
+        // any parseable sfnt exercises the wrap; wuff (the decoder the input
+        // path already uses, verified byte-identical to google/woff2) is the
+        // oracle: per-table bytes must survive the container unchanged
+        let ttf = std::fs::read("tests/fixtures/JetBrainsMono-Regular.ttf").unwrap();
+        let woff2 = wrap_woff2(&ttf).unwrap();
+        assert_eq!(&woff2[0..4], b"wOF2");
+        let decoded = wuff::decompress_woff2(&woff2).unwrap();
+        let a = FontRef::new(&ttf).unwrap();
+        let b = FontRef::new(&decoded).unwrap();
+        let tags: Vec<Tag> = a
+            .table_directory()
+            .table_records()
+            .iter()
+            .map(|r| r.tag())
+            .collect();
+        assert_eq!(tags.len(), b.table_directory().table_records().len());
+        for tag in tags {
+            let (mut x, mut y) = (
+                a.data_for_tag(tag).unwrap().as_bytes().to_vec(),
+                b.data_for_tag(tag).unwrap().as_bytes().to_vec(),
+            );
+            // head.checkSumAdjustment is a checksum over the whole font, so
+            // decoders recompute it on reconstruction — the one field that
+            // legitimately differs. Mask it on both sides.
+            if tag == Tag::new(b"head") && x.len() >= 12 {
+                x[8..12].fill(0);
+                y[8..12].fill(0);
+            }
+            assert_eq!(x, y, "table {tag} changed through the woff2 roundtrip");
+        }
+    }
+
+    #[test]
+    fn woff2_is_smaller_than_woff1() {
+        let ttf = std::fs::read("tests/fixtures/JetBrainsMono-Regular.ttf").unwrap();
+        let w1 = wrap(&ttf).unwrap();
+        let w2 = wrap_woff2(&ttf).unwrap();
+        // brotli over one stream beats per-table zlib; an encoder silently
+        // falling back to stored tables would not even undercut the raw sfnt
+        assert!(
+            w2.len() < w1.len(),
+            "woff2 {} vs woff1 {}",
+            w2.len(),
+            w1.len()
+        );
+        assert!(
+            w2.len() < ttf.len(),
+            "woff2 {} vs ttf {}",
+            w2.len(),
+            ttf.len()
+        );
     }
 }

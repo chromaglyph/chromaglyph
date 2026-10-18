@@ -28,18 +28,25 @@ export function buildCssAssets(result, options = {}) {
   const hash8 = result.contentHash.slice(0, 8)
   const family = `chromaglyph-${hash8}`
 
+  // the container is whatever the native build actually shipped (a WOFF2
+  // request falls back to WOFF1 bytes for CFF-flavored output) — sniff the
+  // bytes, never assume the option
+  const bytes = Buffer.from(result.woff)
+  const isWoff2 = bytes.subarray(0, 4).equals(Buffer.from('wOF2'))
+  const ext = isWoff2 ? 'woff2' : 'woff'
+
   let fontUrl
   if (embed) {
-    fontUrl = `data:font/woff;base64,${Buffer.from(result.woff).toString('base64')}`
+    fontUrl = `data:font/${ext};base64,${bytes.toString('base64')}`
   } else {
     mkdirSync(resolve(cwd, outDir), { recursive: true })
-    const fileName = `chromaglyph-${hash8}.woff`
-    writeFileSync(resolve(cwd, outDir, fileName), result.woff)
+    const fileName = `chromaglyph-${hash8}.${ext}`
+    writeFileSync(resolve(cwd, outDir, fileName), bytes)
     fontUrl = `./${fileName}`
   }
 
   let css = `/* chromaglyph ${hash8} */\n`
-  css += `@font-face {\n  font-family: '${family}';\n  src: url(${fontUrl}) format('woff');\n}\n`
+  css += `@font-face {\n  font-family: '${family}';\n  src: url(${fontUrl}) format('${ext}');\n}\n`
   for (const [i, theme] of result.themes.entries()) {
     css += `@font-palette-values --${family}-${slug(theme.name)} {\n  font-family: ${family};\n  base-palette: ${i};\n}\n`
   }
