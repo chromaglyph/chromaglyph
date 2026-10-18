@@ -49,7 +49,7 @@ tokenize+theme → compile → fontbuild → verify
   一次 shaping，把每个替换重物化为规则——`!=`、`->` 以及 JetBrains Mono
   的上下文变体都按字体本来的样子渲染，同时保持高亮。跨颜色的连字位点
   退化为逐字符渲染（颜色优先——一个字形只能有一种颜色）。
-- **generic**（`--generic rust|js|ts|python|go|java|c|cpp|csharp`）：不需要指定内容——
+- **generic**（`--generic rust|js|ts|python|go|java|c|cpp|csharp|php|ruby|lua|shell`）：不需要指定内容——
   一个字体高亮该语言的**任意**文本（关键字、注释、字符串、数字），纯靠字形
   替换推进状态，思路即原项目的 FSM，但从语言 spec 自动合成，只需约 100 条
   规则。一语言一字体。着色为行内语义：浏览器对 `pre` 逐行整形，状态在换行处

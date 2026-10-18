@@ -82,8 +82,8 @@ mod spec;
 pub use engine::synthesize;
 pub use langs::{
     c::spec as c, cpp::spec as cpp, csharp::spec as csharp, go::spec as go, java::spec as java,
-    javascript::spec as javascript, python::spec as python, rust::spec as rust,
-    typescript::spec as typescript,
+    javascript::spec as javascript, lua::spec as lua, php::spec as php, python::spec as python,
+    ruby::spec as ruby, rust::spec as rust, shell::spec as shell, typescript::spec as typescript,
 };
 pub use lex::{lex, Tok};
 pub use oracle::{sample_texts, verify_generic};
@@ -101,8 +101,12 @@ pub fn spec_by_name(name: &str) -> Result<LanguageSpec, BuildError> {
         "c" => Ok(c()),
         "cpp" | "c++" | "cxx" => Ok(cpp()),
         "csharp" | "cs" | "c#" => Ok(csharp()),
+        "php" => Ok(php()),
+        "ruby" | "rb" => Ok(ruby()),
+        "lua" => Ok(lua()),
+        "shell" | "sh" | "bash" => Ok(shell()),
         other => Err(BuildError::Tokenize(format!(
-            "unknown generic language {other:?}; available: rust, js, ts, python, go, java, c, cpp, csharp"
+            "unknown generic language {other:?}; available: rust, js, ts, python, go, java, c, cpp, csharp, php, ruby, lua, shell"
         ))),
     }
 }

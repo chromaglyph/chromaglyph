@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **generic mode: PHP, Ruby, Lua, Shell** (`--generic php` / `ruby` |
+  `rb` / `lua` / `shell` | `sh` | `bash`, node `buildFont({generic:
+  ...})`): all four fit the existing spec machinery —
+  - **PHP**: `$` is an identifier char (`$return` is a name, `$var`
+    inside double quotes stays string body), `{$x}` interpolation
+    holes, `//` `#` `/* */` comments.
+  - **Ruby**: `#{x}` interpolation, `#` comments; symbols (`:name`)
+    and heredocs deliberately not modeled (a symbol opener would
+    swallow the line; heredocs span lines by design).
+  - **Lua**: `--` and `--[[ ]]` comments, `[[` long strings (a span —
+    `--[[` wins longest-first over both `--` and `[[`).
+  - **Shell**: `'` raw strings (no escapes — exactly shell semantics),
+    `"` strings with `${var}` holes, `#` comments (mid-word hashes
+    color too — a glyph FSM cannot see word starts; documented).
+  - **engine/lexer fix found by shell's `$1`**: interpolation
+    opener/closer chars (`$ { }`) carry dedicated glyph classes in the
+    engine and do not anchor keywords or numbers there — the reference
+    lexer's boundary predicate disagreed (latent since JS templates;
+    `{keyword` would have diverged too). The lexer now matches the
+    engine, verified by new interpolation-heavy adversarial samples
+    for all four languages.
+
 - **generic mode: C#** (`--generic csharp` / `cs` / `c#`, node
   `buildFont({generic: 'csharp'})`): keyword groups
   (control / storage.type / storage.modifier / other / constants), `"`

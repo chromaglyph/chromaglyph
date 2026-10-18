@@ -56,6 +56,15 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                 .any(|s| s.open.contains(c) || s.close.contains(c))
             && c != '.'
             && c != '\\'
+            // interpolation opener/closer chars carry their own glyph
+            // classes in the engine (exact-sequence `${` matching), so
+            // they stop anchoring keywords and numbers there too — the
+            // lexer must agree or the oracle diverges (shell `$1` found
+            // it; js `{keyword` was latent)
+            && !spec.strings.iter().any(|s| match s.interpolation {
+                Some((open, close)) => open.contains(c) || close == c,
+                None => false,
+            })
     };
     let starts = |i: usize, delim: &str| -> bool {
         let cs: Vec<char> = delim.chars().collect();
