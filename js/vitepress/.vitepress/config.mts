@@ -29,6 +29,9 @@ export default defineConfig({
         // rejected by the client compiler / entity-escaped by SSR, only a
         // <link rel="stylesheet"> reaches the browser (see plugin README)
         style: 'link',
+        // keep the font's own ligatures (!= -> === …) while highlighted;
+        // mixed-color sites degrade to per-char text (colors win)
+        ligatures: true,
         semantic: true,
         cacheDir: '.chromaglyph-cache',
       })

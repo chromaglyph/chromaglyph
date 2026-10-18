@@ -43,13 +43,14 @@ Inspect `file.data.chromaglyph` for `{ cached, contentHash, css, warnings }`.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `font` | — | **Required.** Path or buffer of a static TrueType font (e.g. JetBrains Mono). |
+| `font` | — | **Required.** Path or buffer of the source font: static TTF (TrueType) or OTF (name-keyed CFF), a WOFF1 container, or a variable TrueType font (pinned to its default instance; CFF2/CID-keyed CFF rejected). |
 | `themes` | `['dark-plus', 'light-plus']` | Builtin theme names or paths to VS Code `.json` / TextMate `.tmTheme` files. |
 | `langs` | `null` | Filter fences by language (`['rust', 'ts']`); `null` takes every fenced block. |
 | `embed` | `true` | Inline the font as a data: URI; `false` emits files into `outDir`. |
 | `outDir` | `'chromaglyph-out'` | Where emitted font/CSS assets go (`embed: false`). |
 | `verify` | `true` | Run the rustybuzz oracle over the produced font before shipping it. |
 | `semantic` | `false` | Overlay tree-sitter semantic colors (parameters, variables-as-scoped, types, calls) on top of the syntactic highlighting — rust/js/ts/python/java only; other languages silently stay syntactic. |
+| `ligatures` | `false` | Preserve the source font's ligatures (`!=`, `->`, `www`, …): every substitution the font's own shaping performs is re-materialized as a build-time rule, so ligatures render exactly as the font intends while staying highlighted. Without it the source font's layout tables are dropped (they would fight the coloring rules) and ligature sequences render per-character. Ligature sites spanning multiple colors degrade to plain per-char text (colors win; warnings name them). |
 | `cacheDir` | — | Optional on-disk cache directory for incremental site builds. Ignored when `NODE_ENV=development` (dev-server HMR would write one font per intermediate edit state). |
 | `grouping` | `'page'` | `'page'` batches all code blocks of a document into ONE font; `'lang'` builds one font per language — blocks carry `data-chromaglyph-lang` and the CSS scopes each font to its own language. Editing one language's snippet then rebuilds only that language's font, and identical text under different languages can highlight each its own way. Costs one subset base font (~10K) per extra language on a page. |
 

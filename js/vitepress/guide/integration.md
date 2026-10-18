@@ -22,6 +22,9 @@ export default defineConfig({
         font: resolve(process.cwd(), 'JetBrainsMono-Regular.ttf'),
         themes: ['dark-plus', 'light-plus'],
         style: 'link',
+        // keep the font's own ligatures (!= -> === …) while highlighted;
+        // mixed-color sites degrade to per-char text (colors win)
+        ligatures: true,
         cacheDir: '.chromaglyph-cache',
       })
     },
