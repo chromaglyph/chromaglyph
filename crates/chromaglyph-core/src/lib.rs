@@ -394,9 +394,9 @@ fn render_css(themes: &[ThemeSpec], font_name: &str) -> String {
     css.push_str("}\n");
     // second theme switches automatically with the OS color scheme
     if let Some(light) = themes.get(1) {
-        css.push_str(&format!(
-            "\n@media (prefers-color-scheme: light) {{\n  pre, code {{\n    font-palette: var(--chromaglyph-palette, var(--chromaglyph-light-palette));\n",
-        ));
+        css.push_str(
+            "\n@media (prefers-color-scheme: light) {\n  pre, code {\n    font-palette: var(--chromaglyph-palette, var(--chromaglyph-light-palette));\n",
+        );
         if let Some(bg) = light.background {
             css.push_str(&format!(
                 "    background: var(--chromaglyph-bg, {});\n",

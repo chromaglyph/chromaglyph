@@ -81,8 +81,9 @@ mod spec;
 
 pub use engine::synthesize;
 pub use langs::{
-    c::spec as c, cpp::spec as cpp, go::spec as go, java::spec as java, javascript::spec as javascript, python::spec as python,
-    rust::spec as rust, typescript::spec as typescript,
+    c::spec as c, cpp::spec as cpp, go::spec as go, java::spec as java,
+    javascript::spec as javascript, python::spec as python, rust::spec as rust,
+    typescript::spec as typescript,
 };
 pub use lex::{lex, Tok};
 pub use oracle::{sample_texts, verify_generic};

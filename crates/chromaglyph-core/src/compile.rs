@@ -1313,7 +1313,7 @@ impl Matcher {
         };
         let mut k = 1usize;
         loop {
-            sa.sort_unstable_by(|&a, &b| key(a as usize, &rank, k).cmp(&key(b as usize, &rank, k)));
+            sa.sort_unstable_by_key(|&a| key(a as usize, &rank, k));
             next[sa[0] as usize] = 0;
             for w in 1..n {
                 let (prev, cur) = (sa[w - 1] as usize, sa[w] as usize);

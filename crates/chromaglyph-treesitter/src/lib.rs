@@ -758,7 +758,7 @@ mod tests {
                 .iter()
                 .filter(|s| &src[s.start..s.end] == needle)
                 .map(|s| s.scope)
-                .last()
+                .next_back()
         };
         assert_eq!(last("Foo"), Some(TYPE));
         // the TYPE span must be the last one covering the base — the

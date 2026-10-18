@@ -87,13 +87,13 @@ pub fn spec() -> LanguageSpec {
             StringKind {
                 quote: '"',
                 escapes: true,
-            interpolation: None,
+                interpolation: None,
                 scope: "string.quoted.double.java",
             },
             StringKind {
                 quote: '\'',
                 escapes: true,
-            interpolation: None,
+                interpolation: None,
                 scope: "string.quoted.single.java",
             },
         ],

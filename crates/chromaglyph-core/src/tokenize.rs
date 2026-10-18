@@ -119,7 +119,6 @@ fn syntect_color(c: Color) -> syntect::highlighting::Color {
     }
 }
 
-
 /// Overlay a semantic layer onto the syntactic colors: each span is a
 /// `(byte_start, byte_end, scope)` triple; where a theme colors the scope,
 /// every char of the span takes that color (semantic wins over syntax).
@@ -142,12 +141,13 @@ pub fn apply_semantic(
         .collect();
     let total_chars = text.chars().count();
     for (start, end, scope) in spans {
-        let resolved: Vec<Option<Color>> =
-            themes.iter().map(|t| t.scope_color(scope)).collect();
+        let resolved: Vec<Option<Color>> = themes.iter().map(|t| t.scope_color(scope)).collect();
         if resolved.iter().all(|c| c.is_none()) {
             continue; // no theme knows this scope: keep syntactic colors
         }
-        let Some(&cs) = char_at.get(start) else { continue };
+        let Some(&cs) = char_at.get(start) else {
+            continue;
+        };
         let ce = char_at.get(end).copied().unwrap_or(total_chars);
         if ce <= cs {
             continue;
@@ -220,4 +220,3 @@ mod tests {
         );
     }
 }
-
