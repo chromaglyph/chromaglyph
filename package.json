@@ -5,7 +5,8 @@
   "scripts": {
     "build:native": "pnpm --filter @chromaglyph/node build",
     "test": "pnpm -r --if-present test",
-    "smoke": "node scripts/browser-smoke.mjs"
+    "smoke": "node scripts/browser-smoke.mjs",
+    "bump:patch": "scripts/bump.sh patch"
   },
   "devDependencies": {
     "playwright": "^1.64.1"
