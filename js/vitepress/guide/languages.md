@@ -1,6 +1,6 @@
-# Eight languages
+# Nine languages
 
-The eight blocks on this page are batched into **one font** per render
+The nine blocks on this page are batched into **one font** per render
 (cross-language global disambiguation). Every block copies out as plain
 text.
 
@@ -180,5 +180,32 @@ int run(demo::Stack<int> &s) {
     if (total == 0) return -1;
     delete nullptr; // never reached — nullptr is a constant, delete blue
     return sizeof(int) * 2;
+}
+```
+
+## C#
+
+Verbatim strings `@"..."` color as strings with the backslash taken
+literally (the two-char opener beats the plain quote at the same
+position); verbatim identifiers like `@return` stay uncolored.
+Contextual keywords (`value`, `when`, `where`) are deliberately absent —
+a stateless in-font lexer cannot tell them from ordinary names.
+
+```csharp
+using System.Collections.Generic;
+
+namespace Demo {
+public class Stack<T> {
+    private readonly List<T> items = new();
+
+    public void Push(T value) => items.Add(value);
+    public int Count => items.Count;
+
+    public static string Describe(string path) {
+        var raw = @"C:\temp\";           // verbatim: backslashes are literal
+        var msg = $"loaded {path} from {raw}";
+        return msg; // interpolated colors as an ordinary string
+    }
+}
 }
 ```

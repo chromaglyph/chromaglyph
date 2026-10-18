@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **generic mode: C#** (`--generic csharp` / `cs` / `c#`, node
+  `buildFont({generic: 'csharp'})`): keyword groups
+  (control / storage.type / storage.modifier / other / constants), `"`
+  strings and `'` char literals with escapes, `//` + `///` doc + `/* */`
+  comments, numbers. C#-specific calls: verbatim `@"..."` strings are a
+  span kind — the two-char opener beats the plain `"` string at the same
+  position, backslashes are plain body, and the doubled-`""` escape is
+  approximated by closing at the first quote (line-scoped best effort);
+  verbatim identifiers (`@return`) stay uncolored because `@` lives in
+  a span opener and is therefore not a boundary glyph; `$"interpolated"`
+  colors as an ordinary string (`$` plain, holes are string body).
+  Contextual keywords (`value`, `when`, `where`) are deliberately absent
+  — a stateless in-font lexer would over-color ordinary identifiers.
+  Curated + adversarial oracle samples and lexer unit tests included.
+
 - **CFF subsetting (exact mode)** — OTF sources now subset like TTF
   sources instead of shipping the full charset: the CharStrings INDEX
   is rebuilt with only the glyphs the blocks use (charstrings are

@@ -111,6 +111,7 @@ fn curated(name: &str) -> Vec<String> {
     match name {
         "c" => langs::c::samples(),
         "cpp" => langs::cpp::samples(),
+        "csharp" => langs::csharp::samples(),
         "go" => langs::go::samples(),
         "java" => langs::java::samples(),
         "javascript" => langs::javascript::samples(),

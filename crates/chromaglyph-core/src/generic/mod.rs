@@ -81,7 +81,7 @@ mod spec;
 
 pub use engine::synthesize;
 pub use langs::{
-    c::spec as c, cpp::spec as cpp, go::spec as go, java::spec as java,
+    c::spec as c, cpp::spec as cpp, csharp::spec as csharp, go::spec as go, java::spec as java,
     javascript::spec as javascript, python::spec as python, rust::spec as rust,
     typescript::spec as typescript,
 };
@@ -100,8 +100,9 @@ pub fn spec_by_name(name: &str) -> Result<LanguageSpec, BuildError> {
         "java" => Ok(java()),
         "c" => Ok(c()),
         "cpp" | "c++" | "cxx" => Ok(cpp()),
+        "csharp" | "cs" | "c#" => Ok(csharp()),
         other => Err(BuildError::Tokenize(format!(
-            "unknown generic language {other:?}; available: rust, js, ts, python, go, java, c, cpp"
+            "unknown generic language {other:?}; available: rust, js, ts, python, go, java, c, cpp, csharp"
         ))),
     }
 }

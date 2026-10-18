@@ -631,6 +631,7 @@ fn generic_mode_new_languages() {
         (chromaglyph_core::generic::java(), 250),
         (chromaglyph_core::generic::c(), 300),
         (chromaglyph_core::generic::cpp(), 380),
+        (chromaglyph_core::generic::csharp(), 380),
     ] {
         let out = build(&BuildInput {
             font_bytes: FONT,
@@ -754,6 +755,31 @@ fn generic_mode_adversarial_new_languages() {
             "namespace template typename operator public private",
             "\nreturn at_line_start\nclass at_line_start\n42 at_line_start",
             "nullptr\nnullptr nullptrx xnullptr",
+        ],
+    );
+    adversarial(
+        &chromaglyph_core::generic::csharp(),
+        &[
+            "'only char'",
+            "\"only string\"",
+            "char q = '\\''; char b = '\\\\';",
+            "string s = \"a\\\"b\"; char t = 'x';",
+            "'a\"b' \"c'd' e\"",
+            "'' \"\"@\"\" $\"\"",
+            "return//c\nint",
+            "\"unterminated string return int",
+            "// 'unterminated' comment return int",
+            "/* unterminated block return int",
+            "classclass class_ _class 1class",
+            "@\"unterminated verbatim return int",
+            "@\"He said \"\"hi\"\" today\" + \"ok\"",
+            "string v = @\"back\\slash \"is\" literal\";",
+            "string i = $\"sum = {a + b} done\";",
+            "x = '\"' / \"'\" // \"'\nq = '\\\"'",
+            "namespace using nameof typeof await",
+            "\nreturn at_line_start\nclass at_line_start\n42 at_line_start",
+            "nameof\nnameof nameofx xnameof",
+            "@return return @return@ @\"x\"",
         ],
     );
 }

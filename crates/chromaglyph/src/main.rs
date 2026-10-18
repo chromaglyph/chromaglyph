@@ -49,7 +49,7 @@ enum Command {
         /// Generic mode: build a font that highlights ANY text of this
         /// language (keywords, comments, strings, numbers) instead of
         /// compiling --input; one of `rust`, `js`, `ts`, `python`, `go`,
-        /// `java`, `c`, `cpp`
+        /// `java`, `c`, `cpp`, `csharp`
         #[arg(long, conflicts_with = "input")]
         generic: Option<String>,
         /// Theme: builtin name (`dark-plus`, `light-plus`) or a path to a

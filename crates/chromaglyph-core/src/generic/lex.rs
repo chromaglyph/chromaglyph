@@ -231,7 +231,7 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generic::{go, java, javascript, python, rust};
+    use crate::generic::{csharp, go, java, javascript, python, rust};
 
     fn toks(s: &str) -> Vec<Tok> {
         // everything mapped except the barrier chars that shape no glyph
@@ -612,6 +612,54 @@ mod tests {
         let t = lex(&spec, "x return nil;", &|_| true);
         assert_eq!(&t[2..8], &[Tok::Keyword(0); 6], "control group");
         assert_eq!(&t[9..12], &[Tok::Keyword(2); 3], "constant group");
+    }
+
+    #[test]
+    fn lex_csharp_verbatim_and_doc() {
+        let spec = csharp();
+        // the two-char `@"` span beats the plain `"` string kind at the
+        // same position (spans match longest-first, strings come after)
+        let t = lex(&spec, "a @\"x\" b", &|_| true);
+        assert_eq!(
+            &t[2..4],
+            &[Tok::SpanOpen(3); 2],
+            "@\" opens the verbatim span"
+        );
+        assert_eq!(t[4], Tok::SpanBody(3));
+        assert_eq!(t[5], Tok::SpanClose(3));
+        // a backslash inside a verbatim string is plain body (no escapes)
+        let t = lex(&spec, "@\"a\\b\"", &|_| true);
+        assert_eq!(t[3], Tok::SpanBody(3));
+        assert_eq!(t[4], Tok::SpanBody(3));
+        // doubled quotes close at the first one (documented approximation)
+        let t = lex(&spec, "@\"\"\"x\"", &|_| true);
+        assert_eq!(&t[0..2], &[Tok::SpanOpen(3); 2]);
+        assert_eq!(t[2], Tok::SpanClose(3));
+        // `///` (3 chars) beats `//` (2) at the same position
+        let t = lex(&spec, "/// doc\n// line", &|_| true);
+        assert_eq!(&t[0..3], &[Tok::SpanOpen(0); 3]);
+        assert_eq!(&t[8..10], &[Tok::SpanOpen(1); 2]);
+        // ordinary strings keep escaping; `$"` interpolates nothing (flat
+        // engine): the `$` stays plain and the quote opens a string
+        let t = lex(&spec, "s = $\"{a}\";", &|_| true);
+        assert_eq!(t[4], Tok::Plain);
+        assert_eq!(t[5], Tok::StrOpen(0));
+        assert_eq!(&t[6..9], &[Tok::StrBody(0); 3]);
+        assert_eq!(t[9], Tok::StrClose(0));
+    }
+
+    #[test]
+    fn lex_csharp_verbatim_identifiers_stay_plain() {
+        let spec = csharp();
+        // '@' before a keyword is a verbatim identifier: '@' lives in the
+        // span opener, so it is not a boundary glyph and the word cannot
+        // anchor its keyword rule
+        let t = lex(&spec, "a @return b", &|_| true);
+        assert_eq!(&t[2..3], &[Tok::Plain; 1]);
+        assert_eq!(&t[3..9], &[Tok::Plain; 6], "@return is an identifier");
+        // without the '@', return is a control keyword
+        let t = lex(&spec, "a return b", &|_| true);
+        assert_eq!(&t[2..8], &[Tok::Keyword(0); 6]);
     }
 
     #[test]
