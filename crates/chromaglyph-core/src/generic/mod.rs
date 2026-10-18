@@ -81,13 +81,14 @@ mod spec;
 
 pub use engine::synthesize;
 pub use langs::{
-    c::spec as c, cpp::spec as cpp, csharp::spec as csharp, go::spec as go, java::spec as java,
-    javascript::spec as javascript, lua::spec as lua, php::spec as php, python::spec as python,
-    ruby::spec as ruby, rust::spec as rust, shell::spec as shell, typescript::spec as typescript,
+    c::spec as c, cpp::spec as cpp, csharp::spec as csharp, go::spec as go, html::spec as html,
+    java::spec as java, javascript::spec as javascript, lua::spec as lua, php::spec as php,
+    python::spec as python, ruby::spec as ruby, rust::spec as rust, shell::spec as shell,
+    typescript::spec as typescript,
 };
 pub use lex::{lex, Tok};
 pub use oracle::{sample_texts, verify_generic};
-pub use spec::{KeywordGroup, LanguageSpec, SpanKind, StringKind};
+pub use spec::{KeywordGroup, LanguageSpec, SpanKind, StringKind, TagKind};
 
 /// Resolve a language spec by name (the `--generic` CLI argument).
 pub fn spec_by_name(name: &str) -> Result<LanguageSpec, BuildError> {
@@ -105,8 +106,9 @@ pub fn spec_by_name(name: &str) -> Result<LanguageSpec, BuildError> {
         "ruby" | "rb" => Ok(ruby()),
         "lua" => Ok(lua()),
         "shell" | "sh" | "bash" => Ok(shell()),
+        "html" | "htm" => Ok(html()),
         other => Err(BuildError::Tokenize(format!(
-            "unknown generic language {other:?}; available: rust, js, ts, python, go, java, c, cpp, csharp, php, ruby, lua, shell"
+            "unknown generic language {other:?}; available: rust, js, ts, python, go, java, c, cpp, csharp, php, ruby, lua, shell, html"
         ))),
     }
 }

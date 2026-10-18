@@ -61,7 +61,7 @@ Two modes:
   alternates render exactly as the font intends while staying highlighted.
   Ligature sites spanning multiple colors degrade to plain per-char text
   (colors win); one glyph can only carry one color.
-- **generic** (`--generic rust|js|ts|python|go|java|c|cpp|csharp|php|ruby|lua|shell`): no content needed —
+- **generic** (`--generic rust|js|ts|python|go|java|c|cpp|csharp|php|ruby|lua|shell|html`): no content needed —
   the font highlights **any** text of that language (keywords, comments,
   strings, numbers) by advancing state purely through glyph substitution,
   like the original project's FSM but synthesized from a language spec in

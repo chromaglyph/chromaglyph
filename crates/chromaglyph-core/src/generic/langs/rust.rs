@@ -32,6 +32,7 @@ pub fn spec() -> LanguageSpec {
                 scope: "comment.line.double-slash.rust",
             },
         ],
+        tags: &[],
         numbers: true,
         number_scope: "constant.numeric.rust",
         ident_extra: &[],

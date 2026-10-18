@@ -636,6 +636,7 @@ fn generic_mode_new_languages() {
         (chromaglyph_core::generic::ruby(), 220),
         (chromaglyph_core::generic::lua(), 220),
         (chromaglyph_core::generic::shell(), 220),
+        (chromaglyph_core::generic::html(), 180),
     ] {
         let out = build(&BuildInput {
             font_bytes: FONT,
@@ -862,6 +863,28 @@ fn generic_mode_adversarial_new_languages() {
             "$1 $2 ${1} ${x}1 1$",
             "for f in *.txt; do echo \"$f\"; done",
             "\nfunction at_line_start\n42 at_line_start",
+        ],
+    );
+    adversarial(
+        &chromaglyph_core::generic::html(),
+        &[
+            "<div>only text</div>",
+            "<p class=\"a\">x</p>",
+            "<img src='x.png' alt=\"y\"/>",
+            "<div a='has \"dq\" in'>t</div>",
+            "<div a=\"has 'sq' in\">t</div>",
+            "<input type=checkbox disabled>",
+            "<!-- comment with <div class=\"x\"> inside -->",
+            "&amp; &lt; &#39; &no-end",
+            "a < b, c > d, e <f g",
+            "<3 <> <4u </> < /div>",
+            "<my-widget data-x=\"1\">",
+            "<div\n  class=\"next line\">plain",
+            "<div =x b=\"c\">",
+            "<div a<b=\"c\">",
+            "text \"quotes\" stay plain",
+            "<div><span><a href=\"x\">deep</a></span></div>",
+            "\n<div at_line_start\n&amp; at_line_start",
         ],
     );
 }

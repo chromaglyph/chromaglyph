@@ -28,6 +28,17 @@ pub enum Tok {
     SpanOpen(usize),
     SpanBody(usize),
     SpanClose(usize),
+    /// markup tag kind index within `LanguageSpec::tags` — the colored
+    /// runs and the plain state carriers (the font's uncolored copies
+    /// still carry the state class, so the oracle must expect them)
+    TagOpen(usize),
+    TagName(usize),
+    TagAttr(usize),
+    TagAttrPlain(usize),
+    TagVal(usize),
+    TagValPlain(usize),
+    TagValStr(usize, usize),
+    TagClose(usize),
 }
 
 /// Highlight `text` per the spec, one [`Tok`] per char, **line-scoped**.
@@ -114,6 +125,143 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                     i += 1;
                 }
             }
+            continue 'outer;
+        }
+        // markup tags: one inline walk from the opener, mirroring the
+        // engine's name → attrs → value machine (delimiters stay plain
+        // but carry the state; states die at the newline like all others)
+        for (t, tag) in spec.tags.iter().enumerate() {
+            if !starts(i, tag.open) || !all_mapped(tag.open) {
+                continue;
+            }
+            let name_start = |c: char| is_ident(c, spec.ident_extra) && !c.is_ascii_digit();
+            let mut open_end = i + tag.open.chars().count();
+            // the `/` of a closing tag rides on the opener (`</div`)
+            if chars.get(open_end) == Some(&'/')
+                && mapped('/')
+                && chars.get(open_end + 1).copied().is_some_and(name_start)
+                && chars.get(open_end + 1).copied().is_some_and(mapped)
+            {
+                open_end += 1;
+            }
+            if !chars
+                .get(open_end)
+                .copied()
+                .is_some_and(|c| name_start(c) && mapped(c))
+            {
+                continue; // `< b`, `<3`, `<!--` (a span): not a tag here
+            }
+            for tok in out.iter_mut().take(open_end).skip(i) {
+                *tok = Tok::TagOpen(t);
+            }
+            const NAME: u8 = 0;
+            const ATTR: u8 = 1;
+            const VAL: u8 = 2;
+            const VSTR: u8 = 3;
+            let mut state = NAME;
+            let mut quote = '\0';
+            let mut k = open_end;
+            while k < chars.len() {
+                let c = chars[k];
+                if !mapped(c) || c == '\n' || c == '\r' {
+                    break; // barrier: the state dies, the char is plain
+                }
+                let mut closed = false;
+                for delim in [tag.self_close, tag.close] {
+                    if delim.is_empty() || !starts(k, delim) || !all_mapped(delim) {
+                        continue;
+                    }
+                    let n = delim.chars().count();
+                    for tok in out.iter_mut().take(k + n).skip(k) {
+                        *tok = Tok::TagClose(t);
+                    }
+                    k += n;
+                    closed = true;
+                    break;
+                }
+                if closed {
+                    break;
+                }
+                match state {
+                    NAME => {
+                        if is_ident(c, spec.ident_extra) {
+                            out[k] = Tok::TagName(t);
+                            k += 1;
+                        } else {
+                            out[k] = Tok::TagAttrPlain(t);
+                            state = ATTR;
+                            k += 1;
+                        }
+                    }
+                    ATTR => {
+                        if c == tag.equals && mapped(tag.equals) {
+                            out[k] = Tok::TagValPlain(t);
+                            state = VAL;
+                            k += 1;
+                        } else if c == '<'
+                            && chars
+                                .get(k + 1)
+                                .copied()
+                                .is_some_and(|n| name_start(n) && mapped(n))
+                        {
+                            out[k] = Tok::TagOpen(t); // a new tag opens here
+                            state = NAME;
+                            k += 1;
+                        } else if is_ident(c, spec.ident_extra) {
+                            out[k] = Tok::TagAttr(t);
+                            k += 1;
+                        } else {
+                            out[k] = Tok::TagAttrPlain(t);
+                            k += 1;
+                        }
+                    }
+                    VAL => {
+                        if let Some(qi) = tag
+                            .value_quotes
+                            .iter()
+                            .position(|&qc| qc == c)
+                            .filter(|_| mapped(c))
+                        {
+                            out[k] = Tok::TagValStr(t, qi);
+                            quote = c;
+                            state = VSTR;
+                            k += 1;
+                        } else if c == '<'
+                            && chars
+                                .get(k + 1)
+                                .copied()
+                                .is_some_and(|n| name_start(n) && mapped(n))
+                        {
+                            out[k] = Tok::TagOpen(t);
+                            state = NAME;
+                            k += 1;
+                        } else if is_ident(c, spec.ident_extra) {
+                            out[k] = Tok::TagVal(t);
+                            k += 1;
+                        } else {
+                            out[k] = Tok::TagAttrPlain(t);
+                            state = ATTR;
+                            k += 1;
+                        }
+                    }
+                    _ => {
+                        // quoted value: only the matching quote closes
+                        if c == quote && mapped(c) {
+                            out[k] = Tok::TagAttrPlain(t);
+                            state = ATTR;
+                        } else {
+                            let qi = tag
+                                .value_quotes
+                                .iter()
+                                .position(|&qc| qc == quote)
+                                .unwrap_or(0);
+                            out[k] = Tok::TagValStr(t, qi);
+                        }
+                        k += 1;
+                    }
+                }
+            }
+            i = k;
             continue 'outer;
         }
         for (k, s) in spec.strings.iter().enumerate() {
@@ -240,7 +388,7 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generic::{csharp, go, java, javascript, python, rust};
+    use crate::generic::{csharp, go, html, java, javascript, python, rust};
 
     fn toks(s: &str) -> Vec<Tok> {
         // everything mapped except the barrier chars that shape no glyph
@@ -669,6 +817,77 @@ mod tests {
         // without the '@', return is a control keyword
         let t = lex(&spec, "a return b", &|_| true);
         assert_eq!(&t[2..8], &[Tok::Keyword(0); 6]);
+    }
+
+    #[test]
+    fn lex_html_tag_states() {
+        let spec = html();
+        let t = lex(&spec, "a <div class=\"x\"> b", &|_| true);
+        // `a ` plain; `<` opens (plain carrier); div colored as the name
+        assert_eq!(&t[0..2], &[Tok::Plain; 2]);
+        assert_eq!(t[2], Tok::TagOpen(0));
+        assert_eq!(&t[3..6], &[Tok::TagName(0); 3]);
+        assert_eq!(t[6], Tok::TagAttrPlain(0), "space: name → attrs");
+        assert_eq!(&t[7..12], &[Tok::TagAttr(0); 5], "class");
+        assert_eq!(t[12], Tok::TagValPlain(0), "equals");
+        assert_eq!(t[13], Tok::TagValStr(0, 0), "opening quote");
+        assert_eq!(t[14], Tok::TagValStr(0, 0), "value body");
+        assert_eq!(t[15], Tok::TagAttrPlain(0), "closing quote → attrs");
+        assert_eq!(t[16], Tok::TagClose(0), "the >");
+        assert_eq!(&t[17..19], &[Tok::Plain; 2], "text after the tag");
+        // closing tags and self-close: `</div>` `/>`
+        let t = lex(&spec, "</div> <br/>", &|_| true);
+        assert_eq!(&t[0..2], &[Tok::TagOpen(0); 2], "</ rides the opener");
+        assert_eq!(&t[2..5], &[Tok::TagName(0); 3]);
+        assert_eq!(t[5], Tok::TagClose(0));
+        assert_eq!(t[7], Tok::TagOpen(0));
+        assert_eq!(&t[8..10], &[Tok::TagName(0); 2], "br");
+        assert_eq!(&t[10..12], &[Tok::TagClose(0); 2], "/> closes both glyphs");
+        // an unquoted value colors until the next delimiter
+        let t = lex(&spec, "<input type=checkbox>", &|_| true);
+        assert_eq!(t[11], Tok::TagValPlain(0), "the equals");
+        assert_eq!(&t[12..20], &[Tok::TagVal(0); 8], "checkbox");
+        assert_eq!(t[20], Tok::TagClose(0));
+        // `<3` `<>` and a spaced `< b` stay plain: no identifier lookahead
+        for text in ["<3 x", "<> x", "< b", "a < b"] {
+            let t = lex(&spec, text, &|_| true);
+            assert!(t.iter().all(|t| *t == Tok::Plain), "{text}: {t:?}");
+        }
+    }
+
+    #[test]
+    fn lex_html_quotes_comments_entities() {
+        let spec = html();
+        // the OTHER quote inside a quoted value is body; only the
+        // matching one closes
+        let t = lex(&spec, "<div a='has \"dq\" in'>", &|_| true);
+        let open = t
+            .iter()
+            .position(|t| matches!(t, Tok::TagValStr(0, 1)))
+            .unwrap();
+        assert_eq!(t[open], Tok::TagValStr(0, 1), "opening single quote");
+        // every `"` between the single quotes is value body of quote-kind 1
+        let body: Vec<Tok> = t[open + 1..open + 12].to_vec();
+        assert!(
+            body.iter().all(|t| matches!(t, Tok::TagValStr(0, 1))),
+            "{body:?}"
+        );
+        // comments swallow tags; entities span `&` to `;`
+        let t = lex(&spec, "<!-- <div class=\"x\"> -->", &|_| true);
+        assert_eq!(&t[0..4], &[Tok::SpanOpen(0); 4]);
+        assert_eq!(&t[21..24], &[Tok::SpanClose(0); 3]);
+        let t = lex(&spec, "a &amp; b", &|_| true);
+        assert_eq!(t[2], Tok::SpanOpen(1));
+        assert_eq!(&t[3..6], &[Tok::SpanBody(1); 3]);
+        assert_eq!(t[6], Tok::SpanClose(1));
+        // an unclosed tag dies at the newline: continuation is plain
+        let t = lex(&spec, "<div class=\"x\"", &|_| true);
+        assert!(t.iter().all(|t| *t != Tok::Plain));
+        let t = lex(&spec, "<div\nclass=\"x\"", &|_| true);
+        assert!(
+            t[5..].iter().all(|t| *t == Tok::Plain),
+            "no state crosses the newline"
+        );
     }
 
     #[test]

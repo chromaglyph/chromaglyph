@@ -77,6 +77,7 @@ pub fn spec() -> LanguageSpec {
                 scope: "comment.block.c",
             },
         ],
+        tags: &[],
         numbers: true,
         number_scope: "constant.numeric.c",
         ident_extra: &[],

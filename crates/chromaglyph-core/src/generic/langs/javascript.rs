@@ -83,6 +83,7 @@ pub fn spec() -> LanguageSpec {
                 scope: "comment.block.js",
             },
         ],
+        tags: &[],
         numbers: true,
         number_scope: "constant.numeric.js",
         ident_extra: &['$'],

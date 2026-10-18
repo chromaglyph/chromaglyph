@@ -110,6 +110,7 @@ pub fn spec() -> LanguageSpec {
                 scope: "comment.block.php",
             },
         ],
+        tags: &[],
         numbers: true,
         number_scope: "constant.numeric.php",
         ident_extra: &['$'],

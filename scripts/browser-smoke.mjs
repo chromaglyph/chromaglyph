@@ -19,11 +19,13 @@
  * rules apply, which is what chromaglyph's rules rely on. Measuring in
  * canvas would under-color on purpose.
  *
- * Five fonts cover the layout paths: exact mode (subset), exact mode
+ * Six fonts cover the layout paths: exact mode (subset), exact mode
  * with --ligatures (restore rules + subset), generic rust (full charset,
- * no subsetting), exact mode from a CFF/OTF source (CharStrings surgery,
- * no subsetting) and exact mode from a variable TrueType source (pinned
- * to the default instance, subset). Run: `pnpm smoke` (or pass
+ * no subsetting), exact mode from a CFF/OTF source (CharStrings
+ * surgery + subset), exact mode from a variable TrueType source (pinned
+ * to the default instance, subset) and generic html (the markup tag
+ * state machine: tag names probe as keyword blue, attribute values as
+ * string orange, comments as comment green). Run: `pnpm smoke` (or pass
  * CHROMAGLYPH_BIN).
  */
 import { spawnSync } from 'node:child_process'
@@ -55,6 +57,12 @@ const PROBES = [
   { name: 'number green', css: '#b5cea8' },
 ]
 
+const HTML_SAMPLE = `<div class="hero">
+  <!-- html smoke: tag machine -->
+  <a href="https://example.io/x?a=1">link</a> &amp; more
+</div>
+`
+
 const CASES = [
   { id: 'exact', args: ['--input', resolve(root, 'examples/hello.rs')] },
   {
@@ -63,6 +71,16 @@ const CASES = [
     text: SAMPLE,
   },
   { id: 'generic', args: ['--generic', 'rust'] },
+  {
+    id: 'generic-html',
+    args: ['--generic', 'html'],
+    page: HTML_SAMPLE,
+    probes: [
+      { name: 'tag blue', css: '#569cd6' },
+      { name: 'attr value orange', css: '#ce9178' },
+      { name: 'comment green', css: '#6a9955' },
+    ],
+  },
   {
     id: 'exact-otf',
     font: resolve(fixtures, 'SourceCodePro-Regular.otf'),
@@ -98,7 +116,8 @@ async function main() {
     for (const case_ of CASES) {
       const woff = buildFont(case_)
       const page = await browser.newPage({ viewport: { width: 1400, height: 400 } })
-      const body = `<style>body{margin:0;background:#1e1e1e;font-size:40px}pre{white-space:pre;margin:0}</style><pre id="a">${SAMPLE.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`
+      const pageText = case_.page ?? SAMPLE
+      const body = `<style>body{margin:0;background:#1e1e1e;font-size:40px}pre{white-space:pre;margin:0}</style><pre id="a">${pageText.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`
       // encodeURIComponent keeps newlines (and #, &) alive through the
       // data: URL — raw newlines are stripped, &#10; is cut at the #
       await page.goto('data:text/html,' + encodeURIComponent(body))
@@ -122,6 +141,7 @@ async function main() {
       // and count pixels near each palette color — the glyphs must come
       // from the font, laid out by the real text stack
       const shot = await page.screenshot()
+      const probeList = case_.probes ?? PROBES
       const counts = await page.evaluate(
         (args) => {
           const [b64, probeList] = args
@@ -152,7 +172,7 @@ async function main() {
             })
           })
         },
-        [shot.toString('base64'), PROBES],
+        [shot.toString('base64'), probeList],
       )
 
       const missing = counts.filter((c) => c.n < 20)

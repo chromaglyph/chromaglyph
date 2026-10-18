@@ -1,6 +1,6 @@
-# Nine languages
+# Ten languages
 
-The nine blocks on this page are batched into **one font** per render
+The ten blocks on this page are batched into **one font** per render
 (cross-language global disambiguation). Every block copies out as plain
 text.
 
@@ -208,4 +208,21 @@ public class Stack<T> {
     }
 }
 }
+```
+
+## HTML
+
+The one non-keyword language: a markup **tag state machine** walks
+`name → attribute names → = → values` through glyph substitutions.
+Delimiters (`< > / =` quotes) stay plain — they are uncolored state
+carriers. `<3` and a spaced `< b` stay plain (the opener requires an
+identifier lookahead), entities color in text only, and an unclosed
+tag dies at its line's end like every state here.
+
+```html
+<div class="hero">
+  <!-- tag machine: names blue, attrs light, values orange -->
+  <a href="https://example.io/x?a=1&amp;b=2">a link</a> &amp; plain text
+  <img src='logo.png' alt="logo" />
+</div>
 ```

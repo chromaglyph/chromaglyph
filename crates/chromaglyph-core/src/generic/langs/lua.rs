@@ -59,6 +59,7 @@ pub fn spec() -> LanguageSpec {
                 scope: "string.unquoted.long.lua",
             },
         ],
+        tags: &[],
         numbers: true,
         number_scope: "constant.numeric.lua",
         ident_extra: &[],

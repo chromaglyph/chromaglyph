@@ -158,6 +158,7 @@ pub fn spec() -> LanguageSpec {
                 scope: "string.quoted.double.verbatim.cs",
             },
         ],
+        tags: &[],
         numbers: true,
         number_scope: "constant.numeric.cs",
         // '@' verbatim identifiers (@return) must not color the word after

@@ -62,6 +62,7 @@ pub fn spec() -> LanguageSpec {
             close: "",
             scope: "comment.line.number-sign.ruby",
         }],
+        tags: &[],
         numbers: true,
         number_scope: "constant.numeric.ruby",
         ident_extra: &[],

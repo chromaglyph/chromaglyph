@@ -34,6 +34,19 @@ pub(in crate::generic) struct Layout {
     span_open: Vec<u16>,
     span_body: Vec<u16>,
     span_close: Vec<u16>,
+    /// slots per markup tag kind: the three colored runs plus the plain
+    /// state carriers (delimiters ride uncolored, still carrying the
+    /// state — the interpolation-body trick)
+    tag_name: Vec<u16>,
+    tag_name_plain: Vec<u16>,
+    tag_attr: Vec<u16>,
+    tag_attr_plain: Vec<u16>,
+    tag_val: Vec<u16>,
+    tag_val_plain: Vec<u16>,
+    /// one quoted-value slot per (tag kind, value quote) — the quote
+    /// kinds must not share a state or `"` inside `'…'` would terminate
+    tag_valstr: Vec<Vec<u16>>,
+    tag_close: Vec<u16>,
     n_slots: u16,
 }
 
@@ -74,6 +87,29 @@ pub(in crate::generic) fn layout(spec: &LanguageSpec) -> Layout {
             next += 1;
         }
     }
+    let mut tag_name = Vec::with_capacity(spec.tags.len());
+    let mut tag_name_plain = Vec::with_capacity(spec.tags.len());
+    let mut tag_attr = Vec::with_capacity(spec.tags.len());
+    let mut tag_attr_plain = Vec::with_capacity(spec.tags.len());
+    let mut tag_val = Vec::with_capacity(spec.tags.len());
+    let mut tag_val_plain = Vec::with_capacity(spec.tags.len());
+    let mut tag_valstr = Vec::with_capacity(spec.tags.len());
+    let mut tag_close = Vec::with_capacity(spec.tags.len());
+    for tag in spec.tags {
+        tag_name.push(next);
+        tag_name_plain.push(next + 1);
+        tag_attr.push(next + 2);
+        tag_attr_plain.push(next + 3);
+        tag_val.push(next + 4);
+        tag_val_plain.push(next + 5);
+        let mut quotes = Vec::with_capacity(tag.value_quotes.len());
+        for q in 0..tag.value_quotes.len() {
+            quotes.push(next + 6 + q as u16);
+        }
+        tag_valstr.push(quotes);
+        tag_close.push(next + 6 + tag.value_quotes.len() as u16);
+        next += 7 + tag.value_quotes.len() as u16;
+    }
     Layout {
         kw,
         str_open,
@@ -85,6 +121,14 @@ pub(in crate::generic) fn layout(spec: &LanguageSpec) -> Layout {
         span_open,
         span_body,
         span_close,
+        tag_name,
+        tag_name_plain,
+        tag_attr,
+        tag_attr_plain,
+        tag_val,
+        tag_val_plain,
+        tag_valstr,
+        tag_close,
         n_slots: next,
     }
 }
@@ -103,6 +147,14 @@ impl Layout {
             Tok::SpanOpen(j) => self.span_open[j],
             Tok::SpanBody(j) => self.span_body[j],
             Tok::SpanClose(j) => self.span_close[j],
+            Tok::TagOpen(t) => self.tag_name_plain[t],
+            Tok::TagName(t) => self.tag_name[t],
+            Tok::TagAttr(t) => self.tag_attr[t],
+            Tok::TagAttrPlain(t) => self.tag_attr_plain[t],
+            Tok::TagVal(t) => self.tag_val[t],
+            Tok::TagValPlain(t) => self.tag_val_plain[t],
+            Tok::TagValStr(t, q) => self.tag_valstr[t][q],
+            Tok::TagClose(t) => self.tag_close[t],
         })
     }
 }
@@ -150,6 +202,33 @@ pub fn synthesize(
             slots[layout.span_close[j] as usize] = colors;
         }
     }
+    for (t, tag) in spec.tags.iter().enumerate() {
+        let name: Vec<Option<Color>> = themes
+            .iter()
+            .map(|th| th.scope_color(tag.name_scope))
+            .collect();
+        let attr: Vec<Option<Color>> = themes
+            .iter()
+            .map(|th| th.scope_color(tag.attr_scope))
+            .collect();
+        let value: Vec<Option<Color>> = themes
+            .iter()
+            .map(|th| th.scope_color(tag.value_scope))
+            .collect();
+        // plain carriers paint the default foreground — visually plain,
+        // but their alt glyphs still carry the state class
+        let none: Vec<Option<Color>> = vec![None; themes.len()];
+        slots[layout.tag_name[t] as usize] = name;
+        slots[layout.tag_name_plain[t] as usize] = none.clone();
+        slots[layout.tag_attr[t] as usize] = attr;
+        slots[layout.tag_attr_plain[t] as usize] = none.clone();
+        slots[layout.tag_val[t] as usize] = value.clone();
+        slots[layout.tag_val_plain[t] as usize] = none.clone();
+        for &q_slot in &layout.tag_valstr[t] {
+            slots[q_slot as usize] = value.clone();
+        }
+        slots[layout.tag_close[t] as usize] = none;
+    }
     let theme_fgs: Vec<Color> = themes.iter().map(|t| t.foreground).collect();
 
     // ---- glyph classes ----------------------------------------------------
@@ -170,6 +249,25 @@ pub fn synthesize(
     }
     for span in spec.spans {
         for ch in span.open.chars().chain(span.close.chars()) {
+            char_class.entry(ch).or_insert_with(|| {
+                let id = next_class;
+                next_class += 1;
+                id
+            });
+        }
+    }
+    // markup tag delimiters (`<`, `>`, `/`, `=`, the value quotes) need
+    // 1:1 classes: rules key on exact delimiter sequences, and a shared
+    // not-a-word class would make every space a potential terminator
+    for tag in spec.tags {
+        for ch in tag
+            .open
+            .chars()
+            .chain(tag.close.chars())
+            .chain(tag.self_close.chars())
+            .chain([tag.equals])
+            .chain(tag.value_quotes.iter().copied())
+        {
             char_class.entry(ch).or_insert_with(|| {
                 let id = next_class;
                 next_class += 1;
@@ -283,6 +381,28 @@ pub fn synthesize(
             id
         })
         .collect();
+    // markup tag states: name / attr regime / unquoted value / quoted
+    // value, four per tag kind
+    let mut tag_name_state = Vec::with_capacity(spec.tags.len());
+    let mut tag_attr_state = Vec::with_capacity(spec.tags.len());
+    let mut tag_val_state = Vec::with_capacity(spec.tags.len());
+    // one quoted-value state per (tag kind, value quote): `"` inside
+    // `'…'` is body, only the matching quote terminates
+    let mut tag_vstr_state = Vec::with_capacity(spec.tags.len());
+    for tag in spec.tags {
+        for v in [&mut tag_name_state, &mut tag_attr_state, &mut tag_val_state] {
+            let id = next_class;
+            next_class += 1;
+            v.push(id);
+        }
+        let mut vstr = Vec::with_capacity(tag.value_quotes.len());
+        for _ in tag.value_quotes {
+            let id = next_class;
+            next_class += 1;
+            vstr.push(id);
+        }
+        tag_vstr_state.push(vstr);
+    }
     let c_num_state = next_class;
     next_class += 1;
     let c_end_state = next_class;
@@ -290,6 +410,20 @@ pub fn synthesize(
     const C_NOTWORD: u16 = 1;
     const C_IDENT: u16 = 2;
 
+    // word-ish classes by CHARACTER, not by class identity: a char that
+    // continues names/attrs/values may still carry a 1:1 delimiter class
+    // (html's `-` is both a data-attribute char and a `<!--` span char)
+    let wordish_classes: HashSet<u16> = {
+        let mut set = HashSet::new();
+        set.insert(C_IDENT);
+        set.insert(c_digit);
+        for (&ch, &cls) in &char_class {
+            if is_ident(ch, spec.ident_extra) || ch.is_ascii_digit() {
+                set.insert(cls);
+            }
+        }
+        set
+    };
     let mut class_of: HashMap<u16, u16> = HashMap::new();
     class_of.insert(0, c_notdef); // .notdef: never a context, never substituted
     let mut sorted = mappings.to_vec();
@@ -531,6 +665,107 @@ pub fn synthesize(
             }
         }
     }
+    // markup tag copies: opener carriers (`<`, the `/` of `</` and of
+    // `/>` reuse the name-plain slot), colored word runs, plain state
+    // carriers (attr regime / quoted value need one of nearly every
+    // glyph), and the close delimiters
+    for (t, tag) in spec.tags.iter().enumerate() {
+        let wordish = |class: u16| wordish_classes.contains(&class);
+        let mut open_carriers: HashSet<u16> = HashSet::new();
+        for ch in tag.open.chars().chain(tag.self_close.chars()) {
+            if let Some(gid) = char_gid(mappings, ch) {
+                if open_carriers.insert(gid) {
+                    push_alt(
+                        &mut next_new,
+                        &mut alt_glyphs,
+                        gid,
+                        layout.tag_name_plain[t],
+                        tag_name_state[t],
+                        &mut class_of,
+                    );
+                }
+            }
+        }
+        for &gid in &gids {
+            let class = class_of[&gid];
+            if class == c_notdef || class == c_nl {
+                continue;
+            }
+            if wordish(class) {
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.tag_name[t],
+                    tag_name_state[t],
+                    &mut class_of,
+                );
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.tag_attr[t],
+                    tag_attr_state[t],
+                    &mut class_of,
+                );
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.tag_val[t],
+                    tag_val_state[t],
+                    &mut class_of,
+                );
+            }
+            // the attr regime's plain carriers (spaces, `/`, `=`
+            // transitions, closing quotes) and the quoted value bodies
+            // (quotes of the other kind included in each — only the
+            // matching quote terminates, by rule order)
+            push_alt(
+                &mut next_new,
+                &mut alt_glyphs,
+                gid,
+                layout.tag_attr_plain[t],
+                tag_attr_state[t],
+                &mut class_of,
+            );
+            for (q, _) in tag.value_quotes.iter().enumerate() {
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.tag_valstr[t][q],
+                    tag_vstr_state[t][q],
+                    &mut class_of,
+                );
+            }
+        }
+        if let Some(gid) = char_gid(mappings, tag.equals) {
+            push_alt(
+                &mut next_new,
+                &mut alt_glyphs,
+                gid,
+                layout.tag_val_plain[t],
+                tag_val_state[t],
+                &mut class_of,
+            );
+        }
+        let mut closers: HashSet<u16> = HashSet::new();
+        for ch in tag.close.chars().chain(tag.self_close.chars()) {
+            if let Some(gid) = char_gid(mappings, ch) {
+                if closers.insert(gid) {
+                    push_alt(
+                        &mut next_new,
+                        &mut alt_glyphs,
+                        gid,
+                        layout.tag_close[t],
+                        c_end_state,
+                        &mut class_of,
+                    );
+                }
+            }
+        }
+    }
     // number glyphs: digits, identifier chars, letters, dot
     if spec.numbers && digit_gid.is_some() {
         for &gid in &gids {
@@ -612,6 +847,58 @@ pub fn synthesize(
             pal: layout.str_close[k],
         });
     }
+    // markup tag exits: `>` / `/>` from the name, attr and value states
+    // end the tag; the closing value quote returns to the attr regime;
+    // a fresh `<x` inside an unfinished tag abandons it (re-opens)
+    for (t, tag) in spec.tags.iter().enumerate() {
+        let tag_states = [tag_name_state[t], tag_attr_state[t], tag_val_state[t]];
+        for &state in &tag_states {
+            if let (Some(&sl), Some(&gt)) = (
+                tag.self_close
+                    .chars()
+                    .next()
+                    .and_then(|c| char_class.get(&c)),
+                tag.close.chars().next().and_then(|c| char_class.get(&c)),
+            ) {
+                if tag.self_close.chars().count() > 1 {
+                    let input: Vec<u16> = tag.self_close.chars().map(|c| char_class[&c]).collect();
+                    terminators.entry(sl).or_default().push(Rule {
+                        backtrack: vec![state],
+                        input,
+                        lookahead: vec![],
+                        pal: layout.tag_close[t],
+                    });
+                }
+                terminators.entry(gt).or_default().push(Rule {
+                    backtrack: vec![state],
+                    input: vec![gt],
+                    lookahead: vec![],
+                    pal: layout.tag_close[t],
+                });
+            }
+        }
+        for (q, &qc) in tag.value_quotes.iter().enumerate() {
+            let Some(&class) = char_class.get(&qc) else {
+                continue;
+            };
+            terminators.entry(class).or_default().push(Rule {
+                backtrack: vec![tag_vstr_state[t][q]],
+                input: vec![class],
+                lookahead: vec![],
+                pal: layout.tag_attr_plain[t],
+            });
+        }
+        if let Some(&lt) = tag.open.chars().next().and_then(|c| char_class.get(&c)) {
+            for &state in &tag_states[1..] {
+                terminators.entry(lt).or_default().push(Rule {
+                    backtrack: vec![state],
+                    input: vec![lt],
+                    lookahead: vec![C_IDENT],
+                    pal: layout.tag_name_plain[t],
+                });
+            }
+        }
+    }
     for rules in terminators.values_mut() {
         rules.sort_by_key(|r| std::cmp::Reverse(r.input.len()));
     }
@@ -640,6 +927,36 @@ pub fn synthesize(
             lookahead: vec![],
             pal: layout.str_open[k],
         });
+    }
+    // markup tag openings: `<` + identifier lookahead (a lone `<` is
+    // text, `<!--` is a span opener that sorts longer-first), and the
+    // `</` closing-tag prefix rides the same plain carrier slot
+    for (t, tag) in spec.tags.iter().enumerate() {
+        let Some(&lt) = tag.open.chars().next().and_then(|c| char_class.get(&c)) else {
+            continue;
+        };
+        openers.entry(lt).or_default().push(Rule {
+            backtrack: vec![],
+            input: vec![lt],
+            lookahead: vec![C_IDENT],
+            pal: layout.tag_name_plain[t],
+        });
+        if let Some(&sl) = tag
+            .self_close
+            .chars()
+            .next()
+            .and_then(|c| char_class.get(&c))
+        {
+            if sl != lt {
+                // `</name` — the slash is the self-close's first char
+                openers.entry(lt).or_default().push(Rule {
+                    backtrack: vec![],
+                    input: vec![lt, sl],
+                    lookahead: vec![C_IDENT],
+                    pal: layout.tag_name_plain[t],
+                });
+            }
+        }
     }
     for rules in openers.values_mut() {
         rules.sort_by_key(|r| std::cmp::Reverse(r.input.len()));
@@ -807,6 +1124,90 @@ pub fn synthesize(
                     class,
                     interp_state[k],
                     layout.interp_body[k],
+                    vec![],
+                );
+            }
+        }
+        // markup tag state machine, per class: word classes color in the
+        // name/attr/value states; everything else hands the state on via
+        // plain carriers (`>`/`/>`/quote exits live in the terminator
+        // section above; the equals rule and the unquoted→quoted switch
+        // are the only class-specific transitions)
+        for (t, tag) in spec.tags.iter().enumerate() {
+            let wordish = wordish_classes.contains(&class);
+            if wordish {
+                prop(
+                    &mut by_class,
+                    class,
+                    tag_name_state[t],
+                    layout.tag_name[t],
+                    vec![],
+                );
+                prop(
+                    &mut by_class,
+                    class,
+                    tag_attr_state[t],
+                    layout.tag_attr[t],
+                    vec![],
+                );
+                prop(
+                    &mut by_class,
+                    class,
+                    tag_val_state[t],
+                    layout.tag_val[t],
+                    vec![],
+                );
+            } else if char_class.get(&tag.equals) == Some(&class) {
+                by_class.entry(class).or_default().push(Rule {
+                    backtrack: vec![tag_attr_state[t]],
+                    input: vec![class],
+                    lookahead: vec![],
+                    pal: layout.tag_val_plain[t],
+                });
+            }
+            if !wordish {
+                by_class.entry(class).or_default().push(Rule {
+                    backtrack: vec![tag_name_state[t]],
+                    input: vec![class],
+                    lookahead: vec![],
+                    pal: layout.tag_attr_plain[t],
+                });
+                by_class.entry(class).or_default().push(Rule {
+                    backtrack: vec![tag_attr_state[t]],
+                    input: vec![class],
+                    lookahead: vec![],
+                    pal: layout.tag_attr_plain[t],
+                });
+                if let Some(q) = tag
+                    .value_quotes
+                    .iter()
+                    .position(|qc| char_class.get(qc) == Some(&class))
+                {
+                    // an unquoted value switches into its quoted form
+                    by_class.entry(class).or_default().push(Rule {
+                        backtrack: vec![tag_val_state[t]],
+                        input: vec![class],
+                        lookahead: vec![],
+                        pal: layout.tag_valstr[t][q],
+                    });
+                } else {
+                    by_class.entry(class).or_default().push(Rule {
+                        backtrack: vec![tag_val_state[t]],
+                        input: vec![class],
+                        lookahead: vec![],
+                        pal: layout.tag_attr_plain[t],
+                    });
+                }
+            }
+            // quoted-value bodies: everything continues colored in the
+            // owning quote's state (the matching quote terminates by
+            // rule order)
+            for (q, _) in tag.value_quotes.iter().enumerate() {
+                prop(
+                    &mut by_class,
+                    class,
+                    tag_vstr_state[t][q],
+                    layout.tag_valstr[t][q],
                     vec![],
                 );
             }

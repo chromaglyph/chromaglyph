@@ -80,6 +80,7 @@ pub fn spec() -> LanguageSpec {
                 scope: "comment.block.go",
             },
         ],
+        tags: &[],
         numbers: true,
         number_scope: "constant.numeric.go",
         ident_extra: &[],

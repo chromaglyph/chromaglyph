@@ -121,6 +121,7 @@ pub fn spec() -> LanguageSpec {
                 scope: "comment.block.ts",
             },
         ],
+        tags: &[],
         numbers: true,
         number_scope: "constant.numeric.ts",
         ident_extra: &['$'],

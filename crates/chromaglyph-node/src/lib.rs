@@ -10,7 +10,7 @@
 //!
 //! `opts.blocks` batches any number of code blocks into ONE font (global
 //! disambiguation across languages is handled by the core). Alternatively
-//! `opts.generic` (`'rust' | 'js' | 'ts' | 'python' | 'go' | 'java' | 'c' | 'cpp' | 'csharp' | 'php' | 'ruby' | 'lua' | 'shell'`) builds a font that
+//! `opts.generic` (`'rust' | 'js' | 'ts' | 'python' | 'go' | 'java' | 'c' | 'cpp' | 'csharp' | 'php' | 'ruby' | 'lua' | 'shell' | 'html'`) builds a font that
 //! highlights ANY text of that language — content unknown at build time.
 //! Artifacts are cached by a content hash (font bytes + theme sources +
 //! block texts + options + engine version): an in-process LRU plus an
@@ -57,7 +57,7 @@ pub struct BuildOptions {
     pub blocks: Vec<JsBlock>,
     /// Generic mode: build a font that highlights ANY text of this
     /// language (`rust`, `js`, `ts`, `python`, `go`, `java`, `c`, `cpp`,
-    /// `csharp`, `php`, `ruby`, `lua`, `shell`) instead of compiling
+    /// `csharp`, `php`, `ruby`, `lua`, `shell`, `html`) instead of compiling
     /// `blocks` (which are ignored); `semantic` is ignored too.
     pub generic: Option<String>,
     /// Run the rustybuzz oracle (default true).

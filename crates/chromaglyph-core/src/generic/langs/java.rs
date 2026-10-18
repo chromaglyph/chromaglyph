@@ -109,6 +109,7 @@ pub fn spec() -> LanguageSpec {
                 scope: "comment.block.java",
             },
         ],
+        tags: &[],
         numbers: true,
         number_scope: "constant.numeric.java",
         ident_extra: &[],

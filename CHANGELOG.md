@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- **generic mode: HTML** (`--generic html` | `htm`) — the first
+  non-keyword language: a new `TagKind` spec construct synthesizes a
+  markup tag state machine (name → attribute names → `=` → values,
+  quoted per quote kind) out of the same glyph-class machinery as
+  strings/spans. Tag names, attribute names and attribute values each
+  carry their own scope (`entity.name.tag.html`,
+  `entity.other.attribute-name.html`, `string.quoted.double.html`);
+  the delimiters (`< > / =` and the quotes) ride along as *uncolored
+  state carriers* — alt glyphs with no palette entry of their own, the
+  interpolation-body trick reused for a whole state family. Text
+  between tags stays plain, `<!-- -->` comments and `&...;` entities
+  are spans. Approximations, all oracle-verified and documented:
+  `<3`/`<>`/a spaced `< b` stay plain (the opener needs an identifier
+  lookahead), entities are recognized in text only (tag/value bodies
+  win by rule order), a `"` inside `'…'` is body (one quoted-value
+  state per quote kind), an unclosed tag dies at the newline
+  (line-scoped like everything else), and `<script>`/`<style>`
+  embedded languages are not modeled. Two engine fixes found on the
+  way: continuation classes are computed per character, not per class
+  identity (html's `-` is both a data-attribute char and a `<!--`
+  delimiter — the class split made the font and the reference lexer
+  disagree); the quote-per-state split above. Browser smoke gains a
+  `generic-html` case — OTS-accepted in headless Chromium with
+  tag-blue / value-orange / comment-green pixels.
+
 - **generic mode: PHP, Ruby, Lua, Shell** (`--generic php` / `ruby` |
   `rb` / `lua` / `shell` | `sh` | `bash`, node `buildFont({generic:
   ...})`): all four fit the existing spec machinery —

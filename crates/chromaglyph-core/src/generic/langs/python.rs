@@ -62,6 +62,7 @@ pub fn spec() -> LanguageSpec {
                 scope: "comment.line.number-sign.python",
             },
         ],
+        tags: &[],
         numbers: true,
         number_scope: "constant.numeric.python",
         ident_extra: &[],

@@ -50,6 +50,7 @@ pub fn spec() -> LanguageSpec {
             close: "",
             scope: "comment.line.number-sign.shell",
         }],
+        tags: &[],
         numbers: true,
         number_scope: "constant.numeric.shell",
         ident_extra: &[],

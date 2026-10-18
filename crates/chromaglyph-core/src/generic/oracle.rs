@@ -117,6 +117,7 @@ fn curated(name: &str) -> Vec<String> {
         "ruby" => langs::ruby::samples(),
         "shell" => langs::shell::samples(),
         "go" => langs::go::samples(),
+        "html" => langs::html::samples(),
         "java" => langs::java::samples(),
         "javascript" => langs::javascript::samples(),
         "python" => langs::python::samples(),

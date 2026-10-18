@@ -36,13 +36,37 @@ pub struct SpanKind {
     pub scope: &'static str,
 }
 
+/// A markup tag construct: `<name attr="value">` … `</name>`. Tag
+/// names, attribute names and attribute values each carry their own
+/// scope; the delimiters themselves stay plain (they are uncolored
+/// state carriers — see the engine's interpolation body for the same
+/// trick). One state machine per kind, line-scoped like everything
+/// else: an unclosed tag dies at the newline.
+pub struct TagKind {
+    /// opener before the name, e.g. `<`
+    pub open: &'static str,
+    /// close delimiter, e.g. `>`
+    pub close: &'static str,
+    /// self-closing variant, e.g. `/>` (matched before `close` —
+    /// longest input first); empty = none
+    pub self_close: &'static str,
+    /// quotes that open a quoted attribute value after `=`
+    pub value_quotes: &'static [char],
+    /// the attribute separator, `=`
+    pub equals: char,
+    pub name_scope: &'static str,
+    pub attr_scope: &'static str,
+    pub value_scope: &'static str,
+}
+
 /// What a language looks like to the rule synthesizer. Colors come from
-/// the themes by resolving `scope` like a syntect highlighter would.
+/// themes by resolving `scope` like a syntect highlighter would.
 pub struct LanguageSpec {
     pub name: &'static str,
     pub keywords: &'static [KeywordGroup],
     pub strings: &'static [StringKind],
     pub spans: &'static [SpanKind],
+    pub tags: &'static [TagKind],
     /// Color `42`, `3.14`, `0x1F` … as numbers.
     pub numbers: bool,
     pub number_scope: &'static str,
