@@ -1,6 +1,6 @@
-# Ten languages
+# Eleven languages
 
-The ten blocks on this page are batched into **one font** per render
+The eleven blocks on this page are batched into **one font** per render
 (cross-language global disambiguation). Every block copies out as plain
 text.
 
@@ -225,4 +225,23 @@ tag dies at its line's end like every state here.
   <a href="https://example.io/x?a=1&amp;b=2">a link</a> &amp; plain text
   <img src='logo.png' alt="logo" />
 </div>
+```
+
+## CSS
+
+Selectors, properties and values: a property name colors only when a
+`:` follows it (the ~365-name standard list), so `a:hover` stays a
+selector; values ride uncolored until `;` with numbers, strings and
+comments colored normally. Multi-line rule blocks rely on the colon
+lookahead — block state cannot cross a line.
+
+```css
+.card > .title {
+  /* properties need the colon */
+  margin: 0 auto;
+  padding: 4px 8px; /* unquoted value */
+  font: 12px/1.5 sans-serif;
+  background: url("bg.png") no-repeat;
+}
+@media (min-width: 600px) { .card { padding: 8px !important; } }
 ```

@@ -9,6 +9,8 @@ pub fn spec() -> LanguageSpec {
         keywords: &[
             KeywordGroup {
                 scope: "keyword.control.c",
+                followed_by: None,
+                value: false,
                 words: &[
                     "break", "case", "continue", "default", "do", "else", "for", "goto", "if",
                     "return", "switch", "while",
@@ -16,6 +18,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.type.c",
+                followed_by: None,
+                value: false,
                 words: &[
                     "bool", "char", "double", "enum", "float", "int", "long", "short", "signed",
                     "struct", "typedef", "union", "unsigned", "void",
@@ -23,6 +27,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.modifier.c",
+                followed_by: None,
+                value: false,
                 words: &[
                     "auto", "const", "extern", "inline", "register", "restrict", "static",
                     "volatile",
@@ -36,6 +42,8 @@ pub fn spec() -> LanguageSpec {
             // C identifiers)
             KeywordGroup {
                 scope: "keyword.control.import.c",
+                followed_by: None,
+                value: false,
                 words: &[
                     "define", "elif", "endif", "ifdef", "ifndef", "include", "pragma", "undef",
                 ],
@@ -44,10 +52,14 @@ pub fn spec() -> LanguageSpec {
             // resolves to the default foreground in dark-plus (= uncolored)
             KeywordGroup {
                 scope: "keyword.other.c",
+                followed_by: None,
+                value: false,
                 words: &["sizeof"],
             },
             KeywordGroup {
                 scope: "constant.language.c",
+                followed_by: None,
+                value: false,
                 words: &["false", "NULL", "true"],
             },
         ],
@@ -78,6 +90,7 @@ pub fn spec() -> LanguageSpec {
             },
         ],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.c",
         ident_extra: &[],

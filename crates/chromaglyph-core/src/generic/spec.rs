@@ -8,6 +8,16 @@
 pub struct KeywordGroup {
     pub scope: &'static str,
     pub words: &'static [&'static str],
+    /// Require this char right after the word for the keyword to fire
+    /// (CSS: a property name only colors when a `:` follows — a selector
+    /// word that happens to spell a property stays a selector).
+    /// `None` colors at any word boundary, the ordinary behavior.
+    pub followed_by: Option<char>,
+    /// The group's words appear inside values (CSS `!important`,
+    /// `inherit`): their copies carry the value state, so a value exit
+    /// (`;`) right after the word still terminates. Meaningful only in
+    /// block languages.
+    pub value: bool,
 }
 
 /// A single-character-quote string kind. Literals never span newlines:
@@ -59,6 +69,27 @@ pub struct TagKind {
     pub value_scope: &'static str,
 }
 
+/// A property-sheet construct (CSS-shaped): selector words, `word:`
+/// properties, and the value regime. Selectors color after any plain
+/// boundary or one of `anchors` (`.`, `:`); the colon after a word
+/// enters the value regime — an uncolored state that suppresses
+/// selector coloring (and keeps numbers colorable) until one of `ends`
+/// (`;`, `{`, `}`). The `{`/`}` block nesting itself cannot be modeled:
+/// browsers shape line by line, so a block opened on a previous line is
+/// gone — continuation property lines rely on the property keywords'
+/// colon lookahead instead.
+pub struct BlockKind {
+    pub colon: char,
+    /// the block opener (`{`) — it exits a value AND anchors the first
+    /// property keyword of the block
+    pub open: char,
+    /// value-regime exits (`;`, `{`, `}`)
+    pub ends: &'static [char],
+    /// extra backtrack chars for selector opens (`.`, `:`)
+    pub anchors: &'static [char],
+    pub sel_scope: &'static str,
+}
+
 /// What a language looks like to the rule synthesizer. Colors come from
 /// themes by resolving `scope` like a syntect highlighter would.
 pub struct LanguageSpec {
@@ -67,6 +98,7 @@ pub struct LanguageSpec {
     pub strings: &'static [StringKind],
     pub spans: &'static [SpanKind],
     pub tags: &'static [TagKind],
+    pub blocks: &'static [BlockKind],
     /// Color `42`, `3.14`, `0x1F` … as numbers.
     pub numbers: bool,
     pub number_scope: &'static str,

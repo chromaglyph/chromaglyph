@@ -12,6 +12,8 @@ pub fn spec() -> LanguageSpec {
         keywords: &[
             KeywordGroup {
                 scope: "keyword.control.php",
+                followed_by: None,
+                value: false,
                 words: &[
                     "break", "case", "continue", "default", "do", "else", "elseif", "for",
                     "foreach", "goto", "if", "return", "switch", "throw", "try", "while", "yield",
@@ -19,6 +21,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.type.php",
+                followed_by: None,
+                value: false,
                 words: &[
                     "array",
                     "bool",
@@ -44,6 +48,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.modifier.php",
+                followed_by: None,
+                value: false,
                 words: &[
                     "abstract",
                     "final",
@@ -55,6 +61,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "keyword.other.php",
+                followed_by: None,
+                value: false,
                 words: &[
                     "as",
                     "clone",
@@ -76,6 +84,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "constant.language.php",
+                followed_by: None,
+                value: false,
                 words: &["true", "false", "null"],
             },
         ],
@@ -111,6 +121,7 @@ pub fn spec() -> LanguageSpec {
             },
         ],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.php",
         ident_extra: &['$'],

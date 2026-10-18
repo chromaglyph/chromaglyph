@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **generic mode: CSS** (`--generic css`) — the second non-keyword
+  language, on a new `BlockKind` (property-sheet) construct: selector
+  words color after a boundary or `.`/`:`; property names are keywords
+  that fire only when a `:` follows (`a:hover` never matches — `hover`
+  is not a property and the colon-check is per word, so pseudo-classes
+  stay selectors); values ride in an uncolored regime until `;` `{` `}`
+  with numbers, strings and comments colored by the ordinary
+  machinery, and value-position keywords (`!important`, `inherit`)
+  carry the regime through their own glyphs. Multi-line rule blocks
+  cannot carry state across lines (browsers shape line by line) —
+  continuation property lines work through the property keywords'
+  colon lookahead instead. Ships a ~365-name standard property list.
+  The oracle-driven bring-up fixed eight engine/lexer divergences,
+  three of them structural:
+  - keyword letters carry 1:1 classes, so "word-ish" continuation sets
+    must be computed per character AND per letter class (selectors,
+    tag states and value propagation all missed letters before).
+  - chain format-2 subtables carry THREE ClassDef copies; state
+    classes covering most of the font (string bodies, value carriers)
+    made each ~6 bytes/glyph, so a "36 KiB" rule chunk serialized
+    past 64 KiB and the rule-set offsets overflowed. The chunk budget
+    now subtracts the classdef overhead, and state-family alts are
+    allocated kind-major so classes collapse into contiguous ranges
+    (this also un-broke C#/Java, which had crossed the same line).
+  - a value regime (and every state family) must die at newline
+    barriers in the reference lexer exactly like the engine's
+    propagation rules; the block DFA was carrying it across.
+  Also new: `KeywordGroup.value` (value-position keyword groups) and
+  the anchoring rule that a word/number may open after a closer that
+  actually closed on this line (`"a" 3px`, `/* c */ .x`) — never after
+  one that died at a newline.
+
 - **generic mode: HTML** (`--generic html` | `htm`) — the first
   non-keyword language: a new `TagKind` spec construct synthesizes a
   markup tag state machine (name → attribute names → `=` → values,

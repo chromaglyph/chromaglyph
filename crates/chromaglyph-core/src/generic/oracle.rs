@@ -112,6 +112,7 @@ fn curated(name: &str) -> Vec<String> {
         "c" => langs::c::samples(),
         "cpp" => langs::cpp::samples(),
         "csharp" => langs::csharp::samples(),
+        "css" => langs::css::samples(),
         "lua" => langs::lua::samples(),
         "php" => langs::php::samples(),
         "ruby" => langs::ruby::samples(),

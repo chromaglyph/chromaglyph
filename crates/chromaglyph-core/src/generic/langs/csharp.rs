@@ -12,6 +12,8 @@ pub fn spec() -> LanguageSpec {
         keywords: &[
             KeywordGroup {
                 scope: "keyword.control.cs",
+                followed_by: None,
+                value: false,
                 words: &[
                     "break",
                     "case",
@@ -40,6 +42,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.type.cs",
+                followed_by: None,
+                value: false,
                 words: &[
                     "bool",
                     "byte",
@@ -69,6 +73,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.modifier.cs",
+                followed_by: None,
+                value: false,
                 words: &[
                     "abstract",
                     "async",
@@ -93,6 +99,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "keyword.other.cs",
+                followed_by: None,
+                value: false,
                 words: &[
                     "as",
                     "await",
@@ -113,6 +121,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "constant.language.cs",
+                followed_by: None,
+                value: false,
                 words: &["true", "false", "null"],
             },
         ],
@@ -159,6 +169,7 @@ pub fn spec() -> LanguageSpec {
             },
         ],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.cs",
         // '@' verbatim identifiers (@return) must not color the word after

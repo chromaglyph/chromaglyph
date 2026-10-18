@@ -7,6 +7,8 @@ pub fn spec() -> LanguageSpec {
         name: "rust",
         keywords: &[KeywordGroup {
             scope: "keyword.other.rust",
+            followed_by: None,
+            value: false,
             words: &[
                 "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else",
                 "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match",
@@ -33,6 +35,7 @@ pub fn spec() -> LanguageSpec {
             },
         ],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.rust",
         ident_extra: &[],

@@ -637,6 +637,7 @@ fn generic_mode_new_languages() {
         (chromaglyph_core::generic::lua(), 220),
         (chromaglyph_core::generic::shell(), 220),
         (chromaglyph_core::generic::html(), 180),
+        (chromaglyph_core::generic::css(), 1400),
     ] {
         let out = build(&BuildInput {
             font_bytes: FONT,
@@ -885,6 +886,31 @@ fn generic_mode_adversarial_new_languages() {
             "text \"quotes\" stay plain",
             "<div><span><a href=\"x\">deep</a></span></div>",
             "\n<div at_line_start\n&amp; at_line_start",
+        ],
+    );
+    adversarial(
+        &chromaglyph_core::generic::css(),
+        &[
+            "a { color: red; }",
+            ".a:hover { color: blue; }",
+            "background:hover",
+            "li:nth-child(2) { top: 0; }",
+            "/* c */ .x { /* d */ y: z; }",
+            "p { content: \"a; b\"; }",
+            "p { font: 12px/1.5 sans-serif; }",
+            "m { prop:value;compact:true }",
+            "x { y: z",
+            "grid-template-columns: repeat(3, 1fr);",
+            "@media (min-width: 600px) { .b { padding: 4px 8px; } }",
+            "@import url('a.css');",
+            ":root { --gap: 8px; }",
+            ".a .b > .c + .d ~ .e { top: 0; }",
+            "sel { width: 50% !important; }",
+            "width: calc(100% - 8px);",
+            "{ ; } ; {",
+            "color:\nred;",
+            "\ncolor at_line_start\ndiv at_line_start\n42 at_line_start",
+            "color: red; display: flex; gap: 8px",
         ],
     );
 }

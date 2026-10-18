@@ -7,7 +7,7 @@
 发生在字体内部的 glyph 替换里——不用 `<span>`，复制粘贴零污染。多主题 = 一个
 字体多调色板，明暗切换只是一次 CSS `@font-palette-values` 翻转，零重排。
 
-灵感来自 [Cobble / FontWithASyntaxHighlighter](https://github.com/ssssota/FontWithASyntaxHighlighter)：
+灵感来自 [Cobble / FontWithASyntaxHighlighter](https://github.com/hlotvonen/FontWithASyntaxHighlighter)：
 原版在字体里手写了一个「有限状态机词法分析器」（706 条 calt 规则逐字符推进
 状态）；Chromaglyph 反其道而行——**内容在构建期已知，解析在构建期完成**，字体
 里只留下查表。
@@ -49,7 +49,7 @@ tokenize+theme → compile → fontbuild → verify
   一次 shaping，把每个替换重物化为规则——`!=`、`->` 以及 JetBrains Mono
   的上下文变体都按字体本来的样子渲染，同时保持高亮。跨颜色的连字位点
   退化为逐字符渲染（颜色优先——一个字形只能有一种颜色）。
-- **generic**（`--generic rust|js|ts|python|go|java|c|cpp|csharp|php|ruby|lua|shell|html`）：不需要指定内容——
+- **generic**（`--generic rust|js|ts|python|go|java|c|cpp|csharp|php|ruby|lua|shell|html|css`）：不需要指定内容——
   一个字体高亮该语言的**任意**文本（关键字、注释、字符串、数字），纯靠字形
   替换推进状态，思路即原项目的 FSM，但从语言 spec 自动合成，只需约 100 条
   规则。一语言一字体。着色为行内语义：浏览器对 `pre` 逐行整形，状态在换行处

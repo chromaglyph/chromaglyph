@@ -8,6 +8,8 @@ pub fn spec() -> LanguageSpec {
         keywords: &[
             KeywordGroup {
                 scope: "keyword.control.js",
+                followed_by: None,
+                value: false,
                 words: &[
                     "as",
                     "await",
@@ -41,6 +43,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.type.js",
+                followed_by: None,
+                value: false,
                 words: &[
                     "var", "let", "const", "function", "class", "extends", "super", "static",
                     "get", "set", "async", "of",
@@ -48,6 +52,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "constant.language.js",
+                followed_by: None,
+                value: false,
                 words: &["true", "false", "null", "undefined", "this"],
             },
         ],
@@ -84,6 +90,7 @@ pub fn spec() -> LanguageSpec {
             },
         ],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.js",
         ident_extra: &['$'],

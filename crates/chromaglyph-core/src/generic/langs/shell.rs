@@ -13,6 +13,8 @@ pub fn spec() -> LanguageSpec {
         keywords: &[
             KeywordGroup {
                 scope: "keyword.control.shell",
+                followed_by: None,
+                value: false,
                 words: &[
                     "break", "case", "continue", "do", "done", "elif", "else", "esac", "exit",
                     "fi", "for", "if", "in", "return", "select", "then", "until", "while",
@@ -20,14 +22,20 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.type.shell",
+                followed_by: None,
+                value: false,
                 words: &["function"],
             },
             KeywordGroup {
                 scope: "storage.modifier.shell",
+                followed_by: None,
+                value: false,
                 words: &["declare", "export", "local", "readonly", "typeset", "unset"],
             },
             KeywordGroup {
                 scope: "constant.language.shell",
+                followed_by: None,
+                value: false,
                 words: &["true", "false"],
             },
         ],
@@ -51,6 +59,7 @@ pub fn spec() -> LanguageSpec {
             scope: "comment.line.number-sign.shell",
         }],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.shell",
         ident_extra: &[],

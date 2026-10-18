@@ -10,6 +10,8 @@ pub fn spec() -> LanguageSpec {
         keywords: &[
             KeywordGroup {
                 scope: "keyword.control.python",
+                followed_by: None,
+                value: false,
                 words: &[
                     "assert", "await", "break", "case", "continue", "del", "elif", "else",
                     "except", "finally", "for", "if", "match", "pass", "raise", "return", "try",
@@ -18,14 +20,20 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.type.function.python",
+                followed_by: None,
+                value: false,
                 words: &["def", "lambda"],
             },
             KeywordGroup {
                 scope: "storage.type.class.python",
+                followed_by: None,
+                value: false,
                 words: &["class"],
             },
             KeywordGroup {
                 scope: "keyword.other.python",
+                followed_by: None,
+                value: false,
                 words: &[
                     "and", "as", "async", "from", "global", "in", "is", "nonlocal", "not", "or",
                 ],
@@ -63,6 +71,7 @@ pub fn spec() -> LanguageSpec {
             },
         ],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.python",
         ident_extra: &[],

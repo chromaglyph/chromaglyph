@@ -39,6 +39,11 @@ pub enum Tok {
     TagValPlain(usize),
     TagValStr(usize, usize),
     TagClose(usize),
+    /// block kind index within `LanguageSpec::blocks`: a selector word
+    /// (colored) and the value regime's plain carriers / exits
+    Sel(usize),
+    Val(usize),
+    ValEnd(usize),
 }
 
 /// Highlight `text` per the spec, one [`Tok`] per char, **line-scoped**.
@@ -86,6 +91,15 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
     let mut span_order: Vec<usize> = (0..spec.spans.len()).collect();
     span_order.sort_by_key(|&j| std::cmp::Reverse(spec.spans[j].open.chars().count()));
 
+    // property-sheet (CSS) regime: None = outside, (kind, false) =
+    // selectors, (kind, true) = value regime. Strings and comments
+    // reset it — their closing glyphs carry the generic end state in
+    // the engine, which no block rule anchors on
+    let mut blk: Option<(usize, bool)> = None;
+    // index just past a closer that actually closed on this line (a
+    // span/string that died at a newline never closed — the engine's
+    // end state never existed there, so nothing anchors)
+    let mut closed_at: Option<usize> = None;
     let mut i = 0;
     'outer: while i < chars.len() {
         for &j in &span_order {
@@ -115,6 +129,7 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                             *tok = Tok::SpanClose(j);
                         }
                         i += n;
+                        closed_at = Some(i);
                         break;
                     }
                     let c = chars[i];
@@ -124,6 +139,10 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                     out[i] = Tok::SpanBody(j);
                     i += 1;
                 }
+            }
+            blk = None;
+            if closed_at != Some(i) {
+                closed_at = None;
             }
             continue 'outer;
         }
@@ -275,6 +294,7 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                 if c == s.quote && mapped(c) {
                     out[i] = Tok::StrClose(k);
                     i += 1;
+                    closed_at = Some(i);
                     break;
                 }
                 // escape pair: `\` + any mapped non-newline glyph becomes
@@ -330,11 +350,17 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                 out[i] = Tok::StrBody(k);
                 i += 1;
             }
+            blk = None;
+            if closed_at != Some(i) {
+                closed_at = None;
+            }
             continue 'outer;
         }
         if spec.numbers && chars[i].is_ascii_digit() && mapped(chars[i]) {
             let start = i;
-            if start > 0 && boundary(chars[start - 1]) {
+            let in_val = matches!(blk, Some((_, true)));
+            let closed_anchor = !spec.blocks.is_empty() && closed_at == Some(start);
+            if start > 0 && (boundary(chars[start - 1]) || in_val || closed_anchor) {
                 while i < chars.len() && is_ident(chars[i], spec.ident_extra) {
                     out[i] = Tok::Number;
                     i += 1;
@@ -352,10 +378,11 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                     out[i] = Tok::Number;
                     i += 1;
                 }
-            } else {
-                i += 1; // digit inside an identifier is not a number
+                continue;
             }
-            continue;
+            // a digit with no number anchor is not a number — but it may
+            // open a selector word (`.14px` after an anchor): fall
+            // through to the ident walk below instead of skipping it
         }
         if is_ident(chars[i], spec.ident_extra) {
             let start = i;
@@ -367,18 +394,99 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                 .keywords
                 .iter()
                 .position(|g| g.words.contains(&word.as_str()));
+            let in_val = matches!(blk, Some((_, true)));
+            // a word after a closing delimiter (string quote, span
+            // close) anchors only in block languages: there the generic
+            // end state is a keyword boundary, elsewhere it is not
+            let closed_before = !spec.blocks.is_empty() && closed_at == Some(start);
+            let anchor_before = start > 0 && boundary(chars[start - 1]);
+            let sel_anchor_before = start > 0
+                && (anchor_before
+                    || closed_before
+                    || spec
+                        .blocks
+                        .iter()
+                        .any(|b| b.anchors.contains(&chars[start - 1])));
+            let mut colored = false;
             if let Some(g) = group {
-                if start > 0
-                    && boundary(chars[start - 1])
-                    && i < chars.len()
-                    && boundary(chars[i])
+                let la_ok = match spec.keywords[g].followed_by {
+                    Some(fc) => chars.get(i) == Some(&fc) && mapped(fc),
+                    None => i < chars.len() && boundary(chars[i]),
+                };
+                if la_ok
                     && word.chars().all(mapped)
+                    && start > 0
+                    && (anchor_before || closed_before || in_val)
                 {
                     for tok in out.iter_mut().take(i).skip(start) {
                         *tok = Tok::Keyword(g);
                     }
+                    colored = true;
                 }
             }
+            if !colored {
+                match blk {
+                    Some((bi, true)) => {
+                        for tok in out.iter_mut().take(i).skip(start) {
+                            *tok = Tok::Val(bi);
+                        }
+                    }
+                    Some((bi, false)) => {
+                        for tok in out.iter_mut().take(i).skip(start) {
+                            *tok = Tok::Sel(bi);
+                        }
+                    }
+                    None if sel_anchor_before && !spec.blocks.is_empty() => {
+                        // the open: which block owns it is ambiguous with
+                        // several blocks — shipped languages carry one
+                        for tok in out.iter_mut().take(i).skip(start) {
+                            *tok = Tok::Sel(0);
+                        }
+                    }
+                    None => {}
+                }
+            }
+            continue;
+        }
+        // property-sheet transitions on the remaining glyphs: the colon
+        // enters the value regime after a word, the ends terminate it,
+        // everything else rides as an uncolored carrier
+        if let Some((bi, val)) = blk {
+            let c = chars[i];
+            if !mapped(c) || c == '\n' || c == '\r' {
+                // barrier: the value regime dies, exactly like the
+                // engine's propagation rules (no rule covers a newline)
+                blk = None;
+                i += 1;
+                continue;
+            }
+            if val {
+                if spec.blocks[bi].ends.contains(&c) {
+                    out[i] = Tok::ValEnd(bi);
+                    blk = None;
+                } else {
+                    out[i] = Tok::Val(bi);
+                }
+            } else if c == spec.blocks[bi].colon && mapped(c) {
+                out[i] = Tok::Val(bi);
+                blk = Some((bi, true));
+            }
+            // selector regime: no rule fires — the glyph stays plain and
+            // the regime survives (it re-anchors on the next boundary)
+            i += 1;
+            continue;
+        }
+        if spec.blocks.first().is_some_and(|b| {
+            chars[i] == b.colon
+                && mapped(chars[i])
+                && i > 0
+                && is_ident(chars[i - 1], spec.ident_extra)
+        }) {
+            // a plain word's colon (column-0 property) opens the value
+            // regime all the same — the engine anchors on the base class
+            blk = Some((0, true));
+            out[i] = Tok::Val(0);
+            i += 1;
             continue;
         }
         i += 1;

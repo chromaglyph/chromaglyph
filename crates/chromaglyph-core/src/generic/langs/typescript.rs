@@ -8,6 +8,8 @@ pub fn spec() -> LanguageSpec {
         keywords: &[
             KeywordGroup {
                 scope: "keyword.control.ts",
+                followed_by: None,
+                value: false,
                 words: &[
                     "as",
                     "await",
@@ -42,6 +44,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.type.ts",
+                followed_by: None,
+                value: false,
                 words: &[
                     "var",
                     "let",
@@ -86,6 +90,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "constant.language.ts",
+                followed_by: None,
+                value: false,
                 words: &["true", "false", "null", "undefined", "this"],
             },
         ],
@@ -122,6 +128,7 @@ pub fn spec() -> LanguageSpec {
             },
         ],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.ts",
         ident_extra: &['$'],

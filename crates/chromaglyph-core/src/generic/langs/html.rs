@@ -28,6 +28,7 @@ pub fn spec() -> LanguageSpec {
                 scope: "constant.character.entity.html",
             },
         ],
+        blocks: &[],
         tags: &[TagKind {
             open: "<",
             close: ">",

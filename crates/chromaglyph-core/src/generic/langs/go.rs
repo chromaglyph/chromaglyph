@@ -10,6 +10,8 @@ pub fn spec() -> LanguageSpec {
         keywords: &[
             KeywordGroup {
                 scope: "keyword.control.go",
+                followed_by: None,
+                value: false,
                 words: &[
                     "break",
                     "case",
@@ -29,6 +31,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "keyword.other.go",
+                followed_by: None,
+                value: false,
                 words: &[
                     "chan",
                     "const",
@@ -45,6 +49,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "constant.language.go",
+                followed_by: None,
+                value: false,
                 words: &["true", "false", "nil", "iota"],
             },
         ],
@@ -81,6 +87,7 @@ pub fn spec() -> LanguageSpec {
             },
         ],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.go",
         ident_extra: &[],

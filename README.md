@@ -10,7 +10,7 @@ glyph substitution — no `<span>` soup, copy & paste stays clean. Multiple
 themes = multiple palettes in one font; light/dark switching is a single CSS
 `@font-palette-values` flip with zero re-layout.
 
-Inspired by [Cobble / FontWithASyntaxHighlighter](https://github.com/ssssota/FontWithASyntaxHighlighter),
+Inspired by [Cobble / FontWithASyntaxHighlighter](https://github.com/hlotvonen/FontWithASyntaxHighlighter),
 which hand-wrote a lexer as a state machine inside the font (706 `calt`
 rules advancing state character by character). Chromaglyph inverts that:
 **content is known at build time, so parsing happens at build time** — only
@@ -61,7 +61,7 @@ Two modes:
   alternates render exactly as the font intends while staying highlighted.
   Ligature sites spanning multiple colors degrade to plain per-char text
   (colors win); one glyph can only carry one color.
-- **generic** (`--generic rust|js|ts|python|go|java|c|cpp|csharp|php|ruby|lua|shell|html`): no content needed —
+- **generic** (`--generic rust|js|ts|python|go|java|c|cpp|csharp|php|ruby|lua|shell|html|css`): no content needed —
   the font highlights **any** text of that language (keywords, comments,
   strings, numbers) by advancing state purely through glyph substitution,
   like the original project's FSM but synthesized from a language spec in

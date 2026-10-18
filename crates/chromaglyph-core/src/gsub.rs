@@ -42,7 +42,7 @@ use write_fonts::types::{GlyphId16, Tag};
 use crate::compile::GlyphPlan;
 
 /// Conservative per-subtable budget: subtable-internal offsets are u16.
-const MAX_SUBTABLE_BYTES: usize = 36_000;
+const MAX_SUBTABLE_BYTES: usize = 24_000;
 
 /// Build the GSUB table; `None` when the plan colors nothing and restores
 /// no ligatures (font keeps no GSUB and no color tables).
@@ -217,7 +217,25 @@ fn chain_lookup(
     glyphs_of_class: &HashMap<u16, Vec<u16>>,
 ) -> SubstitutionLookup {
     // ---- chunk rules into subtable-sized groups ---------------------------
-    // Grouped by first input class; classes themselves may be split.
+    // Grouped by first input class; classes themselves may be split. The
+    // budget must subtract the format-2 subtable's fixed overhead: it
+    // carries THREE ClassDef copies (backtrack/input/lookahead), and a
+    // state class that covers most of the font (string bodies, value
+    // carriers) makes each ~6 bytes/glyph — unchecked, a "36 KiB" chunk
+    // serializes past 64 KiB and the rule-set offsets (u16) overflow.
+    let classdef_bytes = {
+        // contiguous same-class glyph runs merge into one range record
+        let mut ranges = 1usize;
+        for w in class_glyphs.windows(2) {
+            if w[0].1 != w[1].1 || w[1].0 != w[0].0 + 1 {
+                ranges += 1;
+            }
+        }
+        4 + 6 * ranges.max(1)
+    };
+    let budget = MAX_SUBTABLE_BYTES
+        .saturating_sub(3 * classdef_bytes)
+        .max(2048);
     let mut rules_by_class: HashMap<u16, Vec<&PackedRule<'_>>> = HashMap::new();
     for rule in packed {
         rules_by_class.entry(rule.input[0]).or_default().push(rule);
@@ -230,9 +248,9 @@ fn chain_lookup(
     let mut current_bytes = 0usize;
     for &class in &classes {
         let rules = &rules_by_class[&class];
-        for rule_group in split_class_rules(rules) {
+        for rule_group in split_class_rules(rules, budget) {
             let group_bytes: usize = rule_group.iter().map(|r| est_rule_bytes(r)).sum();
-            if !current.is_empty() && current_bytes + group_bytes > MAX_SUBTABLE_BYTES {
+            if !current.is_empty() && current_bytes + group_bytes > budget {
                 chunks.push(std::mem::take(&mut current));
                 current_bytes = 0;
             }
@@ -300,13 +318,16 @@ fn chain_lookup(
 }
 
 /// Split one class's rules into groups that each fit the subtable budget.
-fn split_class_rules<'r>(rules: &[&'r PackedRule<'r>]) -> Vec<Vec<&'r PackedRule<'r>>> {
+fn split_class_rules<'r>(
+    rules: &[&'r PackedRule<'r>],
+    budget: usize,
+) -> Vec<Vec<&'r PackedRule<'r>>> {
     let mut groups: Vec<Vec<&'r PackedRule<'r>>> = Vec::new();
     let mut current: Vec<&'r PackedRule<'r>> = Vec::new();
     let mut bytes = 0usize;
     for &rule in rules {
         let b = est_rule_bytes(rule);
-        if !current.is_empty() && bytes + b > MAX_SUBTABLE_BYTES {
+        if !current.is_empty() && bytes + b > budget {
             groups.push(std::mem::take(&mut current));
             bytes = 0;
         }

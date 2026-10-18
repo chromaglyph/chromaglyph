@@ -9,6 +9,8 @@ pub fn spec() -> LanguageSpec {
         keywords: &[
             KeywordGroup {
                 scope: "keyword.control.java",
+                followed_by: None,
+                value: false,
                 words: &[
                     "assert",
                     "break",
@@ -32,6 +34,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.type.java",
+                followed_by: None,
+                value: false,
                 words: &[
                     "boolean",
                     "byte",
@@ -50,6 +54,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.modifier.java",
+                followed_by: None,
+                value: false,
                 words: &[
                     "abstract",
                     "default",
@@ -68,6 +74,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "keyword.other.java",
+                followed_by: None,
+                value: false,
                 words: &[
                     "extends",
                     "implements",
@@ -80,6 +88,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "constant.language.java",
+                followed_by: None,
+                value: false,
                 words: &["true", "false", "null"],
             },
         ],
@@ -110,6 +120,7 @@ pub fn spec() -> LanguageSpec {
             },
         ],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.java",
         ident_extra: &[],

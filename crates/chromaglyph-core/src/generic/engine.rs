@@ -47,6 +47,11 @@ pub(in crate::generic) struct Layout {
     /// kinds must not share a state or `"` inside `'…'` would terminate
     tag_valstr: Vec<Vec<u16>>,
     tag_close: Vec<u16>,
+    /// slots per block kind: selector words (colored), the value
+    /// regime's plain carriers, the value-regime exits
+    block_sel: Vec<u16>,
+    block_val: Vec<u16>,
+    block_end: Vec<u16>,
     n_slots: u16,
 }
 
@@ -110,6 +115,15 @@ pub(in crate::generic) fn layout(spec: &LanguageSpec) -> Layout {
         tag_close.push(next + 6 + tag.value_quotes.len() as u16);
         next += 7 + tag.value_quotes.len() as u16;
     }
+    let mut block_sel = Vec::with_capacity(spec.blocks.len());
+    let mut block_val = Vec::with_capacity(spec.blocks.len());
+    let mut block_end = Vec::with_capacity(spec.blocks.len());
+    for _ in spec.blocks {
+        block_sel.push(next);
+        block_val.push(next + 1);
+        block_end.push(next + 2);
+        next += 3;
+    }
     Layout {
         kw,
         str_open,
@@ -129,6 +143,9 @@ pub(in crate::generic) fn layout(spec: &LanguageSpec) -> Layout {
         tag_val_plain,
         tag_valstr,
         tag_close,
+        block_sel,
+        block_val,
+        block_end,
         n_slots: next,
     }
 }
@@ -155,6 +172,9 @@ impl Layout {
             Tok::TagValPlain(t) => self.tag_val_plain[t],
             Tok::TagValStr(t, q) => self.tag_valstr[t][q],
             Tok::TagClose(t) => self.tag_close[t],
+            Tok::Sel(b) => self.block_sel[b],
+            Tok::Val(b) => self.block_val[b],
+            Tok::ValEnd(b) => self.block_end[b],
         })
     }
 }
@@ -229,6 +249,15 @@ pub fn synthesize(
         }
         slots[layout.tag_close[t] as usize] = none;
     }
+    for (b, block) in spec.blocks.iter().enumerate() {
+        slots[layout.block_sel[b] as usize] = themes
+            .iter()
+            .map(|th| th.scope_color(block.sel_scope))
+            .collect();
+        let none: Vec<Option<Color>> = vec![None; themes.len()];
+        slots[layout.block_val[b] as usize] = none.clone();
+        slots[layout.block_end[b] as usize] = none;
+    }
     let theme_fgs: Vec<Color> = themes.iter().map(|t| t.foreground).collect();
 
     // ---- glyph classes ----------------------------------------------------
@@ -249,6 +278,15 @@ pub fn synthesize(
     }
     for span in spec.spans {
         for ch in span.open.chars().chain(span.close.chars()) {
+            char_class.entry(ch).or_insert_with(|| {
+                let id = next_class;
+                next_class += 1;
+                id
+            });
+        }
+    }
+    for block in spec.blocks {
+        for ch in std::iter::once(block.colon).chain(block.ends.iter().copied()) {
             char_class.entry(ch).or_insert_with(|| {
                 let id = next_class;
                 next_class += 1;
@@ -403,6 +441,15 @@ pub fn synthesize(
         }
         tag_vstr_state.push(vstr);
     }
+    let mut block_sel_state = Vec::with_capacity(spec.blocks.len());
+    let mut block_val_state = Vec::with_capacity(spec.blocks.len());
+    for _ in spec.blocks {
+        for v in [&mut block_sel_state, &mut block_val_state] {
+            let id = next_class;
+            next_class += 1;
+            v.push(id);
+        }
+    }
     let c_num_state = next_class;
     next_class += 1;
     let c_end_state = next_class;
@@ -421,6 +468,11 @@ pub fn synthesize(
             if is_ident(ch, spec.ident_extra) || ch.is_ascii_digit() {
                 set.insert(cls);
             }
+        }
+        // keyword letters carry 1:1 classes — in keyword languages they
+        // are the word glyphs (a CSS selector word is all letter classes)
+        for &cls in letter_class.values() {
+            set.insert(cls);
         }
         set
     };
@@ -522,7 +574,13 @@ pub fn synthesize(
         };
         for c in letters {
             if let Some(gid) = char_gid(mappings, c) {
-                let class = class_of[&gid];
+                let class = if group.value && !spec.blocks.is_empty() {
+                    // value-position keywords keep the value regime
+                    // alive through their own glyphs
+                    block_val_state[0]
+                } else {
+                    class_of[&gid]
+                };
                 push_alt(
                     &mut next_new,
                     &mut alt_glyphs,
@@ -686,12 +744,10 @@ pub fn synthesize(
                 }
             }
         }
+        // kind-major (contiguous same-class alts — see the block loop)
         for &gid in &gids {
             let class = class_of[&gid];
-            if class == c_notdef || class == c_nl {
-                continue;
-            }
-            if wordish(class) {
+            if class != c_notdef && class != c_nl && wordish(class) {
                 push_alt(
                     &mut next_new,
                     &mut alt_glyphs,
@@ -700,6 +756,11 @@ pub fn synthesize(
                     tag_name_state[t],
                     &mut class_of,
                 );
+            }
+        }
+        for &gid in &gids {
+            let class = class_of[&gid];
+            if class != c_notdef && class != c_nl && wordish(class) {
                 push_alt(
                     &mut next_new,
                     &mut alt_glyphs,
@@ -708,6 +769,11 @@ pub fn synthesize(
                     tag_attr_state[t],
                     &mut class_of,
                 );
+            }
+        }
+        for &gid in &gids {
+            let class = class_of[&gid];
+            if class != c_notdef && class != c_nl && wordish(class) {
                 push_alt(
                     &mut next_new,
                     &mut alt_glyphs,
@@ -717,27 +783,37 @@ pub fn synthesize(
                     &mut class_of,
                 );
             }
-            // the attr regime's plain carriers (spaces, `/`, `=`
-            // transitions, closing quotes) and the quoted value bodies
-            // (quotes of the other kind included in each — only the
-            // matching quote terminates, by rule order)
-            push_alt(
-                &mut next_new,
-                &mut alt_glyphs,
-                gid,
-                layout.tag_attr_plain[t],
-                tag_attr_state[t],
-                &mut class_of,
-            );
-            for (q, _) in tag.value_quotes.iter().enumerate() {
+        }
+        // the attr regime's plain carriers (spaces, `/`, `=`
+        // transitions, closing quotes) and the quoted value bodies
+        // (quotes of the other kind included in each — only the
+        // matching quote terminates, by rule order)
+        for &gid in &gids {
+            let class = class_of[&gid];
+            if class != c_notdef && class != c_nl {
                 push_alt(
                     &mut next_new,
                     &mut alt_glyphs,
                     gid,
-                    layout.tag_valstr[t][q],
-                    tag_vstr_state[t][q],
+                    layout.tag_attr_plain[t],
+                    tag_attr_state[t],
                     &mut class_of,
                 );
+            }
+        }
+        for (q, _) in tag.value_quotes.iter().enumerate() {
+            for &gid in &gids {
+                let class = class_of[&gid];
+                if class != c_notdef && class != c_nl {
+                    push_alt(
+                        &mut next_new,
+                        &mut alt_glyphs,
+                        gid,
+                        layout.tag_valstr[t][q],
+                        tag_vstr_state[t][q],
+                        &mut class_of,
+                    );
+                }
             }
         }
         if let Some(gid) = char_gid(mappings, tag.equals) {
@@ -764,6 +840,59 @@ pub fn synthesize(
                     );
                 }
             }
+        }
+    }
+    // block (property-sheet) copies: selector-colored word glyphs and
+    // the value regime's plain carriers (one of nearly every glyph),
+    // plus the exit delimiters
+    for (b, block) in spec.blocks.iter().enumerate() {
+        // kind-major on purpose: same-class alts get contiguous glyph
+        // ids, so the chain subtables' ClassDefs collapse into a
+        // handful of ranges instead of one per glyph
+        for &gid in &gids {
+            let class = class_of[&gid];
+            if class != c_notdef && class != c_nl && wordish_classes.contains(&class) {
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.block_sel[b],
+                    block_sel_state[b],
+                    &mut class_of,
+                );
+            }
+        }
+        for &gid in &gids {
+            let class = class_of[&gid];
+            if class != c_notdef && class != c_nl {
+                push_alt(
+                    &mut next_new,
+                    &mut alt_glyphs,
+                    gid,
+                    layout.block_val[b],
+                    block_val_state[b],
+                    &mut class_of,
+                );
+            }
+        }
+        let mut ends: HashSet<u16> = HashSet::new();
+        if let Some(gid) = char_gid(mappings, block.colon) {
+            ends.insert(gid);
+        }
+        for &ch in block.ends {
+            if let Some(gid) = char_gid(mappings, ch) {
+                ends.insert(gid);
+            }
+        }
+        for gid in ends {
+            push_alt(
+                &mut next_new,
+                &mut alt_glyphs,
+                gid,
+                layout.block_end[b],
+                c_end_state,
+                &mut class_of,
+            );
         }
     }
     // number glyphs: digits, identifier chars, letters, dot
@@ -1036,10 +1165,51 @@ pub fn synthesize(
                 || (class >= first_letter_class
                     && class < first_letter_class + keyword_letters.len() as u16))
     };
-    // keyword boundary class: plain punctuation only. A newline can never
-    // anchor a keyword — the previous line is a different shaping run in
-    // every browser, so a column-0 keyword has no in-run glyph before it
-    let boundaries = [C_NOTWORD];
+    // keyword boundary classes: plain punctuation only, plus — for
+    // property-sheet (block) languages — the value-regime exits/carriers
+    // and the value state itself (`!important` after a carried `!`). A
+    // newline can never anchor a keyword: the previous line is a
+    // different shaping run in every browser, so a column-0 keyword has
+    // no in-run glyph before it
+    // boundaries stay SMALL on purpose: every entry multiplies the
+    // keyword rule count (a CSS-sized property list × N anchors). The
+    // plain space/punctuation class, the generic end state (a value
+    // exit `;`/`}` — also any string/comment close), a plain `{` (the
+    // first property of a block), and the value state (`!important`
+    // after a carried `!`). Plain `;`/`}` anchor nothing: what follows
+    // them in real CSS follows a *terminated* value (end state), not a
+    // bare delimiter.
+    let mut boundaries = vec![C_NOTWORD];
+    if !spec.blocks.is_empty() {
+        boundaries.push(c_end_state);
+    }
+    for (b, block) in spec.blocks.iter().enumerate() {
+        boundaries.push(block_val_state[b]);
+        for ch in std::iter::once(block.open).chain(block.ends.iter().copied()) {
+            if let Some(&cls) = char_class.get(&ch) {
+                boundaries.push(cls);
+            }
+        }
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    // selector opens anchor on plain punctuation, the end state, and the
+    // anchors (`.`, `:`): `.foo` and `:hover` open after their
+    // punctuation; the value state must not start a selector
+    let mut sel_anchor: Vec<u16> = boundaries
+        .iter()
+        .copied()
+        .filter(|&c| !block_val_state.contains(&c))
+        .collect();
+    for block in spec.blocks {
+        for ch in block.anchors {
+            if let Some(&cls) = char_class.get(ch) {
+                sel_anchor.push(cls);
+            }
+        }
+    }
+    sel_anchor.sort_unstable();
+    sel_anchor.dedup();
 
     for &class in &present {
         if let Some(rules) = terminators.get(&class) {
@@ -1250,15 +1420,132 @@ pub fn synthesize(
                     continue;
                 }
                 let input: Vec<u16> = kw.chars().map(|c| letter_class[&c]).collect();
-                for &bt in &boundaries {
-                    for &la in &boundaries {
+                // a followed_by keyword (CSS property names) fires only
+                // when its char follows; ordinary keywords fire at any
+                // boundary on both sides
+                let las: Vec<Vec<u16>> =
+                    match group.followed_by.and_then(|c| char_class.get(&c).copied()) {
+                        Some(cls) => vec![vec![cls]],
+                        None if spec.blocks.is_empty() => vec![vec![C_NOTWORD]],
+                        // block languages: the next glyph may be a plain
+                        // `;`/`{` (its own class) or a carried space (the
+                        // value state) — the whole boundary set
+                        None => boundaries.iter().map(|&b| vec![b]).collect(),
+                    };
+                // a followed_by word never sits in the value regime; the
+                // value state is an anchor only for value-position
+                // keywords (`!important`, `inherit`)
+                let bts: Vec<u16> = if group.followed_by.is_some() {
+                    boundaries
+                        .iter()
+                        .copied()
+                        .filter(|&c| !block_val_state.contains(&c))
+                        .collect()
+                } else {
+                    boundaries.clone()
+                };
+                for &bt in &bts {
+                    for la in &las {
                         by_class.entry(class).or_default().push(Rule {
                             backtrack: vec![bt],
                             input: input.clone(),
-                            lookahead: vec![la],
+                            lookahead: la.clone(),
                             pal: layout.kw[g],
                         });
                     }
+                }
+            }
+        }
+        // property-sheet (CSS) blocks — after keywords so a property
+        // word (keyword + colon lookahead) beats the selector open at
+        // the same position
+        for (b, block) in spec.blocks.iter().enumerate() {
+            let colon_cls = char_class.get(&block.colon).copied();
+            let end_cls: Vec<u16> = block
+                .ends
+                .iter()
+                .filter_map(|c| char_class.get(c).copied())
+                .collect();
+            let wordish = wordish_classes.contains(&class);
+            if wordish {
+                // word continuation, then the open after an anchor —
+                // plain boundary, a value exit, or an anchor char
+                prop(
+                    &mut by_class,
+                    class,
+                    block_sel_state[b],
+                    layout.block_sel[b],
+                    vec![],
+                );
+                for &bt in &sel_anchor {
+                    by_class.entry(class).or_default().push(Rule {
+                        backtrack: vec![bt],
+                        input: vec![class],
+                        lookahead: vec![],
+                        pal: layout.block_sel[b],
+                    });
+                }
+            }
+            // the colon after ANY word enters the value regime: plain
+            // idents, keyword letters (which keep their base letter
+            // class) and selector words (which carry the selector
+            // state) all land here
+            if Some(class) == colon_cls {
+                let mut bts: Vec<u16> = wordish_classes.iter().copied().collect();
+                bts.sort_unstable();
+                bts.push(block_sel_state[b]);
+                for bt in bts {
+                    by_class.entry(class).or_default().push(Rule {
+                        backtrack: vec![bt],
+                        input: vec![class],
+                        lookahead: vec![],
+                        pal: layout.block_val[b],
+                    });
+                }
+            }
+            // value regime: digits still open numbers (colored), the
+            // exit chars terminate, everything else rides as plain
+            // carriers — and the glyph right after a number hands the
+            // regime back (excluded: the exits own their classes)
+            if !end_cls.contains(&class) {
+                if class == c_digit && spec.numbers {
+                    by_class.entry(class).or_default().push(Rule {
+                        backtrack: vec![block_val_state[b]],
+                        input: vec![class],
+                        lookahead: vec![],
+                        pal: layout.num,
+                    });
+                }
+                prop(
+                    &mut by_class,
+                    class,
+                    block_val_state[b],
+                    layout.block_val[b],
+                    vec![],
+                );
+                if spec.numbers {
+                    by_class.entry(class).or_default().push(Rule {
+                        backtrack: vec![c_num_state],
+                        input: vec![class],
+                        lookahead: vec![],
+                        pal: layout.block_val[b],
+                    });
+                }
+            } else {
+                by_class.entry(class).or_default().push(Rule {
+                    backtrack: vec![block_val_state[b]],
+                    input: vec![class],
+                    lookahead: vec![],
+                    pal: layout.block_end[b],
+                });
+                if spec.numbers {
+                    // `4px;` — the exit follows the number state
+                    by_class.entry(class).or_default().push(Rule {
+                        backtrack: vec![c_num_state],
+                        input: vec![class],
+                        lookahead: vec![],
+                        pal: layout.block_end[b],
+                    });
                 }
             }
         }

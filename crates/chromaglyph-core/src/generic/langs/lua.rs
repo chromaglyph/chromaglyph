@@ -10,6 +10,8 @@ pub fn spec() -> LanguageSpec {
         keywords: &[
             KeywordGroup {
                 scope: "keyword.control.lua",
+                followed_by: None,
+                value: false,
                 words: &[
                     "break", "do", "else", "elseif", "end", "for", "goto", "if", "in", "repeat",
                     "return", "then", "until", "while",
@@ -17,14 +19,20 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.type.lua",
+                followed_by: None,
+                value: false,
                 words: &["function", "local"],
             },
             KeywordGroup {
                 scope: "keyword.operator.lua",
+                followed_by: None,
+                value: false,
                 words: &["and", "not", "or"],
             },
             KeywordGroup {
                 scope: "constant.language.lua",
+                followed_by: None,
+                value: false,
                 words: &["true", "false", "nil"],
             },
         ],
@@ -60,6 +68,7 @@ pub fn spec() -> LanguageSpec {
             },
         ],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.lua",
         ident_extra: &[],

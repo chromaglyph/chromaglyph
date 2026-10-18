@@ -11,6 +11,8 @@ pub fn spec() -> LanguageSpec {
         keywords: &[
             KeywordGroup {
                 scope: "keyword.control.ruby",
+                followed_by: None,
+                value: false,
                 words: &[
                     "begin", "break", "case", "do", "else", "elsif", "end", "ensure", "for", "if",
                     "next", "redo", "rescue", "retry", "return", "super", "unless", "until",
@@ -19,10 +21,14 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.type.ruby",
+                followed_by: None,
+                value: false,
                 words: &["class", "def", "module"],
             },
             KeywordGroup {
                 scope: "keyword.other.ruby",
+                followed_by: None,
+                value: false,
                 words: &[
                     "and",
                     "attr_accessor",
@@ -40,6 +46,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "constant.language.ruby",
+                followed_by: None,
+                value: false,
                 words: &["true", "false", "nil"],
             },
         ],
@@ -63,6 +71,7 @@ pub fn spec() -> LanguageSpec {
             scope: "comment.line.number-sign.ruby",
         }],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.ruby",
         ident_extra: &[],

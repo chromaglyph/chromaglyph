@@ -14,6 +14,8 @@ pub fn spec() -> LanguageSpec {
         keywords: &[
             KeywordGroup {
                 scope: "keyword.control.c++",
+                followed_by: None,
+                value: false,
                 words: &[
                     "break", "case", "catch", "continue", "default", "do", "else", "for", "goto",
                     "if", "return", "switch", "throw", "try", "while",
@@ -21,6 +23,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.type.c++",
+                followed_by: None,
+                value: false,
                 words: &[
                     "auto", "bool", "char", "char16_t", "char32_t", "char8_t", "class", "decltype",
                     "double", "enum", "float", "int", "long", "short", "signed", "struct",
@@ -29,6 +33,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "storage.modifier.c++",
+                followed_by: None,
+                value: false,
                 words: &[
                     "const",
                     "constexpr",
@@ -47,6 +53,8 @@ pub fn spec() -> LanguageSpec {
             },
             KeywordGroup {
                 scope: "keyword.other.c++",
+                followed_by: None,
+                value: false,
                 words: &[
                     "delete",
                     "namespace",
@@ -62,12 +70,16 @@ pub fn spec() -> LanguageSpec {
             // the `#` glyph stays plain, the word colors purple
             KeywordGroup {
                 scope: "keyword.control.import.c++",
+                followed_by: None,
+                value: false,
                 words: &[
                     "define", "elif", "endif", "ifdef", "ifndef", "include", "pragma", "undef",
                 ],
             },
             KeywordGroup {
                 scope: "constant.language.c++",
+                followed_by: None,
+                value: false,
                 words: &["false", "NULL", "nullptr", "true"],
             },
         ],
@@ -98,6 +110,7 @@ pub fn spec() -> LanguageSpec {
             },
         ],
         tags: &[],
+        blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.c++",
         ident_extra: &[],
