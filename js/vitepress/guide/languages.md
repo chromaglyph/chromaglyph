@@ -63,6 +63,23 @@ function demo() {
     let multi = `line one,
 after the newline`;
 }
+
+const a = 0;
+await abc();
+
+const fn = () => {
+  return {
+    msg: 'message'
+  }
+}
+
+export default {
+  data () {
+    return {
+      msg: 'am'
+    }
+  }
+}
 ```
 
 ## Python
