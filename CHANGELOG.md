@@ -11,15 +11,13 @@
   stays off: upstream reports reconstructed glyf can exceed the
   short-loca limit without switching formats, which Chromium rejects
   while fonttools reads it fine, and the untransformed path costs only
-  a few percent). Two honest edges:
-  - WOFF2 carries TrueType-flavored fonts only. A CFF-flavored build
-    (OTF source) falls back to WOFF1 bytes with a report warning — the
-    container never fails a build — and the generated CSS says
-    `format('woff')` because that is what actually shipped.
-  - `chromaglyph verify` reads `.woff2` fonts back through `wuff`
-    (already an input-side dependency, verified byte-identical to
-    google/woff2); the rustybuzz oracle runs on the decoded sfnt
-    exactly as for WOFF1.
+  a few percent). Both outline flavors ride in WOFF2 — TrueType as-is,
+  CFF/OTTO with a null transform (the spec defines no CFF table
+  transformation); OTTO input support is our upstream contribution,
+  released as ttf2woff2 0.14.1. `chromaglyph verify` reads `.woff2`
+  fonts back through `wuff` (already an input-side dependency, verified
+  byte-identical to google/woff2); the rustybuzz oracle runs on the
+  decoded sfnt exactly as for WOFF1.
   The format is an explicit `OutputFormat` on `BuildInput`
   (`Sfnt | Woff | Woff2`); `.ttf` now skips the container wrap entirely
   (previously a WOFF1 was always computed then discarded) and its CSS
@@ -28,11 +26,13 @@
   `buildCssAssets` sniffs the returned bytes for the `wOF2` magic so
   the data-URI mime, `format()` and the emitted file extension always
   name the container that actually shipped. The browser smoke test
-  grows `exact-woff2` and `generic-woff2` cases — OTS sanitizes the
-  Brotli path separately from WOFF1's zlib, and both render with
-  palette-correct pixels in headless Chromium; e2e additionally
-  round-trips every table through decode and byte-compares against the
-  raw sfnt (head.checkSumAdjustment masked: decoders recompute it).
+  grows `exact-woff2`, `exact-otf-woff2` (the CFF-in-WOFF2 combination,
+  upstream-validated only against fonttools — this is the browser
+  oracle for it) and `generic-woff2` cases — OTS sanitizes the Brotli
+  path separately from WOFF1's zlib, all rendering with palette-correct
+  pixels in headless Chromium; e2e additionally round-trips every table
+  through decode and byte-compares against the raw sfnt
+  (head.checkSumAdjustment masked: decoders recompute it).
 
 - **generic mode: CSS** (`--generic css`) — the second non-keyword
   language, on a new `BlockKind` (property-sheet) construct: selector

@@ -127,10 +127,10 @@ pre, code {
 
 `.ttf` writes raw sfnt; `.woff` (default) writes WOFF1 (zlib); `.woff2`
 writes WOFF2 (Brotli, ~15–30% smaller — one stream shares its compression
-window across all tables). WOFF2 carries TrueType-flavored fonts only, so
-a CFF-flavored build (OTF source) wraps WOFF1 with a report warning. The
-glyf/loca table transformation stays off (a known Chromium decoder hazard
-for a few percent of size).
+window across all tables). Both outline flavors ride in WOFF2: TrueType
+as-is, CFF with a null transform (the spec defines no CFF transformation).
+The glyf/loca table transformation stays off (a known Chromium decoder
+hazard for a few percent of size).
 
 From source:
 
@@ -186,8 +186,7 @@ per-version known limitations.
   `.ttc` collections (`--font-index` picks the member); variable TrueType
   fonts are pinned to their default instance. CFF2 (variable-OTF) and
   CID-keyed CFF sources are rejected. Output: WOFF1 (default), WOFF2
-  (`.woff2`, TrueType-flavored builds only — CFF-flavored output falls
-  back to WOFF1 with a warning) or raw sfnt (`.ttf`).
+  (`.woff2`, both outline flavors) or raw sfnt (`.ttf`).
 - Generic mode is line-scoped (see above) and one language per font —
   merging languages would color `type` in a Rust block via TS rules.
 - Generic mode keywords/numbers need a preceding in-line boundary

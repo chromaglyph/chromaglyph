@@ -63,8 +63,8 @@ function markdownItChromaglyph(md, options = {}) {
     semantic = false,
     // 保留源字体的连字(如 != -> ===):同 remark 插件的 ligatures 选项。
     ligatures = false,
-    // 输出容器:woff2(Brotli,更小)或 woff(zlib)。CFF 风味的输出会
-    // 自动回退 woff 并带一条 report 警告。
+    // 输出容器:woff2(Brotli,更小)或 woff(zlib);两种轮廓风格都能
+    // 装进 woff2(TrueType 原样,CFF 走空变换)。
     format = 'woff',
     cacheDir,
     cwd = process.cwd(),

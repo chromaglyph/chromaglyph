@@ -62,8 +62,8 @@ enum Command {
         #[arg(long = "theme", default_values_t = default_themes())]
         themes: Vec<String>,
         /// Output font path; .ttf writes raw sfnt, .woff2 wraps WOFF2
-        /// (Brotli; CFF-flavored output falls back to WOFF1 with a
-        /// warning), any other extension wraps WOFF1
+        /// (Brotli; both outline flavors), any other extension wraps
+        /// WOFF1
         #[arg(long, default_value = "chromaglyph.woff")]
         output: PathBuf,
         /// Optional path for the companion CSS (font-face + palettes)

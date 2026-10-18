@@ -54,9 +54,9 @@ pub enum OutputFormat {
     Sfnt,
     /// WOFF1: per-table zlib (`.woff`).
     Woff,
-    /// WOFF2: single Brotli stream (`.woff2`). TrueType-flavored output
-    /// only — a CFF-flavored sfnt (OTF sources) falls back to WOFF1 with
-    /// a report warning rather than failing the build.
+    /// WOFF2: single Brotli stream (`.woff2`). Both flavors we can emit
+    /// ride in it — TrueType and OTTO/CFF (the WOFF2 spec defines no CFF
+    /// transform, so CFF tables ship null-transform + Brotli).
     Woff2,
 }
 
@@ -292,26 +292,15 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
         result
     };
 
-    // stage 6: wrap the shipping artifact. WOFF2 carries TrueType-flavored
-    // fonts only, so CFF-flavored output (OTF sources) degrades to WOFF1
-    // with a warning — the container format never fails a build.
+    // stage 6: wrap the shipping artifact. ttf2woff2 ≥ 0.14.1 takes both
+    // flavors we can emit (TrueType and OTTO/CFF — the WOFF2 spec defines
+    // no CFF transform, so CFF rides as null-transform + Brotli).
     let mut warnings = loaded.warnings;
     warnings.extend(plan.warnings);
     let (woff, used_format) = match input.format {
         OutputFormat::Sfnt => (Vec::new(), OutputFormat::Sfnt),
         OutputFormat::Woff => (woff::wrap(&ttf)?, OutputFormat::Woff),
-        OutputFormat::Woff2 => {
-            if ttf.len() >= 4 && &ttf[0..4] == b"OTTO" {
-                warnings.push(
-                    "WOFF2 supports TrueType-flavored fonts only; the CFF-flavored output \
-                     was wrapped as WOFF1 instead"
-                        .into(),
-                );
-                (woff::wrap(&ttf)?, OutputFormat::Woff)
-            } else {
-                (woff::wrap_woff2(&ttf)?, OutputFormat::Woff2)
-            }
-        }
+        OutputFormat::Woff2 => (woff::wrap_woff2(&ttf)?, OutputFormat::Woff2),
     };
     let css = render_css(
         input.themes,

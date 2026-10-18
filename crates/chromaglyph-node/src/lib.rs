@@ -74,8 +74,7 @@ pub struct BuildOptions {
     /// highlighted. Ignored with `generic`.
     pub ligatures: Option<bool>,
     /// Output container: `'woff'` (default, per-table zlib) or `'woff2'`
-    /// (Brotli). CFF-flavored output (OTF sources) falls back to WOFF1
-    /// with a report warning.
+    /// (Brotli); both outline flavors ride in woff2.
     pub format: Option<String>,
 }
 

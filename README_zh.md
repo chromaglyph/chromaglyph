@@ -110,10 +110,10 @@ pre, code {
 ```
 
 输出扩展名选 `.ttf` 则写裸 sfnt，`.woff`（默认）写 WOFF1（zlib），`.woff2`
-写 WOFF2（Brotli，再小 15–30%——单流压缩让全部表共享一个窗口）。WOFF2 只
-装 TrueType 风味的字体，CFF 风味的产物（OTF 源）会退回 WOFF1 并在报告里
-给出警告。glyf/loca 表变换保持关闭（省下几个百分点的体积，换来绕开
-Chromium 解码器的已知坑）。
+写 WOFF2（Brotli，再小 15–30%——单流压缩让全部表共享一个窗口）。两种轮廓
+风格都能装进 WOFF2：TrueType 原样、CFF 走空变换（规范没有定义 CFF 的表变
+换）。glyf/loca 表变换保持关闭（省下几个百分点的体积，换来绕开 Chromium
+解码器的已知坑）。
 
 从源码构建：
 
@@ -162,8 +162,7 @@ const file = await unified()
 - 输入支持静态 TrueType（TTF）、name-keyed CFF（OTF）、WOFF1、WOFF2
   与 `.ttc` 集合（`--font-index` 选择成员）；可变 TrueType 钉到默认实例。
   CFF2（可变 OTF）与 CID-keyed CFF 拒绝。输出：WOFF1（默认）、WOFF2
-  （`.woff2`，仅 TrueType 风味——CFF 风味退回 WOFF1 并警告）或裸
-  sfnt（`.ttf`）。
+  （`.woff2`，两种轮廓风格均可）或裸 sfnt（`.ttf`）。
 - generic 模式为行内语义（见上）、一语言一字体——合并语言会让 TS 的 `type`
   给 Rust 块里的 `type` 上色。
 - 通用模式的关键词/数字需要行内有前置边界字形，行首关键字保持无色

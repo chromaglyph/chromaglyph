@@ -61,7 +61,7 @@ test('format woff2 ships a wOF2 container and its own cache entry', () => {
   assert.throws(() => buildFont({ ...base, format: 'eot' }), /unknown format/)
 })
 
-test('CFF-flavored woff2 request falls back to woff1 with a warning', () => {
+test('CFF-flavored woff2 output is a real woff2 container', () => {
   clearCache()
   const otf = readFileSync('../chromaglyph-core/tests/fixtures/SourceCodePro-Regular.otf')
   const out = buildFont({
@@ -70,10 +70,14 @@ test('CFF-flavored woff2 request falls back to woff1 with a warning', () => {
     blocks: [{ id: 'b0', lang: 'rust', text: 'let x = "hi"; // c\n' }],
     format: 'woff2',
   })
-  assert.equal(Buffer.from(out.woff).subarray(0, 4).toString('latin1'), 'wOFF')
+  // since ttf2woff2 0.14.1 the OTTO flavor rides in woff2 directly —
+  // no WOFF1 fallback, no warning
+  const bytes = Buffer.from(out.woff)
+  assert.equal(bytes.subarray(0, 4).toString('latin1'), 'wOF2')
+  assert.equal(bytes.subarray(4, 8).toString('latin1'), 'OTTO')
   const report = JSON.parse(out.report)
   assert.ok(
-    report.warnings.some((w) => w.includes('WOFF1') && w.includes('WOFF2')),
+    !report.warnings.some((w) => w.includes('WOFF')),
     JSON.stringify(report.warnings),
   )
 })

@@ -52,8 +52,8 @@ function remarkChromaglyph(options = {}) {
     // 替换重物化为规则——连字照常渲染且保持高亮;跨颜色的连字退化为
     // 逐字符(颜色优先)。
     ligatures = false,
-    // 输出容器:woff2(Brotli,更小)或 woff(zlib)。CFF 风味的输出会
-    // 自动回退 woff 并带一条 report 警告。
+    // 输出容器:woff2(Brotli,更小)或 woff(zlib);两种轮廓风格都能
+    // 装进 woff2(TrueType 原样,CFF 走空变换)。
     format = 'woff',
     cacheDir,
     // 'page'（默认）：整篇文档合成一个字体；'lang'：按语言分组，一语言一

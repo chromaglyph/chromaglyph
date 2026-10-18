@@ -206,7 +206,7 @@ fn woff2_output_builds_and_verifies() {
 }
 
 #[test]
-fn woff2_cff_output_falls_back_to_woff1() {
+fn woff2_cff_output_rides_as_null_transform() {
     let themes = themes();
     let out = build(&BuildInput {
         font_bytes: include_bytes!("fixtures/SourceCodePro-Regular.otf"),
@@ -215,25 +215,50 @@ fn woff2_cff_output_falls_back_to_woff1() {
         blocks: &blocks(SAMPLE),
         run_verify: true,
         generic: None,
-        font_name: None,
+        font_name: Some("out.woff2"),
         semantic: None,
         ligatures: false,
         format: OutputFormat::Woff2,
     })
-    .expect("build still succeeds — the container never fails it");
+    .expect("CFF-flavored output wraps WOFF2 directly (ttf2woff2 >= 0.14.1)");
 
-    // OTTO cannot ride in WOFF2 (TrueType flavor only): the fallback is
-    // WOFF1 bytes, an honest CSS format(), and a warning in the report
-    assert_eq!(&out.woff[0..4], b"wOFF", "falls back to WOFF1");
-    assert!(out.css.contains("format('woff')"), "{}", out.css);
+    // a real WOFF2 container carrying the OTTO flavor through, with the
+    // CSS naming it and no fallback warning anywhere
+    assert_eq!(&out.woff[0..4], b"wOF2");
+    assert_eq!(&out.woff[4..8], b"OTTO", "the CFF flavor survives the wrap");
+    assert!(out.css.contains("format('woff2')"), "{}", out.css);
     assert!(
-        out.report
-            .warnings
-            .iter()
-            .any(|w| w.contains("WOFF1") && w.contains("WOFF2")),
-        "{:?}",
+        !out.report.warnings.iter().any(|w| w.contains("WOFF")),
+        "no container fallback anymore: {:?}",
         out.report.warnings
     );
+
+    // decode and compare every table against the raw sfnt — CFF rides
+    // null-transform, so the roundtrip is lossless like TrueType's
+    let decoded = wuff::decompress_woff2(&out.woff).expect("wuff decodes our CFF woff2");
+    assert_eq!(&decoded[0..4], b"OTTO");
+    let a = read_fonts::FontRef::new(&out.ttf).unwrap();
+    let b = read_fonts::FontRef::new(&decoded).unwrap();
+    let tags: Vec<read_fonts::types::Tag> = a
+        .table_directory()
+        .table_records()
+        .iter()
+        .map(|r| r.tag())
+        .collect();
+    assert_eq!(tags.len(), b.table_directory().table_records().len());
+    for tag in tags {
+        // whole-font checksum: decoders recompute it on reconstruction
+        let (mut x, mut y) = (
+            a.data_for_tag(tag).unwrap().as_bytes().to_vec(),
+            b.data_for_tag(tag).unwrap().as_bytes().to_vec(),
+        );
+        if tag == read_fonts::types::Tag::new(b"head") && x.len() >= 12 {
+            x[8..12].fill(0);
+            y[8..12].fill(0);
+        }
+        assert_eq!(x, y, "table {tag} changed through the woff2 roundtrip");
+    }
+
     let result = verify(&out.woff, &blocks(SAMPLE), &themes).expect("standalone verify");
     assert!(result.ok, "{:?}", result.failures);
 }

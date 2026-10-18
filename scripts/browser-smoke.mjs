@@ -27,8 +27,10 @@
  * state machine: tag names probe as keyword blue, attribute values as
  * string orange, comments as comment green). Two more run the exact and
  * generic paths through the WOFF2 container (Brotli) — OTS sanitizes
- * that path separately from WOFF1's zlib. Run: `pnpm smoke` (or pass
- * CHROMAGLYPH_BIN).
+ * that path separately from WOFF1's zlib — plus the CFF-flavored WOFF2
+ * combination (OTTO riding null-transform, upstream-validated only
+ * against fonttools; this is the browser oracle for it). Run:
+ * `pnpm smoke` (or pass CHROMAGLYPH_BIN).
  */
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -98,6 +100,13 @@ const CASES = [
   {
     id: 'exact-woff2',
     args: ['--input', resolve(root, 'examples/hello.rs')],
+    ext: '.woff2',
+  },
+  {
+    id: 'exact-otf-woff2',
+    font: resolve(fixtures, 'SourceCodePro-Regular.otf'),
+    args: ['--input', resolve(outDir, 'sample.rs')],
+    text: SAMPLE,
     ext: '.woff2',
   },
   {

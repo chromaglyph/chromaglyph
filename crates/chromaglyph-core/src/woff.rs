@@ -6,9 +6,9 @@
 //! reports reconstructed glyf can exceed the short-loca limit without
 //! switching formats, which Chromium rejects (fonttools still reads it);
 //! the untransformed path costs only a few percent and is what every
-//! decoder agrees on. WOFF2 also carries only TrueType-flavored fonts in
-//! that encoder, so CFF-flavored output (OTF sources) wraps WOFF1 —
-//! decided in [`crate::build`], not here.
+//! decoder agrees on. Both sfnt flavors ride in WOFF2 (ttf2woff2 ≥
+//! 0.14.1): TrueType as-is, OTTO/CFF with a null transform — the WOFF2
+//! spec defines no CFF table transformation.
 
 use std::io::{Read, Write};
 
@@ -96,8 +96,8 @@ pub fn wrap(ttf: &[u8]) -> Result<Vec<u8>, BuildError> {
 }
 
 /// Wrap a built sfnt (ttf) into WOFF2 (single Brotli stream, tables
-/// untransformed). TrueType flavor only — the caller falls back to WOFF1
-/// for CFF-flavored output.
+/// untransformed). Both sfnt flavors ride in it: TrueType as-is, OTTO/CFF
+/// with a null transform (ttf2woff2 ≥ 0.14.1).
 pub fn wrap_woff2(ttf: &[u8]) -> Result<Vec<u8>, BuildError> {
     ttf2woff2::encode(ttf, ttf2woff2::BrotliQuality::default())
         .map_err(|e| BuildError::Woff(format!("woff2 encode: {e}")))

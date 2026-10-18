@@ -22,8 +22,8 @@ serde_json = "1"
 thiserror = "2"
 flate2 = "1"
 # WOFF2 输出：纯 Rust 编码器。默认关闭 glyf/loca 表变换（上游已知 Chromium
-# 兼容问题，chromaglyph 只用 Brotli 压缩路径）
-ttf2woff2 = { version = "0.14", default-features = false }
+# 兼容问题，chromaglyph 只用 Brotli 压缩路径）；0.14.1 起接受 OTTO/CFF 输入
+ttf2woff2 = { version = "0.14.1", default-features = false }
 
 [profile.release]
 lto = "thin"
