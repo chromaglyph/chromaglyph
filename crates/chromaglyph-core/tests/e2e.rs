@@ -110,17 +110,25 @@ fn cff_otf_builds_and_verifies() {
     })
     .expect("CFF (OTF) source must build");
 
-    // the output stays CFF-flavored with an appended-glyph CFF table
+    // the output stays CFF-flavored with a rebuilt, subset CFF table
     assert_eq!(&out.ttf[0..4], b"OTTO", "CFF sources keep the OTTO flavor");
     assert!(out.report.tables.contains_key("CFF "), "CFF table present");
     assert!(
         !out.report.tables.contains_key("glyf"),
         "no glyf in a CFF build"
     );
+    // exact mode subsets CFF like it subsets TrueType: the charstrings
+    // of unused glyphs are dropped, not shipped
+    assert!(
+        out.report.total_glyphs < out.report.source_glyphs / 2,
+        "CFF glyph set collapses: {} of {}",
+        out.report.total_glyphs,
+        out.report.source_glyphs
+    );
     assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
 
     // the produced CFF re-parses with read-fonts' own parser and its
-    // charset covers every glyph (the surgery grew it)
+    // charset covers every glyph that ships (subset + appended empties)
     let font = read_fonts::FontRef::new(&out.ttf).unwrap();
     let cff = font.cff().unwrap();
     let charset = cff.charset(0).unwrap();
@@ -190,6 +198,34 @@ fn woff_input_is_unwrapped() {
     })
     .expect("WOFF1 input must unwrap and build");
     assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
+}
+
+#[test]
+fn woff2_input_decodes_and_builds() {
+    let themes = themes();
+    // a real Google Fonts woff2 (JetBrains Mono latin): brotli tables +
+    // the transformed glyf/loca streams, the common shape of "a font
+    // downloaded from the web"
+    let woff2 = include_bytes!("fixtures/JetBrainsMono-latin.woff2");
+    assert_eq!(&woff2[0..4], b"wOF2");
+    let out = build(&BuildInput {
+        font_bytes: woff2,
+        font_index: 0,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+        ligatures: false,
+    })
+    .expect("WOFF2 input must decode and build");
+    assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
+
+    // the decoded font goes through the normal TrueType pipeline
+    assert!(out.report.tables.contains_key("glyf"));
+    let result = verify(&out.woff, &blocks(SAMPLE), &themes).expect("standalone verify");
+    assert!(result.ok, "{:?}", result.failures);
 }
 
 /// A minimal `.ttc` collection: header + offsets + (aligned) font copies.

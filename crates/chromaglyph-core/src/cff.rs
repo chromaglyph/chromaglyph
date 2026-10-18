@@ -1,14 +1,16 @@
-//! Byte-level CFF (v1) surgery: append zero-outline glyphs to a
-//! name-keyed CFF table.
+//! Byte-level CFF (v1) surgery: subset the CharStrings and append
+//! zero-outline glyphs to a name-keyed CFF table.
 //!
 //! The pipeline's colored copies are *empty* glyphs whose COLR layer
 //! references a base glyph (see `fontbuild`); TrueType gets them as empty
-//! glyf entries, CFF gets them as bare `endchar` charstrings. Appending
-//! glyphs to a CFF table means growing the CharStrings INDEX (and the
-//! charset, which must cover every glyph), which shifts every structure
-//! that follows it — so the whole table is re-laid-out with the Top DICT
-//! offset operands recomputed. Everything else (Name/String/GSubr
-//! indexes, the Private DICT and its local subrs) is copied byte-for-byte.
+//! glyf entries, CFF gets them as bare `endchar` charstrings. Reworking
+//! the glyph set of a CFF table means rebuilding the CharStrings INDEX
+//! (which may shrink — subsetting — and grow — the appended empties) and
+//! the charset (which must cover every glyph that ships), which shifts
+//! every structure that follows them — so the whole table is re-laid-out
+//! with the Top DICT offset operands recomputed. Everything else
+//! (Name/String/GSubr indexes, the Private DICT and its local subrs)
+//! is copied byte-for-byte.
 //!
 //! Scope: name-keyed fonts only (the normal shape of an OpenType CFF
 //! font: Source Code Pro, STIX, …). CID-keyed fonts (Top DICT `ROS`,
@@ -16,6 +18,8 @@
 //! absolute Private offsets) are rejected in `parse` — patching those is
 //! more surgery than v1 wants. CFF2 (variable OTF outlines) needs real
 //! instancing and is rejected before this module runs.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::BuildError;
 
@@ -185,47 +189,106 @@ pub fn parse(data: &[u8]) -> Result<Layout, BuildError> {
     })
 }
 
-/// Append `count` zero-outline glyphs (bare `endchar` charstrings) and
-/// return the re-laid-out CFF table.
-pub fn append_empty_glyphs(
+/// Re-emit the table carrying exactly `glyphs`' charstrings — in the
+/// given order (old glyph ids under the caller's new numbering) — plus
+/// `extra_empty` bare `endchar` entries appended after them (the colored
+/// copies). Subsetting and appending are the same operation here: a
+/// full pass is `rebuild_with_glyphs(data, layout, &(0..n).collect(),
+/// count)`. The charset is rebuilt to cover exactly the glyphs that
+/// ship; every other structure rides along byte-for-byte with its Top
+/// DICT offset recomputed.
+pub fn rebuild_with_glyphs(
     data: &[u8],
     layout: &Layout,
-    count: usize,
+    glyphs: &[u16],
+    extra_empty: usize,
 ) -> Result<Vec<u8>, BuildError> {
-    if count == 0 {
-        return Ok(data.to_vec());
-    }
     let err = |msg: &str| BuildError::UnsupportedFont(format!("CFF: {msg}"));
 
-    let (cs_at, cs_end) = match layout.charset {
+    // charstrings: the kept glyphs' bytes in the new order — charstrings
+    // are self-contained (no glyph-id references; seac is long-dead), so
+    // a subset never needs a component closure — then the empties
+    let view = IndexView::new(data, layout.charstrings.0)
+        .ok_or_else(|| err("CharStrings index unreadable"))?;
+    let mut items: Vec<&[u8]> = Vec::with_capacity(glyphs.len() + extra_empty);
+    for &old in glyphs {
+        items.push(
+            view.get(old as usize)
+                .ok_or_else(|| err("CharStrings item unreadable"))?,
+        );
+    }
+    items.extend(std::iter::repeat_n(&[ENDCHAR][..], extra_empty));
+    let charstrings = append_index_items(&items);
+
+    // charset: new gid → the kept glyph's SID (SID 0 — a name several
+    // glyphs may share — for the empties). Format 0: one u16 per glyph
+    // past .notdef, the cheapest unambiguous encoding for a subset
+    let (cs_at, _) = match layout.charset {
         // parse() rejects charset-less fonts, so this always matches
         Some(range) => range,
-        None => return Err(err("font has no charset to extend")),
+        None => return Err(err("font has no charset to rebuild")),
     };
-    let charset = extend_charset(&data[cs_at..cs_end], layout.num_glyphs, count)
-        .ok_or_else(|| err("cannot extend the charset"))?;
-    let charstrings = {
-        let view = IndexView::new(data, layout.charstrings.0)
-            .ok_or_else(|| err("CharStrings index unreadable"))?;
-        let mut items: Vec<&[u8]> = Vec::with_capacity(view.count() + count);
-        for i in 0..view.count() {
-            items.push(
-                view.get(i)
-                    .ok_or_else(|| err("CharStrings item unreadable"))?,
-            );
-        }
-        items.extend(std::iter::repeat_n(&[ENDCHAR][..], count));
-        append_index_items(&items)
-    };
+    let sids = charset_sids(data, cs_at, layout.num_glyphs)
+        .ok_or_else(|| err("charset does not cover every glyph"))?;
 
-    // Re-serialize the Top DICT with every offset operand in fixed 5-byte
-    // form (29 + u32) so the dict's serialized length — and therefore the
-    // layout that follows it — is the same whether the offsets are
-    // placeholders or final. Two passes: measure, then patch for real.
+    // Trim the String INDEX: only strings still referenced — the shipped
+    // glyphs' names plus the Top DICT's own strings — survive, renumbered
+    // from 391. On a subset this drops the glyph-name strings of every
+    // dropped glyph (13KB of 33KB on Source Code Pro). Standard strings
+    // (SID < 391) never enter the index and pass through untouched.
     let top_dict = IndexView::new(data, layout.top_dict_index.0)
         .and_then(|v| v.get(0))
         .ok_or_else(|| err("Top DICT unreadable"))?;
+    let mut used_sids: BTreeSet<u16> = glyphs
+        .iter()
+        .map(|&old| sids[old as usize])
+        .collect::<BTreeSet<_>>();
+    let mut pending: Vec<&[u8]> = Vec::new();
+    for token in tokenize_dict(top_dict) {
+        match token {
+            Token::Operand(bytes) => pending.push(bytes),
+            Token::Operator(op) => {
+                if is_sid_operator(op) {
+                    if let Some(bytes) = pending.last() {
+                        used_sids.insert(decode_int(bytes) as u16);
+                    }
+                }
+                pending.clear();
+            }
+        }
+    }
+    let custom: Vec<u16> = used_sids.iter().copied().filter(|s| *s >= 391).collect();
+    let sid_remap: BTreeMap<u16, u16> = custom
+        .iter()
+        .enumerate()
+        .map(|(i, &sid)| (sid, 391 + i as u16))
+        .collect();
+    let remap = |sid: u16| -> u16 { sid_remap.get(&sid).copied().unwrap_or(sid) };
+    let strings_view = IndexView::new(data, layout.string_index.0)
+        .ok_or_else(|| err("String index unreadable"))?;
+    let mut string_items: Vec<&[u8]> = Vec::with_capacity(custom.len());
+    for &sid in &custom {
+        string_items.push(
+            strings_view
+                .get((sid - 391) as usize)
+                .ok_or_else(|| err("SID past the String index"))?,
+        );
+    }
+    let string_index = append_index_items(&string_items);
 
+    let mut charset = Vec::with_capacity(1 + 2 * (glyphs.len() + extra_empty));
+    charset.push(0u8);
+    for i in 1..(glyphs.len() + extra_empty) {
+        let sid = glyphs.get(i).map_or(0, |&old| sids[old as usize]);
+        let sid = remap(sid);
+        charset.extend_from_slice(&sid.to_be_bytes());
+    }
+
+    // Re-serialize the Top DICT with every patched operand in fixed 5-byte
+    // form (29 + u32) so the dict's serialized length — and therefore the
+    // layout that follows it — is the same whether the offsets are
+    // placeholders or final. Two passes: measure, then patch for real.
+    // (The SID remap is layout-independent and real in both passes.)
     let encoding = layout.encoding.map(|(a, b)| data[a..b].to_vec());
     let private = layout.private.map(|(a, b)| data[a..b].to_vec());
     let placeholders = OffsetTargets {
@@ -233,6 +296,7 @@ pub fn append_empty_glyphs(
         encoding: encoding.is_some().then_some(0),
         charstrings: 0,
         private_offset: private.is_some().then_some(0),
+        sid_remap: &sid_remap,
     };
     let patched_len = patch_top_dict(top_dict, &placeholders).len();
 
@@ -242,7 +306,7 @@ pub fn append_empty_glyphs(
     let mut at = layout.after_header
         + (layout.name_index.1 - layout.name_index.0)
         + top_dict_index_len
-        + (layout.string_index.1 - layout.string_index.0)
+        + string_index.len()
         + (layout.global_subrs.1 - layout.global_subrs.0);
     let charset_at = at;
     at += charset.len();
@@ -262,6 +326,7 @@ pub fn append_empty_glyphs(
             encoding: encoding_at.map(|a| a as u32),
             charstrings: charstrings_at as u32,
             private_offset: private_at.map(|a| a as u32),
+            sid_remap: &sid_remap,
         },
     );
     debug_assert_eq!(patched.len(), patched_len, "fixed-width operands");
@@ -277,7 +342,7 @@ pub fn append_empty_glyphs(
     push_offset(&mut out, 1, off_size);
     push_offset(&mut out, last as usize, off_size);
     out.extend_from_slice(&patched);
-    out.extend_from_slice(&data[layout.string_index.0..layout.string_index.1]);
+    out.extend_from_slice(&string_index);
     out.extend_from_slice(&data[layout.global_subrs.0..layout.global_subrs.1]);
     out.extend_from_slice(&charset);
     if let Some(enc) = &encoding {
@@ -376,17 +441,26 @@ fn last_operand(operands: &[&[u8]], what: &str) -> Result<usize, BuildError> {
     Ok(value as usize)
 }
 
-struct OffsetTargets {
+struct OffsetTargets<'a> {
     charset: u32,
     encoding: Option<u32>,
     charstrings: u32,
     private_offset: Option<u32>,
+    /// old SID -> new SID for the trimmed String INDEX (empty = keep).
+    sid_remap: &'a BTreeMap<u16, u16>,
+}
+
+/// Top DICT operators whose operand is a string id: values may need
+/// renumbering when the String INDEX is trimmed (CFF spec Top DICT
+/// table; see also read-fonts' `ps::cff::dict`).
+fn is_sid_operator(op: &[u8]) -> bool {
+    matches!(op, [0..=4] | [12, 0] | [12, 21] | [12, 22] | [12, 38])
 }
 
 /// Re-emit the Top DICT with the charset (15), Encoding (16), CharStrings
 /// (17) and Private-offset (18, second operand) operands replaced by
 /// fixed-width 29-encodings. Every other byte passes through unchanged.
-fn patch_top_dict(dict: &[u8], targets: &OffsetTargets) -> Vec<u8> {
+fn patch_top_dict(dict: &[u8], targets: &OffsetTargets<'_>) -> Vec<u8> {
     let u32_operand = |v: u32| -> Vec<u8> {
         let mut out = vec![29];
         out.extend_from_slice(&v.to_be_bytes());
@@ -403,6 +477,13 @@ fn patch_top_dict(dict: &[u8], targets: &OffsetTargets) -> Vec<u8> {
                     [16] => targets.encoding,
                     [17] => Some(targets.charstrings),
                     [18] => targets.private_offset,
+                    // SID operators: renumber through the trimmed String
+                    // INDEX (standard SIDs remap to themselves)
+                    _ if is_sid_operator(op) => operands
+                        .last()
+                        .map(|bytes| decode_int(bytes))
+                        .and_then(|sid| targets.sid_remap.get(&(sid as u16)))
+                        .map(|&sid| sid as u32),
                     _ => None,
                 };
                 // everything but the (patched) last operand passes through;
@@ -589,40 +670,41 @@ fn charset_end(data: &[u8], at: usize, num_glyphs: usize) -> Option<usize> {
     (covered == entries).then_some(pos)
 }
 
-/// Extend raw charset bytes by `add` glyphs. New entries map to SID/CID 0
-/// (a name several glyphs may share); range formats split at their nLeft
-/// width.
-fn extend_charset(raw: &[u8], num_glyphs: usize, add: usize) -> Option<Vec<u8>> {
-    let mut out = raw.to_vec();
-    match *raw.first()? {
-        0 => {
-            for _ in 0..add {
-                out.extend_from_slice(&0u16.to_be_bytes());
+/// Per-glyph SIDs from a charset (index == glyph id; gid 0 is the
+/// implicit .notdef). Range formats encode consecutive SIDs: `first`
+/// then first+1 … first+nLeft.
+fn charset_sids(data: &[u8], at: usize, num_glyphs: usize) -> Option<Vec<u16>> {
+    let format = *data.get(at)?;
+    let mut sids = vec![0u16];
+    let mut pos = at + 1;
+    while sids.len() < num_glyphs {
+        let (first, n_left, step): (u16, usize, usize) = match format {
+            0 => {
+                let b = data.get(pos..pos + 2)?;
+                sids.push(u16::from_be_bytes([b[0], b[1]]));
+                pos += 2;
+                continue;
             }
-        }
-        format @ (1 | 2) => {
-            let (max_range, wide): (usize, bool) = if format == 1 {
-                (256, false)
-            } else {
-                (65536, true)
-            };
-            let mut first = num_glyphs;
-            let mut remaining = add;
-            while remaining > 0 {
-                let take = remaining.min(max_range);
-                out.extend_from_slice(&(first as u16).to_be_bytes());
-                if wide {
-                    out.extend_from_slice(&((take - 1) as u16).to_be_bytes());
-                } else {
-                    out.push((take - 1) as u8);
-                }
-                first += take;
-                remaining -= take;
+            1 => {
+                let b = data.get(pos..pos + 3)?;
+                (u16::from_be_bytes([b[0], b[1]]), b[2] as usize, 3)
             }
+            2 => {
+                let b = data.get(pos..pos + 4)?;
+                (
+                    u16::from_be_bytes([b[0], b[1]]),
+                    u16::from_be_bytes([b[2], b[3]]) as usize,
+                    4,
+                )
+            }
+            _ => return None,
+        };
+        for k in 0..=n_left {
+            sids.push(first.wrapping_add(k as u16));
         }
-        _ => return None,
+        pos += step;
     }
-    Some(out)
+    (sids.len() == num_glyphs).then_some(sids)
 }
 
 /// End offset of a custom Encoding structure.
@@ -666,7 +748,8 @@ mod tests {
         let old_glyphs = layout.num_glyphs;
         assert!(old_glyphs > 100, "sanity: {old_glyphs} glyphs");
 
-        let grown = append_empty_glyphs(bytes, &layout, 7).expect("append");
+        let full: Vec<u16> = (0..layout.num_glyphs as u16).collect();
+        let grown = rebuild_with_glyphs(bytes, &layout, &full, 7).expect("append");
         let layout2 = parse(&grown).expect("grown table re-parses with our parser");
         assert_eq!(layout2.num_glyphs, old_glyphs + 7);
 
@@ -761,21 +844,76 @@ mod tests {
     }
 
     #[test]
-    fn charset_format1_extends_with_one_range() {
-        // format 1, one range covering gids 1..2 (first=1, nLeft=1)
-        let raw = [1u8, 0, 1, 1];
-        let grown = extend_charset(&raw, 3, 2).unwrap();
-        assert_eq!(grown, [1, 0, 1, 1, 0, 3, 1]);
-        assert_eq!(charset_end(&grown, 0, 5), Some(grown.len()));
+    fn charset_sids_decode_all_formats() {
+        // format 0: explicit SIDs for gids 1..3
+        let f0 = [0u8, 0, 34, 0, 35, 1, 1];
+        assert_eq!(charset_sids(&f0, 0, 4).unwrap(), [0, 34, 35, 257]);
+        // format 1: one range (first=34, nLeft=1) covering gids 1..2
+        let f1 = [1u8, 0, 34, 1, 1, 1];
+        assert_eq!(charset_sids(&f1, 0, 3).unwrap(), [0, 34, 35]);
+        // format 2: same range with a wide nLeft
+        let f2 = [2u8, 0, 34, 0, 1, 1, 1];
+        assert_eq!(charset_sids(&f2, 0, 3).unwrap(), [0, 34, 35]);
+        // under-coverage is an error, not a short vec
+        assert!(charset_sids(&f1, 0, 4).is_none());
     }
 
     #[test]
-    fn charset_format0_appends_sids() {
-        let raw = [0u8, 0, 34, 0, 35];
-        let grown = extend_charset(&raw, 3, 2).unwrap();
-        assert_eq!(grown.len(), 5 + 4);
-        assert_eq!(&grown[5..], &[0, 0, 0, 0]);
-        assert_eq!(charset_end(&grown, 0, 5), Some(grown.len()));
+    fn real_otf_subset_keeps_names_and_drops_the_rest() {
+        let data = include_bytes!("../tests/fixtures/SourceCodePro-Regular.otf");
+        let font = read_fonts::FontRef::new(data).unwrap();
+        let table = font
+            .data_for_tag(read_fonts::types::Tag::new(b"CFF "))
+            .unwrap();
+        let bytes = table.as_bytes();
+        let layout = parse(bytes).expect("fixture parses");
+        let sids = charset_sids(bytes, layout.charset.unwrap().0, layout.num_glyphs).unwrap();
+
+        // keep .notdef and a handful of glyphs, out of order on purpose —
+        // the caller's new numbering is the slice order
+        let keep = vec![0u16, 100, 5, 42];
+        let rebuilt = rebuild_with_glyphs(bytes, &layout, &keep, 2).expect("subset");
+        let layout2 = parse(&rebuilt).expect("subset table re-parses");
+        assert_eq!(layout2.num_glyphs, keep.len() + 2);
+
+        // cross-check through read-fonts: charset coverage matches and
+        // every kept glyph answers to its original name (SID), the
+        // appended empties share SID 0
+        let sfnt = grown_as_sfnt(&rebuilt);
+        let font2 = read_fonts::FontRef::new(&sfnt).unwrap();
+        let cff2 = font2.cff().unwrap();
+        let charset = cff2.charset(0).unwrap();
+        assert_eq!(charset.num_glyphs() as usize, keep.len() + 2);
+        // SIDs may be renumbered (the String INDEX ships only referenced
+        // strings) — the invariant is that every kept glyph still answers
+        // to its original NAME, resolved through each font's own strings
+        let cff_src = read_fonts::FontRef::new(data).unwrap().cff().unwrap();
+        for (new_gid, &old) in keep.iter().enumerate() {
+            let old_name = cff_src
+                .string(read_fonts::ps::string::Sid::new(sids[old as usize]))
+                .unwrap();
+            let new_name = cff2
+                .string(
+                    charset
+                        .string_id(read_fonts::types::GlyphId::new(new_gid as u32))
+                        .unwrap(),
+                )
+                .unwrap();
+            assert_eq!(
+                old_name, new_name,
+                "gid {new_gid} (old {old}) keeps its name"
+            );
+        }
+        // the appended empties share SID 0 (.notdef's name)
+        for empty_gid in keep.len()..keep.len() + 2 {
+            assert_eq!(
+                charset
+                    .string_id(read_fonts::types::GlyphId::new(empty_gid as u32))
+                    .unwrap()
+                    .to_u16(),
+                0
+            );
+        }
     }
 
     #[test]
@@ -788,6 +926,7 @@ mod tests {
             encoding: None,
             charstrings: 0x10,
             private_offset: None,
+            sid_remap: &BTreeMap::new(),
         };
         let patched = patch_top_dict(&dict, &targets);
         let again = patch_top_dict(&patched, &targets);

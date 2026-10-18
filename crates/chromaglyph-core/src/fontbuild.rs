@@ -104,12 +104,15 @@ pub struct LoadedFont<'a> {
     pub warnings: Vec<String>,
 }
 
-/// Normalize raw input bytes to a plain sfnt: unwrap WOFF1 containers,
-/// extract one font out of a `.ttc` collection, pass everything else
-/// through untouched.
+/// Normalize raw input bytes to a plain sfnt: unwrap WOFF1/WOFF2
+/// containers, extract one font out of a `.ttc` collection, pass
+/// everything else through untouched.
 pub fn normalize_input<'a>(bytes: &'a [u8], font_index: u32) -> Result<Cow<'a, [u8]>, BuildError> {
     match bytes.get(..4) {
         Some(b"wOFF") => Ok(Cow::Owned(crate::woff::unwrap(bytes)?)),
+        Some(b"wOF2") => wuff::decompress_woff2(bytes)
+            .map(Cow::Owned)
+            .map_err(|e| BuildError::FontParse(format!("woff2: {e}"))),
         Some(b"ttcf") => extract_ttc_member(bytes, font_index).map(Cow::Owned),
         _ => {
             if let Some([0, 1, 0, 0]) | Some(b"OTTO") | Some(b"true") | Some(b"ttcf") =
@@ -118,7 +121,7 @@ pub fn normalize_input<'a>(bytes: &'a [u8], font_index: u32) -> Result<Cow<'a, [
                 Ok(Cow::Borrowed(bytes))
             } else {
                 Err(BuildError::FontParse(
-                    "not a font (expected sfnt, OTTO, WOFF or ttcf magic)".into(),
+                    "not a font (expected sfnt, OTTO, WOFF/WOFF2 or ttcf magic)".into(),
                 ))
             }
         }
@@ -402,12 +405,9 @@ pub fn subset_glyphs(
             return None;
         }
     }
-    // CFF subsetting means renumbering a CharStrings INDEX (and charset,
-    // FDSelect, ...) — v1 ships the full glyph set for CFF sources
-    // instead, exactly like the blocking tables above
-    if matches!(loaded.outlines, Outlines::Cff { .. }) {
-        return None;
-    }
+    // (CFF charstrings are self-contained — no component references to
+    // chase, no other glyph-id-carrying CFF structures in a name-keyed
+    // font — so nothing CFF-specific gates subsetting here)
 
     let num = loaded.num_glyphs as usize;
     let mut used: BTreeSet<u16> = BTreeSet::new();
@@ -432,11 +432,14 @@ pub fn subset_glyphs(
     }
 
     // composites reference their components by glyph id; keep them all
-    let mut queue: Vec<u16> = used.iter().copied().collect();
-    while let Some(gid) = queue.pop() {
-        for component in components_of(loaded, gid) {
-            if used.insert(component) {
-                queue.push(component);
+    // (TrueType only — a CFF charstring never references another glyph)
+    if let Outlines::TrueType { .. } = loaded.outlines {
+        let mut queue: Vec<u16> = used.iter().copied().collect();
+        while let Some(gid) = queue.pop() {
+            for component in components_of(loaded, gid) {
+                if used.insert(component) {
+                    queue.push(component);
+                }
             }
         }
     }
@@ -675,10 +678,17 @@ pub fn assemble(
             // never walks outlines, so it stayed green)
             offsets.extend(loca_offsets.iter().skip(1).copied());
         }
-        (Outlines::Cff { table, layout }, _) => {
-            cff_table = Some(cff::append_empty_glyphs(
+        (Outlines::Cff { table, layout }, sub) => {
+            // the subset hands over its numbering directly (`unmap[new]
+            // == old`); without one the source order is the output order
+            let order: Vec<u16> = match sub {
+                Some(sub) => sub.unmap.clone(),
+                None => (0..loaded.num_glyphs).collect(),
+            };
+            cff_table = Some(cff::rebuild_with_glyphs(
                 table,
                 layout,
+                &order,
                 num_alt + num_plain,
             )?);
         }

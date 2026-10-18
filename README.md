@@ -37,8 +37,9 @@ tokenize + theme → compile → fontbuild → verify
   COLRv0 (≈ 0 bytes per copy), with one CPAL palette per theme. The
   source font's own GSUB/GPOS/GDEF and AAT tables are replaced to avoid
   interference. Sources: static TrueType (TTF) and name-keyed CFF (OTF) —
-  the latter via byte-level CharStrings surgery that appends the empty
-  colored glyphs as `endchar` charstrings; WOFF1 containers and `.ttc`
+  the latter via byte-level CharStrings surgery — exact mode subsets CFF
+  like TrueType (dropped glyphs' charstrings and name strings go away;
+  hinting subroutines ride along); WOFF1/WOFF2 containers and `.ttc`
   collections (`--font-index`) are unwrapped on input; variable TrueType
   fonts are pinned to their default instance (the glyf outlines *are* the
   default, so the variation tables are simply dropped). CFF2
@@ -177,11 +178,11 @@ per-version known limitations.
   surrounding ASCII still colors. Build warnings list the missing
   characters; use a font with CJK coverage (e.g. Sarasa Mono SC) for
   Chinese comments/strings.
-- Static TrueType (TTF), name-keyed CFF (OTF), WOFF1 and `.ttc` inputs
-  (`--font-index` picks the collection member); variable TrueType fonts
-  are pinned to their default instance. CFF2 (variable-OTF) and CID-keyed
-  CFF sources are rejected. WOFF1 output only (no WOFF2 encoder in pure
-  Rust yet).
+- Inputs: static TrueType (TTF), name-keyed CFF (OTF), WOFF1, WOFF2 and
+  `.ttc` collections (`--font-index` picks the member); variable TrueType
+  fonts are pinned to their default instance. CFF2 (variable-OTF) and
+  CID-keyed CFF sources are rejected. Output is WOFF1 (or raw sfnt) — no
+  pure-Rust WOFF2 encoder exists yet.
 - Generic mode is line-scoped (see above) and one language per font —
   merging languages would color `type` in a Rust block via TS rules.
 - Generic mode keywords/numbers need a preceding in-line boundary

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **CFF subsetting (exact mode)** — OTF sources now subset like TTF
+  sources instead of shipping the full charset: the CharStrings INDEX
+  is rebuilt with only the glyphs the blocks use (charstrings are
+  self-contained, so there is no composite closure to walk), the
+  charset is re-emitted in format 0, and the String INDEX is trimmed to
+  the strings still referenced — the shipped glyphs' names plus the Top
+  DICT's own strings — with SIDs renumbered from 391 (the glyph-name
+  strings of dropped glyphs were 13KB of a 33KB table on Source Code
+  Pro). Same code content that built an 85KB woff before now builds
+  20KB. Hinting subroutines (global + local) ride along untouched —
+  trimming those needs a Type2 interpreter and stays future work;
+  they are the remaining size gap to the TTF path. Verified through
+  the rustybuzz oracle, read-fonts' own CFF parser (charset coverage +
+  per-glyph name identity across the subset) and the browser smoke
+  test's OTS path.
+
+- **WOFF2 input** — `wOF2` files decode to sfnt before loading via the
+  pure-Rust `wuff` decoder (MIT; brings only `brotli-decompressor`),
+  covering the most common shape of "a font downloaded from the web":
+  brotli-compressed tables plus the transformed glyf/loca streams.
+  Tested against a real Google Fonts file (JetBrains Mono latin
+  subset). Output remains WOFF1 — no pure-Rust WOFF2 encoder exists.
+
 ## 0.3.0 (2026-10-18)
 
 - **font compatibility: OTF/CFF, variable TrueType, WOFF1 and `.ttc`

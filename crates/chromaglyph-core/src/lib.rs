@@ -50,8 +50,8 @@ pub type SemanticLayer<'a> = &'a dyn Fn(&Block<'_>) -> Vec<(usize, usize, String
 /// Build request.
 pub struct BuildInput<'a> {
     /// Source font bytes: static TrueType (TTF), name-keyed CFF (OTF), a
-    /// WOFF1 container, a `.ttc` collection (see `font_index`) or a
-    /// variable TrueType font (pinned to its default instance). CFF2 /
+    /// WOFF1/WOFF2 container, a `.ttc` collection (see `font_index`) or
+    /// a variable TrueType font (pinned to its default instance). CFF2 /
     /// variable-OTF outlines are rejected.
     pub font_bytes: &'a [u8],
     /// Which font of a `.ttc` collection to use (ignored otherwise).

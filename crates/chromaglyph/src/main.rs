@@ -30,8 +30,8 @@ enum Command {
     /// Build a color font from a source font and known content.
     Build {
         /// Source font: static TTF (TrueType) or OTF (CFF, name-keyed);
-        /// WOFF1 containers and .ttc collections are unwrapped, variable
-        /// TrueType fonts are pinned to their default instance
+        /// WOFF1/WOFF2 containers and .ttc collections are unwrapped,
+        /// variable TrueType fonts are pinned to their default instance
         #[arg(long)]
         font: PathBuf,
         /// Font to use inside a .ttc collection (0-based; ignored for

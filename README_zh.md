@@ -31,10 +31,12 @@ tokenize+theme → compile → fontbuild → verify
   COLRv0 层引用基础字形（每 slot 体积成本 ≈ 0），CPAL 一主题一调色板。替换掉
   源字体自带的 GSUB/GPOS/GDEF 和 AAT 布局表（避免干扰）。字体源：静态
   TrueType（TTF）与 name-keyed CFF（OTF，字节级 CharStrings 手术把空的
-  彩色字形追加为 `endchar` charstring）；WOFF1 容器与 `.ttc` 集合
-  （`--font-index`）输入时自动解包；可变 TrueType 钉到默认实例（glyf 轮廓
-  本身就是默认实例，直接丢弃变体表即可）。CFF2（可变 OTF 轮廓）与
-  CID-keyed CFF 会带明确报错地拒绝。
+  彩色字形以 `endchar` charstring 重建字形集——exact 模式对 CFF 同样
+  子集化（被丢弃字形的 charstring 与名字串一并去掉，hinting 子程序
+  原样保留）；WOFF1/WOFF2 容器与 `.ttc` 集合（`--font-index`）输入时
+  自动解包；可变 TrueType 钉到默认实例（glyf 轮廓本身就是默认实例，
+  直接丢弃变体表即可）。CFF2（可变 OTF 轮廓）与 CID-keyed CFF 会带
+  明确报错地拒绝。
 - **verify**（预言机）：rustybuzz 进程内整形产出的字体，逐字符比对替换后的
   glyph id（整形与主题无关，验一次即可）；再按调色板逐一读回 CPAL 核对颜色。
   `build` 默认自跑。
@@ -154,10 +156,10 @@ const file = await unified()
   CJK）经浏览器回退渲染、**无法着色**（着色发生在本字形的替换里）——周围的
   ASCII 部分照常着色。构建 warning 会列出具体缺失字符；中文注释/字符串请用
   带 CJK 的等宽字体（如 Sarasa Mono SC）。
-- 输入支持静态 TrueType（TTF）、name-keyed CFF（OTF）、WOFF1 与 `.ttc`
-  集合（`--font-index` 选择成员）；可变 TrueType 钉到默认实例。CFF2（可变
-  OTF）与 CID-keyed CFF 拒绝。输出仅 WOFF1（纯 Rust 生态暂无 WOFF2
-  编码器）。
+- 输入支持静态 TrueType（TTF）、name-keyed CFF（OTF）、WOFF1、WOFF2
+  与 `.ttc` 集合（`--font-index` 选择成员）；可变 TrueType 钉到默认实例。
+  CFF2（可变 OTF）与 CID-keyed CFF 拒绝。输出为 WOFF1（或裸 sfnt）——
+  纯 Rust 生态暂无 WOFF2 编码器。
 - generic 模式为行内语义（见上）、一语言一字体——合并语言会让 TS 的 `type`
   给 Rust 块里的 `type` 上色。
 - 通用模式的关键词/数字需要行内有前置边界字形，行首关键字保持无色

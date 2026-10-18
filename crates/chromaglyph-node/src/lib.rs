@@ -45,8 +45,8 @@ pub struct JsBlock {
 #[napi(object)]
 pub struct BuildOptions {
     /// Source font bytes: static TTF (TrueType) or OTF (CFF, name-keyed);
-    /// WOFF1 containers and .ttc collections are unwrapped, variable
-    /// TrueType fonts are pinned to their default instance.
+    /// WOFF1/WOFF2 containers and .ttc collections are unwrapped,
+    /// variable TrueType fonts are pinned to their default instance.
     pub font: Buffer,
     /// Which font of a .ttc collection to use (0-based; ignored for
     /// single fonts).
