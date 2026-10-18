@@ -19,9 +19,12 @@
  * rules apply, which is what chromaglyph's rules rely on. Measuring in
  * canvas would under-color on purpose.
  *
- * Three fonts cover the layout paths: exact mode (subset), exact mode
- * with --ligatures (restore rules + subset), and generic rust (full
- * charset, no subsetting). Run: `pnpm smoke` (or pass CHROMAGLYPH_BIN).
+ * Five fonts cover the layout paths: exact mode (subset), exact mode
+ * with --ligatures (restore rules + subset), generic rust (full charset,
+ * no subsetting), exact mode from a CFF/OTF source (CharStrings surgery,
+ * no subsetting) and exact mode from a variable TrueType source (pinned
+ * to the default instance, subset). Run: `pnpm smoke` (or pass
+ * CHROMAGLYPH_BIN).
  */
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -32,7 +35,8 @@ const root = resolve(import.meta.dirname, '..')
 const outDir = resolve(root, 'target/smoke')
 const bin = process.env.CHROMAGLYPH_BIN
   ?? resolve(root, 'target/release/chromaglyph')
-const font = resolve(root, 'crates/chromaglyph-core/tests/fixtures/JetBrainsMono-Regular.ttf')
+const fixtures = resolve(root, 'crates/chromaglyph-core/tests/fixtures')
+const font = resolve(fixtures, 'JetBrainsMono-Regular.ttf')
 
 // note: generic-mode keywords need a preceding in-line boundary glyph
 // (line starts have none — a designed limitation of the FSM), so the
@@ -59,12 +63,24 @@ const CASES = [
     text: SAMPLE,
   },
   { id: 'generic', args: ['--generic', 'rust'] },
+  {
+    id: 'exact-otf',
+    font: resolve(fixtures, 'SourceCodePro-Regular.otf'),
+    args: ['--input', resolve(outDir, 'sample.rs')],
+    text: SAMPLE,
+  },
+  {
+    id: 'exact-vf',
+    font: resolve(fixtures, 'JetBrainsMono-wght-VF.ttf'),
+    args: ['--input', resolve(outDir, 'sample.rs')],
+    text: SAMPLE,
+  },
 ]
 
-function buildFont({ id, args, text }) {
+function buildFont({ id, font: src = font, args, text }) {
   if (text !== undefined) writeFileSync(resolve(outDir, 'sample.rs'), text)
   const out = resolve(outDir, `${id}.woff`)
-  const run = spawnSync(bin, ['build', '--font', font, ...args, '--output', out], {
+  const run = spawnSync(bin, ['build', '--font', src, ...args, '--output', out], {
     encoding: 'utf8',
   })
   if (run.status !== 0) {

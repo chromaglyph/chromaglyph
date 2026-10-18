@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-**把语法高亮编译进字体。** 给定一个静态 TTF、若干主题和内容已知（exact 模式）的
+**把语法高亮编译进字体。** 给定一个等宽字体、若干主题和内容已知（exact 模式）的
 代码块，产出一个彩色 OpenType 字体：代码文本放进 DOM 后**字节不变**，高亮完全
 发生在字体内部的 glyph 替换里——不用 `<span>`，复制粘贴零污染。多主题 = 一个
 字体多调色板，明暗切换只是一次 CSS `@font-palette-values` 翻转，零重排。
@@ -29,8 +29,12 @@ tokenize+theme → compile → fontbuild → verify
   服务所有主题**，切换调色板零成本。
 - **fontbuild**：源字体表尽量按字节原样保留；彩色副本是**零轮廓字形** +
   COLRv0 层引用基础字形（每 slot 体积成本 ≈ 0），CPAL 一主题一调色板。替换掉
-  源字体自带的 GSUB/GPOS/GDEF 和 AAT 布局表（避免干扰）。v1 只收静态
-  TrueType（拒绝 CFF/OTF、变字体）。
+  源字体自带的 GSUB/GPOS/GDEF 和 AAT 布局表（避免干扰）。字体源：静态
+  TrueType（TTF）与 name-keyed CFF（OTF，字节级 CharStrings 手术把空的
+  彩色字形追加为 `endchar` charstring）；WOFF1 容器与 `.ttc` 集合
+  （`--font-index`）输入时自动解包；可变 TrueType 钉到默认实例（glyf 轮廓
+  本身就是默认实例，直接丢弃变体表即可）。CFF2（可变 OTF 轮廓）与
+  CID-keyed CFF 会带明确报错地拒绝。
 - **verify**（预言机）：rustybuzz 进程内整形产出的字体，逐字符比对替换后的
   glyph id（整形与主题无关，验一次即可）；再按调色板逐一读回 CPAL 核对颜色。
   `build` 默认自跑。
@@ -150,7 +154,10 @@ const file = await unified()
   CJK）经浏览器回退渲染、**无法着色**（着色发生在本字形的替换里）——周围的
   ASCII 部分照常着色。构建 warning 会列出具体缺失字符；中文注释/字符串请用
   带 CJK 的等宽字体（如 Sarasa Mono SC）。
-- 只收静态 TrueType；只出 WOFF1。
+- 输入支持静态 TrueType（TTF）、name-keyed CFF（OTF）、WOFF1 与 `.ttc`
+  集合（`--font-index` 选择成员）；可变 TrueType 钉到默认实例。CFF2（可变
+  OTF）与 CID-keyed CFF 拒绝。输出仅 WOFF1（纯 Rust 生态暂无 WOFF2
+  编码器）。
 - generic 模式为行内语义（见上）、一语言一字体——合并语言会让 TS 的 `type`
   给 Rust 块里的 `type` 上色。
 - 通用模式的关键词/数字需要行内有前置边界字形，行首关键字保持无色

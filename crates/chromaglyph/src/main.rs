@@ -27,11 +27,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Build a color font from a static TTF and known content.
+    /// Build a color font from a source font and known content.
     Build {
-        /// Source font: static TrueType (glyf) outlines, e.g. JetBrainsMono-Regular.ttf
+        /// Source font: static TTF (TrueType) or OTF (CFF, name-keyed);
+        /// WOFF1 containers and .ttc collections are unwrapped, variable
+        /// TrueType fonts are pinned to their default instance
         #[arg(long)]
         font: PathBuf,
+        /// Font to use inside a .ttc collection (0-based; ignored for
+        /// single fonts)
+        #[arg(long, default_value = "0")]
+        font_index: u32,
         /// Input source file whose content is compiled into the font
         /// (exactly one of --input / --generic)
         #[arg(long, conflicts_with = "generic")]
@@ -101,6 +107,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Build {
             font,
+            font_index,
             input,
             lang,
             generic,
@@ -113,6 +120,7 @@ fn main() -> ExitCode {
             ligatures,
         } => cmd_build(
             &font,
+            font_index,
             input.as_deref(),
             &lang,
             generic.as_deref(),
@@ -181,6 +189,7 @@ fn load_themes(args: &[String]) -> Result<Vec<ThemeSpec>, BuildError> {
 #[allow(clippy::too_many_arguments)]
 fn cmd_build(
     font_path: &Path,
+    font_index: u32,
     input_path: Option<&Path>,
     lang: &str,
     generic: Option<&str>,
@@ -225,6 +234,7 @@ fn cmd_build(
 
     let out = build(&BuildInput {
         font_bytes: &font_bytes,
+        font_index,
         themes: &themes,
         blocks: block.as_slice(),
         run_verify: !no_verify,

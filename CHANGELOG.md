@@ -1,5 +1,63 @@
 # Changelog
 
+## Unreleased
+
+- **font compatibility: OTF/CFF, variable TrueType, WOFF1 and `.ttc`
+  inputs** — the pipeline no longer requires a static TrueType TTF:
+
+  - **CFF/OTF sources** (name-keyed): the colored copies are appended to
+    the CFF table as bare `endchar` charstrings via byte-level surgery
+    (`cff.rs`): the CharStrings INDEX grows (offsets re-encoded at the
+    offSize the grown table needs), the charset is extended to cover the
+    new glyphs (SID 0 — a name several glyphs may share; range formats
+    split at their nLeft width), and the whole table is re-laid-out with
+    the Top DICT's offset operands (charset 15, Encoding 16, CharStrings
+    17, Private-offset 18) recomputed in fixed 5-byte form so the dict's
+    length is layout-stable between the measuring and patching passes.
+    Name/String/GSubr indexes and the Private DICT + local subrs blob
+    are copied byte-for-byte. The output stays CFF-flavored (OTTO sfnt;
+    FontBuilder picks the flavor from the table set, and the WOFF
+    wrapper/unwrap now carry the flavor field through instead of
+    hardcoding TrueType). Exact mode does not subset CFF sources (the
+    full charset ships, like the other subset-blocking cases); CID-keyed
+    CFF (Top DICT `ROS`, FDArray/FDSelect per-glyph font dicts) and CFF2
+    (variable-OTF outlines, which need real instancing) are rejected
+    with explicit errors. `--ligatures` works against OTF sources — the
+    build-time shaper runs on the normalized sfnt either way.
+  - **variable TrueType fonts** are pinned to their default instance:
+    the glyf outlines already *are* the default, so accepting the font
+    is just dropping the variation machinery (`fvar`/`avar`/`cvar`/
+    `gvar`/`HVAR`/`VVAR`/`MVAR`/`STAT`) from the output — subsetting and
+    `--ligatures` apply exactly as for static TTFs. The report carries a
+    "variable font pinned to its default instance" warning.
+  - **WOFF1 containers** are unwrapped to sfnt before loading (they
+    previously failed at FontRef with a parse error).
+  - **`.ttc` collections**: `--font-index N` (CLI) / `fontIndex`
+    (`@chromaglyph/node`) extracts member N; out-of-range indexes are a
+    load error. Extraction *relocates* the member into a standalone sfnt
+    (header + directory re-emitted, table data copied, offsets
+    recomputed): table offsets inside a member's directory are absolute
+    positions in the TTC file — read-fonts' `CollectionRef`, HarfBuzz and
+    Chromium all resolve them against the whole collection — and Apple's
+    system collections (Menlo, every macOS `.ttc`) pack the member
+    directories at the front while the data they point at is shared at
+    the back, so slicing bytes out was never an option. Verified against
+    Menlo.ttc members 0 and 3 (different builds selected per index).
+    Also fixed along the way: the ligature shaper was handed the raw
+    input bytes and would have silently degraded for WOFF/TTC inputs; it
+    now shapes the normalized sfnt.
+  - `NotTrueType`/`VariableFont` collapse into
+    `UnsupportedFont(String)` with a message that says what to do (e.g.
+    "build from the static OTF or the TTF instead").
+  - Tests: e2e builds from Source Code Pro Regular (OTF, including a
+    `--ligatures` pass and a charset cross-check through read-fonts' own
+    CFF parser), JetBrains Mono `wght` VF (asserts the variation tables
+    are gone and the pinning warning is present), a wrapped-WOFF input
+    and a synthesized two-member `.ttc`; the browser smoke test gains
+    `exact-otf` and `exact-vf` cases — both OTS-accepted in headless
+    Chromium with palette-correct pixels, the check that caught the last
+    shipped-on-sight regression.
+
 ## 0.2.3
 
 - **browser smoke test** (`pnpm smoke`, `scripts/browser-smoke.mjs`, new

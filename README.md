@@ -2,7 +2,7 @@
 
 English | [简体中文](README_zh.md)
 
-**Compile syntax highlighting into the font.** Given a static TTF, a set of
+**Compile syntax highlighting into the font.** Given a monospace font, a set of
 themes, and code blocks whose content is known at build time, Chromaglyph
 produces a color OpenType font: the code text in the DOM stays
 **byte-identical**, and highlighting happens entirely inside the font through
@@ -36,8 +36,14 @@ tokenize + theme → compile → fontbuild → verify
   colored copies are zero-outline glyphs referencing the base glyph through
   COLRv0 (≈ 0 bytes per copy), with one CPAL palette per theme. The
   source font's own GSUB/GPOS/GDEF and AAT tables are replaced to avoid
-  interference. v1 accepts static TrueType only (no CFF/OTF, no variable
-  fonts).
+  interference. Sources: static TrueType (TTF) and name-keyed CFF (OTF) —
+  the latter via byte-level CharStrings surgery that appends the empty
+  colored glyphs as `endchar` charstrings; WOFF1 containers and `.ttc`
+  collections (`--font-index`) are unwrapped on input; variable TrueType
+  fonts are pinned to their default instance (the glyf outlines *are* the
+  default, so the variation tables are simply dropped). CFF2
+  (variable-OTF) outlines and CID-keyed CFF are rejected with a clear
+  error.
 - **verify** — rustybuzz shapes the produced font in-process and compares
   glyph ids per character (shaping is theme-independent, so one pass
   suffices); palettes are read back from CPAL. `build` runs this by
@@ -171,7 +177,11 @@ per-version known limitations.
   surrounding ASCII still colors. Build warnings list the missing
   characters; use a font with CJK coverage (e.g. Sarasa Mono SC) for
   Chinese comments/strings.
-- Static TrueType input only; WOFF1 output only.
+- Static TrueType (TTF), name-keyed CFF (OTF), WOFF1 and `.ttc` inputs
+  (`--font-index` picks the collection member); variable TrueType fonts
+  are pinned to their default instance. CFF2 (variable-OTF) and CID-keyed
+  CFF sources are rejected. WOFF1 output only (no WOFF2 encoder in pure
+  Rust yet).
 - Generic mode is line-scoped (see above) and one language per font —
   merging languages would color `type` in a Rust block via TS rules.
 - Generic mode keywords/numbers need a preceding in-line boundary

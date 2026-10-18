@@ -44,8 +44,13 @@ pub struct JsBlock {
 
 #[napi(object)]
 pub struct BuildOptions {
-    /// Static TrueType font bytes.
+    /// Source font bytes: static TTF (TrueType) or OTF (CFF, name-keyed);
+    /// WOFF1 containers and .ttc collections are unwrapped, variable
+    /// TrueType fonts are pinned to their default instance.
     pub font: Buffer,
+    /// Which font of a .ttc collection to use (0-based; ignored for
+    /// single fonts).
+    pub font_index: Option<u32>,
     /// Builtin theme names (`dark-plus`, `light-plus`) or paths to
     /// VS Code .json / TextMate .tmTheme files. First = default palette.
     pub themes: Vec<String>,
@@ -149,6 +154,8 @@ fn content_hash(opts: &BuildOptions) -> String {
     } else {
         &[0]
     });
+    // font_index selects a different collection member (a different font)
+    hasher.update(opts.font_index.unwrap_or(0).to_be_bytes());
     if let Some(lang) = &opts.generic {
         hasher.update(lang.as_bytes());
         hasher.update([0]);
@@ -271,6 +278,7 @@ fn build_uncached(opts: &BuildOptions) -> napi::Result<BuildResult> {
 
     let out = build(&BuildInput {
         font_bytes: &font,
+        font_index: opts.font_index.unwrap_or(0),
         themes: &themes,
         blocks: &blocks,
         run_verify: opts.verify.unwrap_or(true),

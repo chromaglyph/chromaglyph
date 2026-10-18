@@ -4,6 +4,7 @@
 
 use chromaglyph_core::theme::ThemeSpec;
 use chromaglyph_core::{build, verify, Block, BuildInput};
+use read_fonts::TableProvider;
 
 const FONT: &[u8] = include_bytes!("fixtures/JetBrainsMono-Regular.ttf");
 
@@ -35,6 +36,7 @@ fn two_themes_one_font() {
     let themes = themes();
     let out = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &blocks(SAMPLE),
         run_verify: true,
@@ -78,6 +80,7 @@ fn single_theme_still_works() {
     let themes = vec![ThemeSpec::builtin("dark-plus").unwrap()];
     let out = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &blocks(SAMPLE),
         run_verify: true,
@@ -92,16 +95,159 @@ fn single_theme_still_works() {
 }
 
 #[test]
-fn rejects_cff_fonts() {
+fn cff_otf_builds_and_verifies() {
     let themes = themes();
-    // the reference project's CFF-flavored otf
-    let path = "/Users/taiyuuki/projects/i/font/FontWithASyntaxHighlighter/FontWithASyntaxHighlighter-Regular.otf";
-    let Ok(bytes) = std::fs::read(path) else {
-        eprintln!("skipping: reference otf not present");
-        return;
-    };
+    let out = build(&BuildInput {
+        font_bytes: include_bytes!("fixtures/SourceCodePro-Regular.otf"),
+        font_index: 0,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+        ligatures: false,
+    })
+    .expect("CFF (OTF) source must build");
+
+    // the output stays CFF-flavored with an appended-glyph CFF table
+    assert_eq!(&out.ttf[0..4], b"OTTO", "CFF sources keep the OTTO flavor");
+    assert!(out.report.tables.contains_key("CFF "), "CFF table present");
+    assert!(
+        !out.report.tables.contains_key("glyf"),
+        "no glyf in a CFF build"
+    );
+    assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
+
+    // the produced CFF re-parses with read-fonts' own parser and its
+    // charset covers every glyph (the surgery grew it)
+    let font = read_fonts::FontRef::new(&out.ttf).unwrap();
+    let cff = font.cff().unwrap();
+    let charset = cff.charset(0).unwrap();
+    assert_eq!(
+        charset.num_glyphs() as usize,
+        out.report.total_glyphs as usize
+    );
+
+    // woff round-trip: the wrapped font carries the OTTO flavor through
+    assert_eq!(&out.woff[4..8], b"OTTO");
+    let result = verify(&out.woff, &blocks(SAMPLE), &themes).expect("standalone verify");
+    assert!(result.ok, "{:?}", result.failures);
+}
+
+#[test]
+fn variable_ttf_is_pinned_to_default() {
+    let themes = themes();
+    let out = build(&BuildInput {
+        font_bytes: include_bytes!("fixtures/JetBrainsMono-wght-VF.ttf"),
+        font_index: 0,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+        ligatures: false,
+    })
+    .expect("variable TrueType source must build at its default instance");
+
+    // the glyf outlines *are* the default instance; shipping them means
+    // no variation machinery may survive into the output
+    for table in [
+        "fvar", "gvar", "avar", "cvar", "HVAR", "VVAR", "MVAR", "STAT",
+    ] {
+        assert!(
+            !out.report.tables.contains_key(table),
+            "variation table {table} survived: {:?}",
+            out.report.tables.keys().collect::<Vec<_>>()
+        );
+    }
+    assert!(
+        out.report
+            .warnings
+            .iter()
+            .any(|w| w.contains("pinned to its default instance")),
+        "warnings must say the font was pinned: {:?}",
+        out.report.warnings
+    );
+    assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
+}
+
+#[test]
+fn woff_input_is_unwrapped() {
+    let themes = themes();
+    let woff = chromaglyph_core::woff::wrap(FONT).expect("wrap fixture");
+    let out = build(&BuildInput {
+        font_bytes: &woff,
+        font_index: 0,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+        ligatures: false,
+    })
+    .expect("WOFF1 input must unwrap and build");
+    assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
+}
+
+/// A minimal `.ttc` collection: header + offsets + (aligned) font copies.
+/// A `.ttc` with each member stored as its own sfnt. Table offsets inside
+/// a member's directory are **file-absolute** in a collection (that is
+/// how shared-data layouts work — see `synthesize_shared_ttc`), so each
+/// embedded font's offsets are rebased by the member position.
+fn synthesize_ttc(font: &[u8], copies: usize) -> Vec<u8> {
+    let num_tables = u16::from_be_bytes([font[4], font[5]]) as usize;
+    let header_len = 12 + 4 * copies;
+    let mut out = Vec::new();
+    out.extend_from_slice(b"ttcf");
+    out.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+    out.extend_from_slice(&(copies as u32).to_be_bytes());
+    let mut body = Vec::new();
+    let mut offsets = Vec::new();
+    for _ in 0..copies {
+        let member_at = header_len + body.len();
+        offsets.push(member_at as u32);
+        let mut member = font.to_vec();
+        for i in 0..num_tables {
+            let at = 12 + 16 * i;
+            let orig = u32::from_be_bytes(font[at + 8..at + 12].try_into().unwrap());
+            member[at + 8..at + 12].copy_from_slice(&((member_at as u32) + orig).to_be_bytes());
+        }
+        let pad = (4 - member.len() % 4) % 4;
+        body.extend_from_slice(&member);
+        body.extend(std::iter::repeat_n(0u8, pad));
+    }
+    for offset in offsets {
+        out.extend_from_slice(&offset.to_be_bytes());
+    }
+    out.extend_from_slice(&body);
+    out
+}
+
+#[test]
+fn ttc_input_extracts_the_indexed_font() {
+    let themes = themes();
+    let ttc = synthesize_ttc(FONT, 2);
+    let out = build(&BuildInput {
+        font_bytes: &ttc,
+        font_index: 1,
+        themes: &themes,
+        blocks: &blocks(SAMPLE),
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+        ligatures: false,
+    })
+    .expect("ttc input must extract the requested member");
+    assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
+
+    // out-of-range index is a load error, not a wrong-font build
     let err = match build(&BuildInput {
-        font_bytes: &bytes,
+        font_bytes: &ttc,
+        font_index: 2,
         themes: &themes,
         blocks: &blocks("fn"),
         run_verify: false,
@@ -110,13 +256,85 @@ fn rejects_cff_fonts() {
         semantic: None,
         ligatures: false,
     }) {
-        Ok(_) => panic!("CFF font must be rejected"),
+        Ok(_) => panic!("out-of-range font index must be rejected"),
         Err(err) => err,
     };
-    assert!(
-        matches!(err, chromaglyph_core::BuildError::NotTrueType),
-        "got: {err}"
-    );
+    assert!(err.to_string().contains("out of range"), "got: {err}");
+}
+
+/// Apple's `.ttc` layout (every macOS system collection): member
+/// directories packed at the front, the table data they point at shared
+/// at the back through file-absolute offsets — a member slice would be
+/// directories only.
+fn synthesize_shared_ttc(font: &[u8], members: usize) -> Vec<u8> {
+    let num_tables = u16::from_be_bytes([font[4], font[5]]) as usize;
+    let dir_len = 12 + 16 * num_tables;
+    let data_at = 12 + 4 * members + dir_len * members;
+
+    let mut out = Vec::new();
+    out.extend_from_slice(b"ttcf");
+    out.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+    out.extend_from_slice(&(members as u32).to_be_bytes());
+    for k in 0..members {
+        let member_at = (12 + 4 * members + k * dir_len) as u32;
+        out.extend_from_slice(&member_at.to_be_bytes());
+    }
+    for _ in 0..members {
+        out.extend_from_slice(&font[..12]); // flavor + search assists
+        for i in 0..num_tables {
+            let at = 12 + 16 * i;
+            out.extend_from_slice(&font[at..at + 8]); // tag + checksum
+            let orig = u32::from_be_bytes(font[at + 8..at + 12].try_into().unwrap());
+            out.extend_from_slice(&((data_at + orig as usize - dir_len) as u32).to_be_bytes());
+            out.extend_from_slice(&font[at + 12..at + 16]); // length
+        }
+    }
+    out.extend_from_slice(&font[dir_len..]);
+    out
+}
+
+#[test]
+fn ttc_apple_layout_shared_data_extracts() {
+    let themes = themes();
+    let ttc = synthesize_shared_ttc(FONT, 3);
+    for index in [0u32, 2] {
+        let out = build(&BuildInput {
+            font_bytes: &ttc,
+            font_index: index,
+            themes: &themes,
+            blocks: &blocks(SAMPLE),
+            run_verify: true,
+            generic: None,
+            font_name: None,
+            semantic: None,
+            ligatures: false,
+        })
+        .expect("Apple-layout ttcf member {index} must extract");
+        assert!(
+            out.report.verify.ok,
+            "member {index}: {:?}",
+            out.report.verify.failures
+        );
+    }
+}
+
+#[test]
+fn cff_ligatures_rematerialize_in_otf_builds() {
+    let themes = themes();
+    let src = "let x = a != b; // != -> www\n";
+    let out = build(&BuildInput {
+        font_bytes: include_bytes!("fixtures/SourceCodePro-Regular.otf"),
+        font_index: 0,
+        themes: &themes,
+        blocks: &blocks(src),
+        run_verify: true,
+        generic: None,
+        font_name: None,
+        semantic: None,
+        ligatures: true,
+    })
+    .expect("ligature shaping must work against a CFF source");
+    assert!(out.report.verify.ok, "{:?}", out.report.verify.failures);
 }
 
 #[test]
@@ -139,6 +357,7 @@ fn cross_language_ambiguity_degrades_not_fails() {
     // degrades the occurrence (warning) instead of failing
     let out = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &blocks,
         run_verify: true,
@@ -163,6 +382,7 @@ fn real_tokenization_colors_function_names() {
     let themes = vec![ThemeSpec::builtin("dark-plus").unwrap()];
     let out = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &blocks(SAMPLE),
         run_verify: false,
@@ -187,6 +407,7 @@ fn emoji_and_variation_selectors_shape_and_color() {
     let themes = themes();
     let out = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &blocks(EMOJI_SAMPLE),
         run_verify: true,
@@ -221,6 +442,7 @@ fn cmap14_variation_sequence_resolves_to_variant_glyph() {
     let themes = themes();
     let out = build(&BuildInput {
         font_bytes: &font,
+        font_index: 0,
         themes: &themes,
         blocks: &blocks(UVS_SAMPLE),
         run_verify: true,
@@ -319,6 +541,7 @@ fn generic_mode_highlights_arbitrary_text() {
     let spec = chromaglyph_core::generic::rust();
     let out = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &[],
         run_verify: true,
@@ -375,6 +598,7 @@ fn generic_mode_new_languages() {
     ] {
         let out = build(&BuildInput {
             font_bytes: FONT,
+            font_index: 0,
             themes: &themes,
             blocks: &[],
             run_verify: true,
@@ -504,6 +728,7 @@ fn adversarial(spec: &chromaglyph_core::generic::LanguageSpec, samples: &[&str])
     let themes = themes();
     let out = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &[],
         run_verify: false,
@@ -565,6 +790,7 @@ fn exact_mode_highlights_typescript() {
     for lang in ["ts", "typescript", "tsx"] {
         let out = build(&BuildInput {
             font_bytes: FONT,
+            font_index: 0,
             themes: &themes,
             blocks: &[Block {
                 id: "ts".into(),
@@ -602,6 +828,7 @@ fn cjk_text_is_a_barrier_and_the_warning_names_it() {
     let src: &str = "fn main() {\n    let v = 0.2;   // 数字状态：小数点\n}\n";
     let out = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &blocks(src),
         run_verify: true,
@@ -643,6 +870,7 @@ fn semantic_layer_overlays_syntactic_colors() {
     let themes = themes();
     let plain = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &blocks(SAMPLE),
         run_verify: false,
@@ -665,6 +893,7 @@ fn semantic_layer_overlays_syntactic_colors() {
         };
     let layered = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &blocks(SAMPLE),
         run_verify: true,
@@ -700,6 +929,7 @@ fn exact_mode_subsets_the_font() {
     let themes = themes();
     let out = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &blocks(SAMPLE),
         run_verify: true,
@@ -761,6 +991,7 @@ fn subset_composites_stay_in_range() {
     let themes = themes();
     let out = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &blocks(SAMPLE),
         run_verify: true,
@@ -851,6 +1082,7 @@ fn generic_font_glyphs_stay_aligned() {
     let spec = chromaglyph_core::generic::rust();
     let out = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &[],
         run_verify: false,
@@ -963,6 +1195,7 @@ fn exact_mode_restores_contextual_alternates() {
     let src: &str = "fn f(x: u32) -> u32 { if x != 0 { x <= 2 } else { 3 } }\n";
     let out = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &[Block {
             id: "main".into(),
@@ -1034,6 +1267,7 @@ fn exact_mode_restores_contextual_alternates() {
     // glyphs (no restore rules at all)
     let plain = build(&BuildInput {
         font_bytes: FONT,
+        font_index: 0,
         themes: &themes,
         blocks: &[Block {
             id: "main".into(),
@@ -1068,6 +1302,7 @@ fn injected_ligature_colored_uncolored_and_mixed() {
     let colored_src: &str = "let s = \"fi\";\n";
     let out = build(&BuildInput {
         font_bytes: &lig_font,
+        font_index: 0,
         themes: &themes,
         blocks: &[Block {
             id: "main".into(),
@@ -1131,6 +1366,7 @@ fn injected_ligature_colored_uncolored_and_mixed() {
     let plain_src: &str = "let fi = 1;\n";
     let out = build(&BuildInput {
         font_bytes: &lig_font,
+        font_index: 0,
         themes: &themes,
         blocks: &[Block {
             id: "main".into(),
@@ -1177,6 +1413,7 @@ fn injected_ligature_colored_uncolored_and_mixed() {
     };
     let out = build(&BuildInput {
         font_bytes: &lig_font,
+        font_index: 0,
         themes: &themes,
         blocks: &[Block {
             id: "main".into(),

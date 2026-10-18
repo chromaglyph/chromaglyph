@@ -21,6 +21,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod cff;
 pub mod compile;
 pub mod error;
 pub mod fontbuild;
@@ -48,8 +49,13 @@ pub type SemanticLayer<'a> = &'a dyn Fn(&Block<'_>) -> Vec<(usize, usize, String
 
 /// Build request.
 pub struct BuildInput<'a> {
-    /// Static TrueType font bytes (TTF; CFF and variable fonts rejected).
+    /// Source font bytes: static TrueType (TTF), name-keyed CFF (OTF), a
+    /// WOFF1 container, a `.ttc` collection (see `font_index`) or a
+    /// variable TrueType font (pinned to its default instance). CFF2 /
+    /// variable-OTF outlines are rejected.
     pub font_bytes: &'a [u8],
+    /// Which font of a `.ttc` collection to use (ignored otherwise).
+    pub font_index: u32,
     /// One or more themes; palette `i` in the output font renders theme `i`.
     /// The first theme is the default palette.
     pub themes: &'a [ThemeSpec],
@@ -114,7 +120,11 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
     if input.themes.is_empty() {
         return Err(BuildError::Theme("at least one theme is required".into()));
     }
-    let loaded = fontbuild::load(input.font_bytes)?;
+    // unwrap WOFF containers / extract the requested collection member so
+    // everything downstream (load, the rustybuzz ligature shaper) sees a
+    // plain sfnt
+    let sfnt = fontbuild::normalize_input(input.font_bytes, input.font_index)?;
+    let loaded = fontbuild::load(sfnt.as_ref())?;
     let charmap = skrifa::charmap::Charmap::new(&loaded.font);
     let theme_fgs: Vec<Color> = input.themes.iter().map(|t| t.foreground).collect();
 
@@ -162,7 +172,7 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
             // (read-fonts already accepted the font, so this is unlikely).
             let face = input
                 .ligatures
-                .then(|| rustybuzz::Face::from_slice(input.font_bytes, 0))
+                .then(|| rustybuzz::Face::from_slice(sfnt.as_ref(), 0))
                 .flatten();
             let shape_fn;
             let shaper: Option<compile::Shaper<'_>> = match &face {
@@ -267,6 +277,9 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
     let woff = woff::wrap(&ttf)?;
     let css = render_css(input.themes, input.font_name.unwrap_or("chromaglyph.woff"));
 
+    let mut warnings = loaded.warnings;
+    warnings.extend(plan.warnings);
+
     let report = Report {
         themes: input.themes.iter().map(|t| t.name.clone()).collect(),
         blocks: input.blocks.len(),
@@ -292,7 +305,7 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
         tables: table_sizes(&ttf),
         ttf_bytes: ttf.len(),
         woff_bytes: woff.len(),
-        warnings: plan.warnings,
+        warnings,
         verify: verify_result,
     };
 

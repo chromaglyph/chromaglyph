@@ -7,10 +7,10 @@ use std::fmt;
 pub enum BuildError {
     /// The input font could not be parsed at all.
     FontParse(String),
-    /// chromaglyph v1 only accepts static TrueType (glyf) fonts.
-    NotTrueType,
-    /// Variable fonts are rejected in v1.
-    VariableFont,
+    /// The font's outlines (or organization) are beyond what the
+    /// pipeline can rework: CFF2/variable-OTF, CID-keyed CFF, bitmap-only
+    /// fonts, multi-font CFF sets.
+    UnsupportedFont(String),
     /// The font is missing a table we require.
     MissingTable(&'static str),
     /// Tokens overlap or do not lie inside the block text.
@@ -33,13 +33,7 @@ impl fmt::Display for BuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BuildError::FontParse(msg) => write!(f, "cannot parse font: {msg}"),
-            BuildError::NotTrueType => write!(
-                f,
-                "font is not a static TrueType font (glyf outlines required; CFF/OTF and variable fonts are rejected in v1)"
-            ),
-            BuildError::VariableFont => {
-                write!(f, "variable fonts are not supported in v1")
-            }
+            BuildError::UnsupportedFont(msg) => write!(f, "unsupported font: {msg}"),
             BuildError::MissingTable(tag) => write!(f, "font is missing required table '{tag}'"),
             BuildError::BadTokens(msg) => write!(f, "invalid token list: {msg}"),
             BuildError::TableWrite(msg) => write!(f, "table serialization failed: {msg}"),

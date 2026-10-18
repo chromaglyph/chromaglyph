@@ -68,7 +68,8 @@ pub fn wrap(ttf: &[u8]) -> Result<Vec<u8>, BuildError> {
 
     let mut woff = Vec::with_capacity(total as usize);
     woff.extend_from_slice(WOFF_SIGNATURE);
-    woff.extend_from_slice(&0x0001_0000u32.to_be_bytes()); // flavor: TrueType
+    // flavor mirrors the sfnt version: TrueType or OTTO for CFF outlines
+    woff.extend_from_slice(&ttf[0..4]);
     woff.extend_from_slice(&total.to_be_bytes());
     woff.extend_from_slice(&(entries.len() as u16).to_be_bytes());
     woff.extend_from_slice(&0u16.to_be_bytes()); // reserved
@@ -157,7 +158,7 @@ pub fn unwrap(woff: &[u8]) -> Result<Vec<u8>, BuildError> {
                 .map(|t| t.orig_length as usize + 3)
                 .sum::<usize>(),
     );
-    ttf.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+    ttf.extend_from_slice(&woff[4..8]); // flavor: TrueType or OTTO
     ttf.extend_from_slice(&(n as u16).to_be_bytes());
     ttf.extend_from_slice(&search_range.to_be_bytes());
     ttf.extend_from_slice(&entry_selector.to_be_bytes());

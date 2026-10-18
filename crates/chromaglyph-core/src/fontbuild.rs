@@ -12,8 +12,16 @@
 //! coloring (and, since 0.2.3, ligature restoration) happens through the
 //! generated `calt` alone — see `compile.rs` for how the source font's
 //! shaping is re-materialized at build time instead.
+//!
+//! Outlines: TrueType (`glyf`/`loca`) and CFF1 (`CFF `, name-keyed) are
+//! accepted, static or variable-TrueType (pinned to the default instance —
+//! the glyf outlines *are* the default, so the variation machinery is
+//! simply dropped). CFF2 outlines would need real instancing and are
+//! rejected. WOFF1 containers and `.ttc` collections are unwrapped to a
+//! plain sfnt before this stage (see [`normalize_input`]).
 
 use read_fonts::{FontRef, TableProvider};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use write_fonts::tables::cmap::{
@@ -28,6 +36,7 @@ use write_fonts::tables::loca::{Loca, LocaFormat};
 use write_fonts::types::{GlyphId, GlyphId16, Tag, Uint24};
 use write_fonts::FontBuilder;
 
+use crate::cff;
 use crate::compile::GlyphPlan;
 use crate::error::BuildError;
 
@@ -52,59 +61,256 @@ const DROP_TABLES: &[Tag] = &[
     Tag::new(b"DSIG"),
 ];
 
+/// Variation machinery dropped when a variable TrueType font is pinned to
+/// its default instance (see [`LoadedFont::variable`]). STAT is on the
+/// list too: without `fvar` it describes axes the font no longer has.
+const VARIATION_TABLES: &[Tag] = &[
+    Tag::new(b"fvar"),
+    Tag::new(b"avar"),
+    Tag::new(b"cvar"),
+    Tag::new(b"gvar"),
+    Tag::new(b"HVAR"),
+    Tag::new(b"VVAR"),
+    Tag::new(b"MVAR"),
+    Tag::new(b"STAT"),
+];
+
+/// The outline representation of the source font. TrueType glyphs are
+/// sliced out of `glyf` via `loca`; CFF glyphs live in a CharStrings
+/// INDEX the assembler appends empty `endchar` entries to (see `cff.rs`).
+pub enum Outlines<'a> {
+    TrueType {
+        /// `num_glyphs + 1` offsets from the source loca.
+        loca_offsets: Vec<u32>,
+        glyf: &'a [u8],
+    },
+    Cff {
+        table: &'a [u8],
+        layout: cff::Layout,
+    },
+}
+
 /// A validated source font with the raw pieces the assembler needs.
 pub struct LoadedFont<'a> {
     pub font: FontRef<'a>,
     pub num_glyphs: u16,
-    /// `num_glyphs + 1` offsets from the source loca.
-    pub loca_offsets: Vec<u32>,
-    pub glyf_data: &'a [u8],
+    pub outlines: Outlines<'a>,
     /// (advance, lsb) per source glyph id.
     pub metrics: Vec<(u16, i16)>,
+    /// True when the source carried variation tables; the output font is
+    /// pinned to the default instance (a warning says so in the report).
+    pub variable: bool,
+    /// Load-time notes surfaced as build warnings (report + CLI).
+    pub warnings: Vec<String>,
+}
+
+/// Normalize raw input bytes to a plain sfnt: unwrap WOFF1 containers,
+/// extract one font out of a `.ttc` collection, pass everything else
+/// through untouched.
+pub fn normalize_input<'a>(bytes: &'a [u8], font_index: u32) -> Result<Cow<'a, [u8]>, BuildError> {
+    match bytes.get(..4) {
+        Some(b"wOFF") => Ok(Cow::Owned(crate::woff::unwrap(bytes)?)),
+        Some(b"ttcf") => extract_ttc_member(bytes, font_index).map(Cow::Owned),
+        _ => {
+            if let Some([0, 1, 0, 0]) | Some(b"OTTO") | Some(b"true") | Some(b"ttcf") =
+                bytes.get(..4)
+            {
+                Ok(Cow::Borrowed(bytes))
+            } else {
+                Err(BuildError::FontParse(
+                    "not a font (expected sfnt, OTTO, WOFF or ttcf magic)".into(),
+                ))
+            }
+        }
+    }
+}
+
+/// Pull member `font_index` out of a `.ttc` collection as a standalone
+/// sfnt.
+///
+/// A slice is never enough: table offsets inside a member's directory are
+/// absolute positions in the TTC file, and Apple's collections (Menlo,
+/// every system `.ttc`) keep the member directories packed at the front
+/// while the table data they point at is shared at the back. So the
+/// member is *relocated*: header + directory re-emitted, each table's
+/// data copied from its absolute position, offsets recomputed (checksums
+/// ride along unchanged — the bytes they cover did).
+fn extract_ttc_member(bytes: &[u8], font_index: u32) -> Result<Vec<u8>, BuildError> {
+    let bad = |msg: &str| BuildError::FontParse(format!("ttcf: {msg}"));
+    let be32 = |at: usize| -> Option<u32> {
+        bytes
+            .get(at..at + 4)
+            .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+    };
+    let be16 = |at: usize| -> Option<u16> {
+        bytes
+            .get(at..at + 2)
+            .map(|b| u16::from_be_bytes(b.try_into().unwrap()))
+    };
+    let num_fonts = be32(8).ok_or_else(|| bad("header truncated"))?;
+    if font_index >= num_fonts {
+        return Err(bad(&format!(
+            "font index {font_index} is out of range: the collection has {num_fonts} font(s)"
+        )));
+    }
+    let dir_at =
+        be32(12 + 4 * font_index as usize).ok_or_else(|| bad("offsets truncated"))? as usize;
+    match bytes.get(dir_at..dir_at + 4) {
+        Some([0, 1, 0, 0]) | Some(b"OTTO") | Some(b"true") => {}
+        _ => return Err(bad("member does not look like a font")),
+    }
+    let num_tables = be16(dir_at + 4).ok_or_else(|| bad("member header truncated"))? as usize;
+    if num_tables == 0 || num_tables > u16::MAX as usize {
+        return Err(bad("member has no tables"));
+    }
+
+    struct Entry {
+        tag: [u8; 4],
+        checksum: u32,
+        abs_offset: u32,
+        length: u32,
+    }
+    let mut entries = Vec::with_capacity(num_tables);
+    for i in 0..num_tables {
+        let at = dir_at + 12 + 16 * i;
+        let raw = bytes
+            .get(at..at + 16)
+            .ok_or_else(|| bad("member directory truncated"))?;
+        let entry = Entry {
+            tag: raw[0..4].try_into().unwrap(),
+            checksum: u32::from_be_bytes(raw[4..8].try_into().unwrap()),
+            abs_offset: u32::from_be_bytes(raw[8..12].try_into().unwrap()),
+            length: u32::from_be_bytes(raw[12..16].try_into().unwrap()),
+        };
+        if entry.abs_offset as u64 + entry.length as u64 > bytes.len() as u64 {
+            return Err(bad("table data out of bounds"));
+        }
+        entries.push(entry);
+    }
+
+    // same layout the woff unwrapper emits: 12-byte header + 16-byte
+    // records + 4-aligned table data; searchRange fields copied verbatim
+    // (the table count did not change)
+    let mut out = Vec::with_capacity(bytes.len() - dir_at.min(bytes.len()));
+    out.extend_from_slice(&bytes[dir_at..dir_at + 12]);
+    let mut table_at = (12 + 16 * num_tables) as u32;
+    for entry in &entries {
+        out.extend_from_slice(&entry.tag);
+        out.extend_from_slice(&entry.checksum.to_be_bytes());
+        out.extend_from_slice(&table_at.to_be_bytes());
+        out.extend_from_slice(&entry.length.to_be_bytes());
+        table_at += entry.length;
+        table_at += (4 - entry.length % 4) % 4;
+    }
+    for entry in &entries {
+        let start = entry.abs_offset as usize;
+        let end = start + entry.length as usize;
+        out.extend_from_slice(&bytes[start..end]);
+        out.extend(std::iter::repeat_n(
+            0u8,
+            ((4 - entry.length % 4) % 4) as usize,
+        ));
+    }
+    Ok(out)
 }
 
 pub fn load<'a>(bytes: &'a [u8]) -> Result<LoadedFont<'a>, BuildError> {
     let font = FontRef::new(bytes).map_err(|e| BuildError::FontParse(e.to_string()))?;
 
-    if font.data_for_tag(Tag::new(b"CFF ")).is_some()
-        || font.data_for_tag(Tag::new(b"CFF2")).is_some()
-    {
-        return Err(BuildError::NotTrueType);
+    let has_cff2 = font.data_for_tag(Tag::new(b"CFF2")).is_some();
+    if has_cff2 {
+        return Err(BuildError::UnsupportedFont(
+            "CFF2 outlines (variable OTF) cannot be pinned without instancing; \
+             build from the static OTF or the TTF instead"
+                .into(),
+        ));
     }
-    if font.data_for_tag(Tag::new(b"fvar")).is_some() {
-        return Err(BuildError::VariableFont);
-    }
-    const REQUIRED_TABLES: &[(Tag, &str)] = &[
-        (Tag::new(b"glyf"), "glyf"),
-        (Tag::new(b"loca"), "loca"),
+    let cff_data = font.data_for_tag(Tag::new(b"CFF "));
+    let outlines =
+        if let Some(data) = cff_data {
+            let table = data.as_bytes();
+            let layout = cff::parse(table)?;
+            Outlines::Cff { table, layout }
+        } else {
+            const REQUIRED_TABLES: &[(Tag, &str)] = &[
+                (Tag::new(b"glyf"), "glyf"),
+                (Tag::new(b"loca"), "loca"),
+                (Tag::new(b"cmap"), "cmap"),
+            ];
+            for (tag, name) in REQUIRED_TABLES {
+                if font.data_for_tag(*tag).is_none() {
+                    if font.data_for_tag(Tag::new(b"EBDT")).is_some()
+                        || font.data_for_tag(Tag::new(b"CBDT")).is_some()
+                    {
+                        return Err(BuildError::UnsupportedFont(
+                            "bitmap-only fonts have no outlines to color".into(),
+                        ));
+                    }
+                    return Err(BuildError::MissingTable(name));
+                }
+            }
+            let head = font.head()?;
+            let maxp = font.maxp()?;
+            let num_glyphs = maxp.num_glyphs();
+            let is_long = head.index_to_loc_format() == 1;
+            let loca = font.loca(is_long)?;
+            let mut loca_offsets = Vec::with_capacity(num_glyphs as usize + 1);
+            for i in 0..=num_glyphs as usize {
+                loca_offsets.push(loca.get_raw(i).ok_or_else(|| {
+                    BuildError::FontParse(format!("loca is truncated at glyph {i}"))
+                })?);
+            }
+            let glyf = font
+                .data_for_tag(Tag::new(b"glyf"))
+                .ok_or(BuildError::MissingTable("glyf"))?
+                .as_bytes();
+            Outlines::TrueType { loca_offsets, glyf }
+        };
+
+    const SHARED_TABLES: &[(Tag, &str)] = &[
         (Tag::new(b"cmap"), "cmap"),
         (Tag::new(b"head"), "head"),
         (Tag::new(b"hhea"), "hhea"),
         (Tag::new(b"maxp"), "maxp"),
         (Tag::new(b"hmtx"), "hmtx"),
     ];
-    for (tag, name) in REQUIRED_TABLES {
+    for (tag, name) in SHARED_TABLES {
         if font.data_for_tag(*tag).is_none() {
             return Err(BuildError::MissingTable(name));
         }
     }
 
-    let head = font.head()?;
     let maxp = font.maxp()?;
     let num_glyphs = maxp.num_glyphs();
-    let is_long = head.index_to_loc_format() == 1;
-    let loca = font.loca(is_long)?;
-    let mut loca_offsets = Vec::with_capacity(num_glyphs as usize + 1);
-    for i in 0..=num_glyphs as usize {
-        loca_offsets.push(
-            loca.get_raw(i)
-                .ok_or_else(|| BuildError::FontParse(format!("loca is truncated at glyph {i}")))?,
+    if let Outlines::Cff { layout, .. } = &outlines {
+        if layout.num_glyphs != num_glyphs as usize {
+            return Err(BuildError::FontParse(format!(
+                "maxp says {num_glyphs} glyphs, CFF CharStrings has {}",
+                layout.num_glyphs
+            )));
+        }
+    }
+
+    // variable TrueType: the glyf outlines *are* the default instance, so
+    // the font ships static at default once the variation tables are
+    // dropped (see VARIATION_TABLES). Variable CFF would be CFF2, already
+    // rejected above.
+    let mut warnings = Vec::new();
+    let variable = font.data_for_tag(Tag::new(b"fvar")).is_some();
+    if variable {
+        if cff_data.is_some() {
+            return Err(BuildError::UnsupportedFont(
+                "CFF font with fvar (variable OTF) is not supported; \
+                 use the static OTF or the TTF"
+                    .into(),
+            ));
+        }
+        warnings.push(
+            "variable font pinned to its default instance \
+             (variation tables dropped)"
+                .into(),
         );
     }
-    let glyf_data = font
-        .data_for_tag(Tag::new(b"glyf"))
-        .ok_or(BuildError::MissingTable("glyf"))?
-        .as_bytes();
 
     let hhea = font.hhea()?;
     let num_long = hhea.number_of_h_metrics() as usize;
@@ -117,9 +323,10 @@ pub fn load<'a>(bytes: &'a [u8]) -> Result<LoadedFont<'a>, BuildError> {
     Ok(LoadedFont {
         font,
         num_glyphs,
-        loca_offsets,
-        glyf_data,
+        outlines,
         metrics,
+        variable,
+        warnings,
     })
 }
 
@@ -194,6 +401,12 @@ pub fn subset_glyphs(
         if loaded.font.data_for_tag(*tag).is_some() {
             return None;
         }
+    }
+    // CFF subsetting means renumbering a CharStrings INDEX (and charset,
+    // FDSelect, ...) — v1 ships the full glyph set for CFF sources
+    // instead, exactly like the blocking tables above
+    if matches!(loaded.outlines, Outlines::Cff { .. }) {
+        return None;
     }
 
     let num = loaded.num_glyphs as usize;
@@ -310,11 +523,19 @@ pub fn subset_glyphs(
 
 /// Byte span of one glyph inside the source glyf.
 fn glyph_span(loaded: &LoadedFont<'_>, gid: u16) -> (usize, usize) {
+    let Outlines::TrueType { loca_offsets, .. } = &loaded.outlines else {
+        unreachable!("composites are only walked on TrueType sources")
+    };
     let g = gid as usize;
-    (
-        loaded.loca_offsets[g] as usize,
-        loaded.loca_offsets[g + 1] as usize,
-    )
+    (loca_offsets[g] as usize, loca_offsets[g + 1] as usize)
+}
+
+/// The source glyf bytes (TrueType sources only).
+fn glyf_of<'a>(loaded: &LoadedFont<'a>) -> &'a [u8] {
+    match &loaded.outlines {
+        Outlines::TrueType { glyf, .. } => glyf,
+        Outlines::Cff { .. } => unreachable!("CFF sources never walk glyf"),
+    }
 }
 
 // composite component flags, as every implementation actually numbers
@@ -330,7 +551,7 @@ const WE_HAVE_A_TWO_BY_TWO: u16 = 0x0080;
 /// glyphs), parsed straight from the glyf bytes.
 fn components_of(loaded: &LoadedFont<'_>, gid: u16) -> Vec<u16> {
     let (a, b) = glyph_span(loaded, gid);
-    let data = &loaded.glyf_data[a..b];
+    let data = &glyf_of(loaded)[a..b];
     if data.len() < 12 || i16::from_be_bytes([data[0], data[1]]) >= 0 {
         return Vec::new();
     }
@@ -368,7 +589,7 @@ fn components_of(loaded: &LoadedFont<'_>, gid: u16) -> Vec<u16> {
 /// subset's new numbering (simple glyphs pass through untouched).
 fn subset_glyph_bytes(loaded: &LoadedFont<'_>, old: u16, map: &[u16]) -> Vec<u8> {
     let (a, b) = glyph_span(loaded, old);
-    let data = &loaded.glyf_data[a..b];
+    let data = &glyf_of(loaded)[a..b];
     if data.len() < 12 || i16::from_be_bytes([data[0], data[1]]) >= 0 {
         return data.to_vec();
     }
@@ -420,12 +641,15 @@ pub fn assemble(
     // has already rewritten to the surviving source glyph count
     let total_glyphs = plan.num_source_glyphs as usize + num_alt + num_plain;
 
-    // ---- glyf (raw, padded even) + loca (extended with empty glyphs) -----
+    // ---- outlines: TrueType re-emits glyf+loca (raw, padded even, with
+    // the empty alt/plain glyphs appended as zero-length entries); CFF
+    // re-lays-out its table with the new glyphs as endchar charstrings ---
     let mut glyf: Vec<u8> = Vec::new();
     let mut offsets: Vec<u32> = Vec::with_capacity(total_glyphs + 1);
+    let mut cff_table: Option<Vec<u8>> = None;
     offsets.push(0);
-    match subset {
-        Some(sub) => {
+    match (&loaded.outlines, subset) {
+        (Outlines::TrueType { .. }, Some(sub)) => {
             for new_gid in 0..sub.kept {
                 let bytes = subset_glyph_bytes(loaded, sub.unmap[new_gid as usize], &sub.map);
                 glyf.extend_from_slice(&bytes);
@@ -435,8 +659,8 @@ pub fn assemble(
                 offsets.push(glyf.len() as u32);
             }
         }
-        None => {
-            glyf.extend_from_slice(loaded.glyf_data);
+        (Outlines::TrueType { loca_offsets, .. }, None) => {
+            glyf.extend_from_slice(glyf_of(loaded));
             if !glyf.len().is_multiple_of(2) {
                 glyf.push(0);
             }
@@ -449,19 +673,34 @@ pub fn assemble(
             // browsers rejected the whole font at OTS (0.2.2 generic-mode
             // regression; the rustybuzz oracle only diffs glyph ids and
             // never walks outlines, so it stayed green)
-            offsets.extend(loaded.loca_offsets.iter().skip(1).copied());
+            offsets.extend(loca_offsets.iter().skip(1).copied());
+        }
+        (Outlines::Cff { table, layout }, _) => {
+            cff_table = Some(cff::append_empty_glyphs(
+                table,
+                layout,
+                num_alt + num_plain,
+            )?);
         }
     }
-    let last = *offsets.last().expect("loca is never empty");
-    for _ in 0..(num_alt + num_plain) {
-        offsets.push(last);
+    if cff_table.is_none() {
+        // the alt/plain glyphs ride as zero-length entries at the tail of
+        // the source (or subset) loca
+        let last = *offsets.last().expect("loca is never empty");
+        for _ in 0..(num_alt + num_plain) {
+            offsets.push(last);
+        }
     }
     let loca = Loca::new(offsets);
     let loca_is_long = matches!(loca.format(), LocaFormat::Long);
 
     // ---- head / hhea / maxp: raw bytes with one field patched ------------
+    // (head's indexToLocFormat only exists for TrueType; a CFF font's head
+    // passes through untouched)
     let head = patch_table(&loaded.font, b"head", |bytes| {
-        bytes[50..52].copy_from_slice(&(loca_is_long as u16).to_be_bytes());
+        if cff_table.is_none() {
+            bytes[50..52].copy_from_slice(&(loca_is_long as u16).to_be_bytes());
+        }
     });
     let hhea = patch_table(&loaded.font, b"hhea", |bytes| {
         bytes[34..36].copy_from_slice(&(total_glyphs as u16).to_be_bytes());
@@ -624,10 +863,17 @@ pub fn assemble(
             .add_table(&cmap)
             .map_err(|e| BuildError::TableWrite(e.to_string()))?;
     }
-    add(&mut builder, Tag::new(b"glyf"), glyf);
-    builder
-        .add_table(&loca)
-        .map_err(|e| BuildError::TableWrite(e.to_string()))?;
+    match cff_table {
+        // CFF source: the extended CFF table replaces glyf/loca, and
+        // FontBuilder emits the OTTO flavor for a CFF-bearing table set
+        Some(table) => add(&mut builder, Tag::new(b"CFF "), table),
+        None => {
+            add(&mut builder, Tag::new(b"glyf"), glyf);
+            builder
+                .add_table(&loca)
+                .map_err(|e| BuildError::TableWrite(e.to_string()))?;
+        }
+    }
     builder
         .add_table(&hmtx)
         .map_err(|e| BuildError::TableWrite(e.to_string()))?;
@@ -645,9 +891,13 @@ pub fn assemble(
             .map_err(|e| BuildError::TableWrite(e.to_string()))?;
     }
     // copy everything else the source had, minus dropped/rewritten tables
+    // (and, for a pinned variable source, the variation machinery)
     for record in loaded.font.table_directory().table_records() {
         let tag = record.tag();
-        if builder.contains(tag) || DROP_TABLES.contains(&tag) {
+        if builder.contains(tag)
+            || DROP_TABLES.contains(&tag)
+            || (loaded.variable && VARIATION_TABLES.contains(&tag))
+        {
             continue;
         }
         if let Some(data) = loaded.font.data_for_tag(tag) {
