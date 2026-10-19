@@ -1,6 +1,6 @@
 {
   "name": "@chromaglyph/markdown-it",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "markdown-it plugin (VitePress-ready): highlight code blocks by compiling them into a chromaglyph color font",
   "license": "Apache-2.0",
   "type": "module",
