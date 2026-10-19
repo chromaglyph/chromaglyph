@@ -27,15 +27,18 @@ pub(crate) fn handle_js(node: Node, _source: &[u8], spans: &mut Vec<SemanticSpan
             if value_is_fn {
                 push_field(node, "name", FUNCTION, spans);
             } else if let Some(name) = node.child_by_field_name("name") {
-                let is_const_literal = node
-                    .parent()
-                    .is_some_and(|p| p.kind() == "lexical_declaration")
-                    && node.child_by_field_name("value").is_some_and(|v| {
-                        matches!(
-                            v.kind(),
-                            "number" | "string" | "template_literal" | "true" | "false" | "null"
-                        )
-                    });
+                // `let` and `const` are both lexical_declaration in the
+                // grammar; only a `const` with a literal value is a
+                // constant (`let N = 42` is reassignable)
+                let is_const_literal = node.parent().is_some_and(|p| {
+                    p.kind() == "lexical_declaration"
+                        && p.child(0).is_some_and(|kw| kw.kind() == "const")
+                }) && node.child_by_field_name("value").is_some_and(|v| {
+                    matches!(
+                        v.kind(),
+                        "number" | "string" | "template_literal" | "true" | "false" | "null"
+                    )
+                });
                 if is_const_literal {
                     push_range(name, CONSTANT, spans);
                 }
@@ -124,6 +127,24 @@ mod tests {
             "obj.run() colors the method"
         );
         assert!(all("Foo").contains(&TYPE), "class + new");
+    }
+
+    #[test]
+    fn js_let_literal_is_not_a_constant() {
+        // regression: `let` and `const` are both lexical_declaration in
+        // the grammar, so `let n = 42` used to be scoped CONSTANT too
+        let src = "let n = 42;\nconst N = 42;\nvar v = 42;\n";
+        let spans = semantic_spans("js", src);
+        let all = |needle: &str| {
+            spans
+                .iter()
+                .filter(|s| &src[s.start..s.end] == needle)
+                .map(|s| s.scope)
+                .collect::<Vec<_>>()
+        };
+        assert!(!all("n").contains(&CONSTANT), "let binding is reassignable");
+        assert!(all("N").contains(&CONSTANT), "const literal");
+        assert!(!all("v").contains(&CONSTANT), "var binding");
     }
 
     #[test]
