@@ -1,4 +1,4 @@
-# Eleven languages
+# Languages
 
 The eleven blocks on this page are batched into **one font** per render
 (cross-language global disambiguation). Every block copies out as plain

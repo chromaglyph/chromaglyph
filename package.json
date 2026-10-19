@@ -9,6 +9,8 @@
     "bump:patch": "scripts/bump.sh patch"
   },
   "devDependencies": {
-    "playwright": "^1.64.1"
+    "@types/node": "^26.6.5",
+    "playwright": "^1.64.1",
+    "vitepress": "2.0.0-alpha.20"
   }
 }

@@ -1,19 +1,10 @@
 {
-  "name": "@chromaglyph/vitepress-demo",
-  "version": "0.0.1",
-  "private": true,
-  "type": "module",
   "scripts": {
-    "dev": "vitepress dev",
-    "build": "vitepress build",
-    "preview": "vitepress preview"
-  },
-  "devDependencies": {
-    "vitepress": "^1",
-    "vue": "^3.5"
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview"
   },
   "dependencies": {
-    "@chromaglyph/markdown-it": "workspace:*",
-    "@chromaglyph/node": "workspace:*"
+    "@chromaglyph/markdown-it": "workspace:*"
   }
 }

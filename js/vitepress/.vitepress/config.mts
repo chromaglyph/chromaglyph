@@ -6,7 +6,7 @@ import chromaglyph from '@chromaglyph/markdown-it'
 // in-repo fixture (JetBrainsMono, static TTF)
 const font = resolve(
   process.cwd(),
-  '../../crates/chromaglyph-core/tests/fixtures/JetBrainsMono-Regular.ttf',
+  '../../crates/chromaglyph-core/tests/fixtures/JetBrainsMono-wght-VF.ttf',
 )
 
 export default defineConfig({
@@ -31,8 +31,8 @@ export default defineConfig({
         style: 'link',
         // keep the font's own ligatures (!= -> === …) while highlighted;
         // mixed-color sites degrade to per-char text (colors win)
-        ligatures: true,
         semantic: true,
+        ligatures: true,
         cacheDir: '.chromaglyph-cache',
       })
     },
@@ -46,7 +46,7 @@ export default defineConfig({
         text: 'Guide',
         items: [
           { text: 'How it works', link: '/guide/how-it-works' },
-          { text: 'Six languages', link: '/guide/languages' },
+          { text: 'Languages', link: '/guide/languages' },
           { text: 'VitePress integration', link: '/guide/integration' },
         ],
       },
