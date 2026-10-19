@@ -691,7 +691,7 @@ fn inject_cmap14_uvs(font: &[u8], base: char, selector: char) -> Vec<u8> {
     // one extra 8-byte record shifts every existing subtable by 8 bytes;
     // their table-relative offsets must be patched accordingly
     let mut records: Vec<u8> = old[4..old_subtables_off].to_vec();
-    for rec in records.chunks_exact_mut(8) {
+    for rec in records.as_chunks_mut::<8>().0 {
         let off = u32::from_be_bytes([rec[4], rec[5], rec[6], rec[7]]) + 8;
         rec[4..8].copy_from_slice(&off.to_be_bytes());
     }
