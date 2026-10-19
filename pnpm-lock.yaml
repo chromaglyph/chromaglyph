@@ -23,28 +23,6 @@ importers:
       '@napi-rs/cli':
         specifier: ^3
         version: 3.10.8(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)(@types/node@26.6.5)
-    optionalDependencies:
-      '@chromaglyph/node-darwin-arm64':
-        specifier: 0.3.0
-        version: 0.3.0
-      '@chromaglyph/node-darwin-x64':
-        specifier: 0.3.0
-        version: 0.3.0
-      '@chromaglyph/node-linux-arm64-gnu':
-        specifier: 0.3.0
-        version: 0.3.0
-      '@chromaglyph/node-linux-arm64-musl':
-        specifier: 0.3.0
-        version: 0.3.0
-      '@chromaglyph/node-linux-x64-gnu':
-        specifier: 0.3.0
-        version: 0.3.0
-      '@chromaglyph/node-linux-x64-musl':
-        specifier: 0.3.0
-        version: 0.3.0
-      '@chromaglyph/node-win32-x64-msvc':
-        specifier: 0.3.0
-        version: 0.3.0
 
   js/demo:
     dependencies:
@@ -132,41 +110,6 @@ packages:
   '@babel/types@7.29.8':
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
-
-  '@chromaglyph/node-darwin-arm64@0.3.0':
-    resolution: {integrity: sha512-2APsDisT5Q04Wt6QhPBlNV44tJ6sP3MezrSzj2xjMf4V63YCjD7p0CfGyFJqtLv54RgAlfhNXMiYtF+MZzkWrw==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@chromaglyph/node-darwin-x64@0.3.0':
-    resolution: {integrity: sha512-LYA0gxM7c2mxVzcq/xhiV7PMzFPSvDyWYUjzP8d8NsPSUv7q14eliJ7zcrPOIdREx9jpAjJG7f4lli+WUkIApA==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@chromaglyph/node-linux-arm64-gnu@0.3.0':
-    resolution: {integrity: sha512-Sxy3yKB3pn/qbSAnCoJoRKBu4Bk1ezuucCkbxrBGp1FyFFmqGCETgkgOhSHD+jMmaiXr7O8olyV7nd5Drosscg==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@chromaglyph/node-linux-arm64-musl@0.3.0':
-    resolution: {integrity: sha512-FLtBbCZahLrk910+bf+5WfIldaNL4jn5/+tTCYlKGBytEjzSAULZ5bIeuRpxedTz6csnvCuNuj+tTz+/dhmQPg==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@chromaglyph/node-linux-x64-gnu@0.3.0':
-    resolution: {integrity: sha512-85KVn4w5D3TGcL5JX577U3oLATd/ZOWTHVrf1YZZIJUSUkxmDaD5sxMCFS2n9RNHJs6lRl/6W9hK+IvNxN4uFw==}
-    cpu: [x64]
-    os: [linux]
-
-  '@chromaglyph/node-linux-x64-musl@0.3.0':
-    resolution: {integrity: sha512-cwM4NdKiLKBz7Cqv+uuFIcMusQIa1VEidAPdnCdIoaYAH+PjpvNqlg9WZCbrEzyBYMRCN2/tho2WgZDRqi6sWg==}
-    cpu: [x64]
-    os: [linux]
-
-  '@chromaglyph/node-win32-x64-msvc@0.3.0':
-    resolution: {integrity: sha512-MSfWwt+L87GH/2TzFSK0C7jDIwzNd19CylA3g0E5/1Rcx2tPfYrB+QnexTPxIr6mbXbEfkyFzm8GhGOVwdkQlw==}
-    cpu: [x64]
-    os: [win32]
 
   '@docsearch/css@4.7.1':
     resolution: {integrity: sha512-AsMPnbNmVLDNjhtgfq4ZRskNvWR8vuK6riEegHp3kjBFtxbmTWPzZ5s1FJ04SGr2D0ZXglueUNISsV2sDgV6Jw==}
@@ -1605,27 +1548,6 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
-
-  '@chromaglyph/node-darwin-arm64@0.3.0':
-    optional: true
-
-  '@chromaglyph/node-darwin-x64@0.3.0':
-    optional: true
-
-  '@chromaglyph/node-linux-arm64-gnu@0.3.0':
-    optional: true
-
-  '@chromaglyph/node-linux-arm64-musl@0.3.0':
-    optional: true
-
-  '@chromaglyph/node-linux-x64-gnu@0.3.0':
-    optional: true
-
-  '@chromaglyph/node-linux-x64-musl@0.3.0':
-    optional: true
-
-  '@chromaglyph/node-win32-x64-msvc@0.3.0':
-    optional: true
 
   '@docsearch/css@4.7.1': {}
 

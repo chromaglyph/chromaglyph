@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0 (2026-10-19)
+
 - **WOFF2 output** (`--output font.woff2`; `format: 'woff2'` in
   `@chromaglyph/node` and both markdown plugins): the shipped font can
   ride in a WOFF2 container — one Brotli stream over all tables, 15–30%
