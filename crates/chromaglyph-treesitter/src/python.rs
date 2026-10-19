@@ -59,30 +59,41 @@ pub(crate) fn handle_python(node: Node, source: &[u8], spans: &mut Vec<SemanticS
                 push_field(node, "attribute", PROPERTY, spans);
             }
         }
-        // UPPER_CASE assignment targets read as constants (how editors
-        // treat them; themes that color the scope opt in)
+        // assignment targets: UPPER_CASE names read as constants (how
+        // editors treat them; themes that color the scope opt in), every
+        // other target is a plain variable binding
         "assignment" => {
             let Some(target) = node.child_by_field_name("left") else {
                 return;
             };
             if target.kind() == "identifier" {
-                if let Ok(name) = target.utf8_text(source) {
-                    if is_upper_const(name) {
-                        push_range(target, CONSTANT, spans);
-                    }
-                }
+                let is_const = target.utf8_text(source).is_ok_and(is_upper_const);
+                push_range(target, if is_const { CONSTANT } else { VARIABLE }, spans);
             }
         }
         // type annotations
         "type_identifier" => push_range(node, TYPE, spans),
+        // annotations wrap the name in a `type` node: plain names
+        // (`str`) are bare identifiers there, generic heads (`list` in
+        // list[int]) sit under `generic_type` — neither is a
+        // type_identifier, so without this they'd read as variables
+        "type" | "generic_type" => {
+            for i in 0..node.child_count() {
+                if let Some(c) = node.child(i) {
+                    if c.kind() == "identifier" {
+                        push_range(c, TYPE, spans);
+                    }
+                }
+            }
+        }
         // bare identifiers are variable reads/writes — the semantic blue.
         // Excluded: every position a branch above (or below in dispatch
         // order) already scopes — call/attribute names, parameters,
-        // definition names, UPPER_CASE assignment targets, import paths.
-        // Parents are handled before children, so an unexcluded identifier
-        // here would overwrite those spans. `attribute` excludes only the
-        // attribute position: the object of `obj.run()` is itself a
-        // variable read and keeps this color
+        // definition names, assignment targets, annotation types, import
+        // paths. Parents are handled before children, so an unexcluded
+        // identifier here would overwrite those spans. `attribute`
+        // excludes only the attribute position: the object of
+        // `obj.run()` is itself a variable read and keeps this color
         "identifier" => {
             let already_scoped = node.parent().is_some_and(|p| match p.kind() {
                 "call" => p.child_by_field_name("function") == Some(node),
@@ -98,6 +109,8 @@ pub(crate) fn handle_python(node: Node, source: &[u8], spans: &mut Vec<SemanticS
                 | "typed_default_parameter"
                 | "list_splat_pattern"
                 | "dictionary_splat_pattern"
+                | "type"
+                | "generic_type"
                 | "dotted_name"
                 | "aliased_import"
                 | "decorator" => true,
@@ -211,6 +224,64 @@ mod tests {
             .filter(|s| s.start == binding.start && s.end == binding.end)
             .collect();
         assert_eq!(overlapping.len(), 1);
+    }
+
+    #[test]
+    fn python_assignment_targets_and_annotations() {
+        // regression (real report): lowercase assignment targets used to
+        // get no span at all — the assignment branch pushed only
+        // UPPER_CASE constants while the bare-identifier branch excludes
+        // every assignment-left identifier, so `doc`/`other` fell through
+        // both. Annotation types (`type > identifier`, not
+        // type_identifier) used to fall through to VARIABLE as well
+        let src = "def normalize(text: str) -> str:\n\
+                    \x20   doc = \"\"\"triple quoted 'won't close this\"\"\"\n\
+                    \x20   other = '''also fine \"nested\" here'''\n\
+                    \x20   return f\"{doc[:1]}{other[:1]}\"\n\
+                    \n\
+                    LIMIT = 100_000\n\
+                    print(normalize(\"  ok  \"), LIMIT)\n";
+        let spans = semantic_spans("python", src);
+        let at = |needle: &str, offset: usize| {
+            spans
+                .iter()
+                .find(|s| s.start == offset && &src[s.start..s.end] == needle)
+                .map(|s| s.scope)
+        };
+        // the binding sites before `=` are variables, not just the reads
+        assert_eq!(at("doc", src.find("doc =").unwrap()), Some(VARIABLE));
+        assert_eq!(at("other", src.find("other =").unwrap()), Some(VARIABLE));
+        // the reads inside the f-string interpolations stay variables
+        let fstr = src.find("{doc").unwrap() + 1;
+        assert_eq!(at("doc", fstr), Some(VARIABLE));
+        // annotations read as types, not variables
+        assert_eq!(at("str", src.find("str)").unwrap()), Some(TYPE));
+        assert_eq!(at("str", src.find("-> str").unwrap() + 3), Some(TYPE));
+        assert_eq!(at("text", src.find("text").unwrap()), Some(PARAMETER));
+        assert_eq!(at("LIMIT", src.find("LIMIT").unwrap()), Some(CONSTANT));
+        assert_eq!(
+            at("normalize", src.rfind("normalize").unwrap()),
+            Some(FUNCTION)
+        );
+    }
+
+    #[test]
+    fn python_annotated_and_chained_assignments() {
+        let src = "x: list[int] = []\nMAX: int = 9\na = b = 3\n";
+        let spans = semantic_spans("python", src);
+        let all = |needle: &str| {
+            spans
+                .iter()
+                .filter(|s| &src[s.start..s.end] == needle)
+                .map(|s| s.scope)
+                .collect::<Vec<_>>()
+        };
+        assert!(all("x").contains(&VARIABLE), "annotated binding");
+        assert!(all("list").contains(&TYPE), "generic head");
+        assert!(all("int").contains(&TYPE), "generic argument");
+        assert!(all("MAX").contains(&CONSTANT), "annotated UPPER_CASE");
+        // chained targets are nested assignments; each left gets scoped
+        assert!(all("a").contains(&VARIABLE) && all("b").contains(&VARIABLE));
     }
 
     #[test]
