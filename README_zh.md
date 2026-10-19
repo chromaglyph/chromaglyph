@@ -168,19 +168,6 @@ const file = await unified()
 - 通用模式的关键词/数字需要行内有前置边界字形，行首关键字保持无色
   （字体内置词法器的既有限制，其后内容正常着色）。
 
-## 尺寸对比（examples/hello.rs，114 字符，双主题）
-
-| 表 | 本项目 | 参考实现 FontWithASyntaxHighlighter |
-|----|-------|-------|
-| GSUB | 1.2 KB（exact 模式，仅锚定规则） | 39 KB（FSM 全状态机） |
-| COLR | 0.4 KB（空轮廓 + 层引用） | 12.7 KB（轮廓复制） |
-| CPAL | 40 B（2 调色板 × 6 slot） | 50 B（1 调色板） |
-| 规则数 | 9 | 706 |
-
-自我压力测试（`compile.rs` 本身，31535 字符，双主题）：622 条规则、7 slot、
-241 彩色副本，构建 0.14s。全局假匹配审计基于字形序列的后缀数组索引（O(n log n)
-查询），126k 字符输入下构建 0.54s，输出与逐位置扫描版字节级一致。
-
 ## 技术选型
 
 `read-fonts` / `skrifa` / `write-fonts`（fontations 系）· rustybuzz（整形

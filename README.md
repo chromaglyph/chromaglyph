@@ -194,20 +194,6 @@ per-version known limitations.
   designed limit of the in-font lexer; everything after it colors
   normally).
 
-## Size comparison (`examples/hello.rs`, 114 chars, two themes)
-
-| Table | Chromaglyph | FontWithASyntaxHighlighter |
-|-------|-------------|-----------------------------|
-| GSUB  | 1.2 KB (exact mode, anchoring rules only) | 39 KB (full FSM) |
-| COLR  | 0.4 KB (empty outlines + layer refs) | 12.7 KB (copied outlines) |
-| CPAL  | 40 B (2 palettes × 6 slots) | 50 B (1 palette) |
-| Rules | 9 | 706 |
-
-Self stress test (`compile.rs` itself, 31,535 chars, two themes): 622
-rules, 7 slots, 241 colored copies, built in 0.14s. The global false-match
-audit uses a suffix-array index over glyph sequences — O(n log n) queries,
-0.54s on 126k chars of input, byte-identical output to the naive scan.
-
 ## Tech
 
 `read-fonts` / `skrifa` / `write-fonts` (fontations) · rustybuzz (shaping
