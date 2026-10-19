@@ -151,6 +151,30 @@
   Tested against a real Google Fonts file (JetBrains Mono latin
   subset). Output remains WOFF1 — no pure-Rust WOFF2 encoder exists.
 
+- **fix: Python semantic spans** (found on a real render): lowercase
+  assignment targets (`doc = ...`) produced no semantic span at all.
+  The assignment branch pushed only UPPER_CASE constants while the
+  bare-identifier branch excludes every assignment-left identifier
+  (to keep VARIABLE off CONSTANT), so plain bindings fell through
+  both — reads were colored, the binding site wasn't. Every
+  identifier target is now scoped: VARIABLE for plain names (chained
+  `a = b = 1` and annotated `x: int = 2` targets included), CONSTANT
+  for UPPER_CASE. Annotation types (`text: str`, `-> str`, the
+  generic head `list` in `list[int]`) read as types too —
+  tree-sitter-python wraps them in `type`/`generic_type` nodes as
+  plain identifiers (not `type_identifier`), and they used to fall
+  into the variable branch.
+
+- **fix: JS semantic spans** — `let N = 42` no longer scopes as a
+  constant: tree-sitter-javascript types both `let` and `const`
+  declarations as `lexical_declaration`, so the constant-literal check
+  now also requires the declaration's keyword token to be `const`.
+
+- tree-sitter runtime and grammar crates updated to 0.27.1; the
+  semantic layer's language handlers now live in one module per
+  language (`rust`, `javascript`, `python`, `java`) — adding a
+  language is a module plus a dispatch branch.
+
 ## 0.3.0 (2026-10-18)
 
 - **font compatibility: OTF/CFF, variable TrueType, WOFF1 and `.ttc`
