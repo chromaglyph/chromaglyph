@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.1 (2026-10-20)
+
 - **shaping layer: rustybuzz → harfrust** — rustybuzz is unmaintained
   (RUSTSEC-2026-0206); the oracle and the ligature re-materializer now
   shape with harfrust, its official successor under the harfbuzz
