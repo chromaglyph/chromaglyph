@@ -21,7 +21,9 @@ tokenize+theme → compile → fontbuild → verify
 - **tokenize + theme**：[syntect](https://github.com/trishume/syntect)
   （bat 的引擎，纯 Rust fancy-regex，零 C 依赖）用真实 TextMate 语法解析，再在
   **每个主题**下把每个字符解析成具体颜色。主题支持 VS Code `.json`（含 JSONC、
-  `include` 链合并）与 `.tmTheme`；内置 `dark-plus` / `light-plus`。
+  `include` 链合并）与 `.tmTheme`；内置 shiki
+  [tm-themes](https://github.com/shikijs/textmate-grammars-themes) 主题集全部
+  64 个主题——`chromaglyph themes` 可列出。
 - **compile**：每个着色 run 生成一条链式上下文替换规则（GSUB
   ChainContext），上下文取**恰好能唯一锚定该出现位置的最小窗口**，并在全部
   块的全局范围内做假匹配审计。无法唯一区分的位置降级为不染色并记入
@@ -72,7 +74,7 @@ tokenize+theme → compile → fontbuild → verify
 ```sh
 chromaglyph build --font JetBrainsMono-Regular.ttf \
     --input examples/hello.rs \             # --lang auto 按扩展名探测
-    --theme dark-plus --theme light-plus \  # 或 my-theme.json / my.tmTheme，可重复
+    --theme dark-plus --theme light-plus \  # 任意内置主题（`chromaglyph themes` 列出）或 my-theme.json
     --ligatures \                           # 保留字体的 != -> 连字，且带高亮
     --output out.woff --css snippet.css --report report.json
 

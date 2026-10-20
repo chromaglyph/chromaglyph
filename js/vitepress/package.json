@@ -2,11 +2,12 @@
   "name": "@chromaglyph/docs",
   "private": true,
   "scripts": {
-    "docs:dev": "vitepress dev",
-    "docs:build": "vitepress build",
+    "docs:dev": "node scripts/gen-themes.mjs && vitepress dev",
+    "docs:build": "node scripts/gen-themes.mjs && vitepress build",
     "docs:preview": "vitepress preview"
   },
   "dependencies": {
-    "@chromaglyph/markdown-it": "workspace:*"
+    "@chromaglyph/markdown-it": "workspace:*",
+    "@chromaglyph/node": "workspace:*"
   }
 }

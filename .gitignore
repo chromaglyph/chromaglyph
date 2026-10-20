@@ -14,3 +14,4 @@ js/vitepress/.vitepress/cache/
 js/vitepress/.vitepress/dist/
 js/vitepress/.chromaglyph-cache/
 js/vitepress/dist/
+themes.data.json

@@ -116,6 +116,9 @@ importers:
       '@chromaglyph/markdown-it':
         specifier: workspace:*
         version: link:../markdown-it
+      '@chromaglyph/node':
+        specifier: workspace:*
+        version: link:../../crates/chromaglyph-node
 
 packages:
 

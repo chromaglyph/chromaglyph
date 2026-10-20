@@ -25,7 +25,9 @@ tokenize + theme → compile → fontbuild → verify
 - **tokenize + theme** — [syntect](https://github.com/trishume/syntect)
   parses with real TextMate grammars, then every character is resolved to a
   concrete color under each theme. Themes: VS Code `.json` (JSONC +
-  `include` chains) and `.tmTheme`; `dark-plus` / `light-plus` built in.
+  `include` chains) and `.tmTheme`; all 64 themes of shiki's
+  [tm-themes](https://github.com/shikijs/textmate-grammars-themes)
+  collection are built in — `chromaglyph themes` lists them.
 - **compile** — each colored run becomes one chained-context substitution
   rule (GSUB ChainContext), using the smallest context that uniquely
   anchors it, audited globally for false matches across all blocks.
@@ -87,7 +89,7 @@ Two modes:
 ```sh
 chromaglyph build --font JetBrainsMono-Regular.ttf \
     --input examples/hello.rs \             # --lang auto detects by extension
-    --theme dark-plus --theme light-plus \  # or my-theme.json / my.tmTheme, repeatable
+    --theme dark-plus --theme light-plus \  # any builtin (see `chromaglyph themes`), or my-theme.json
     --ligatures \                           # keep the font's != -> ligatures, highlighted
     --output out.woff --css snippet.css --report report.json
 
