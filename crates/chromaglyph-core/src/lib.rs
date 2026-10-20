@@ -498,9 +498,9 @@ mod tests {
         // var-driven palette + background with stable aliases: a site
         // overrides --chromaglyph-palette / --chromaglyph-bg (e.g. per
         // html.dark) and never the theme-derived palette names. Builtin
-        // display names are "Dark+"/"Light+" → slug "dark"/"light"
-        assert!(css.contains("--chromaglyph-dark-palette: --chromaglyph-dark;"));
-        assert!(css.contains("--chromaglyph-light-palette: --chromaglyph-light;"));
+        // names are the registry slugs
+        assert!(css.contains("--chromaglyph-dark-palette: --chromaglyph-dark-plus;"));
+        assert!(css.contains("--chromaglyph-light-palette: --chromaglyph-light-plus;"));
         assert!(css.contains(
             "font-palette: var(--chromaglyph-palette, var(--chromaglyph-dark-palette));"
         ));

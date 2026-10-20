@@ -2,10 +2,16 @@
 //! (`.tmTheme`), converted to a syntect `Theme` so scope→color resolution
 //! reuses syntect's selector engine.
 //!
+//! Builtin themes are shiki's `tm-themes` collection (VS Code theme files
+//! with `include` chains flattened upstream), vendored byte-for-byte under
+//! `themes/tm/` by `scripts/vendor-themes.mjs` and gzipped into the binary
+//! by `build.rs`. [`builtin_themes`] is the registry.
+//!
 //! Multiple themes compile into one font with one CPAL palette per theme
 //! (see `compile`'s slot model); CSS `@font-palette-values` selects between
 //! them, e.g. dark/light following `prefers-color-scheme`.
 
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use syntect::highlighting::{
@@ -15,8 +21,77 @@ use syntect::highlighting::{
 use crate::error::BuildError;
 use crate::spec::Color;
 
-const DARK_PLUS: &str = include_str!("../themes/dark_plus.json");
-const LIGHT_PLUS: &str = include_str!("../themes/light_plus.json");
+/// Dark or light, as the theme declares itself (shiki's `type` field).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemeKind {
+    Dark,
+    Light,
+}
+
+impl ThemeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThemeKind::Dark => "dark",
+            ThemeKind::Light => "light",
+        }
+    }
+}
+
+/// One vendored theme: registry metadata plus the upstream JSON, gzipped.
+#[derive(Debug)]
+pub struct BuiltinTheme {
+    /// Stable id, also the `ThemeSpec::name` (`dark-plus`, `github-light`, …).
+    pub slug: &'static str,
+    pub display_name: &'static str,
+    pub kind: ThemeKind,
+    /// SPDX id; only permissive licenses are vendored.
+    pub license: &'static str,
+    pub license_url: &'static str,
+    /// Upstream file at the pinned commit.
+    pub source: &'static str,
+    json_gz: &'static [u8],
+}
+
+impl BuiltinTheme {
+    /// The upstream theme JSON, byte-for-byte.
+    pub fn json(&self) -> Result<String, BuildError> {
+        let mut json = String::new();
+        flate2::read::GzDecoder::new(self.json_gz)
+            .read_to_string(&mut json)
+            .map_err(|e| BuildError::Theme(format!("builtin theme {}: {e}", self.slug)))?;
+        Ok(json)
+    }
+
+    pub fn load(&self) -> Result<ThemeSpec, BuildError> {
+        let mut spec = parse_vscode_json(&self.json()?, &mut IncludeFiles::Embedded)?;
+        spec.name = self.slug.to_string();
+        Ok(spec)
+    }
+}
+
+mod registry {
+    use super::{BuiltinTheme, ThemeKind};
+    include!(concat!(env!("OUT_DIR"), "/builtin_themes.rs"));
+}
+
+/// Version of the `tm-themes` package the builtins were vendored from.
+pub const TM_THEMES_VERSION: &str = registry::TM_THEMES_VERSION;
+
+/// Every builtin theme, sorted by slug.
+pub fn builtin_themes() -> &'static [BuiltinTheme] {
+    registry::BUILTINS
+}
+
+/// Look a builtin up by slug or alias (`dark`, `dark+` → `dark-plus`;
+/// `light`, `light+` → `light-plus`).
+pub fn builtin_theme(name: &str) -> Option<&'static BuiltinTheme> {
+    let slug = match name {
+        "dark" | "dark+" => "dark-plus",
+        "light" | "light+" => "light-plus",
+        other => other,
+    };
+    registry::BUILTINS.iter().find(|t| t.slug == slug)
+}
 
 /// A theme ready for highlighting: the syntect theme plus the editor-level
 /// colors VS Code keeps outside `tokenColors`.
@@ -32,23 +107,19 @@ pub struct ThemeSpec {
 }
 
 impl ThemeSpec {
-    /// Built-in themes, vendored from VS Code's `theme-defaults` (MIT).
-    /// `dark-plus` and `light-plus` form the default light/dark pair.
+    /// A builtin theme by slug or alias; `dark-plus` and `light-plus` form
+    /// the default dark/light pair. See [`builtin_themes`] for the list.
     pub fn builtin(name: &str) -> Result<ThemeSpec, BuildError> {
-        let (json, fallback_name) = match name {
-            "dark-plus" | "dark+" | "dark" => (DARK_PLUS, "Dark+"),
-            "light-plus" | "light+" | "light" => (LIGHT_PLUS, "Light+"),
-            _ => {
-                return Err(BuildError::Theme(format!(
-                    "unknown builtin theme {name:?}; available: dark-plus, light-plus"
+        match builtin_theme(name) {
+            Some(theme) => theme.load(),
+            None => {
+                let available: Vec<&str> = builtin_themes().iter().map(|t| t.slug).collect();
+                Err(BuildError::Theme(format!(
+                    "unknown builtin theme {name:?} (and no such file); builtins: {}",
+                    available.join(", ")
                 )))
             }
-        };
-        let mut spec = parse_vscode_json(json, &mut IncludeFiles::builtin())?;
-        if spec.name.is_empty() {
-            spec.name = fallback_name.to_string();
         }
-        Ok(spec)
     }
 
     /// Resolve a dotted TextMate scope's foreground via syntect's selector
@@ -130,17 +201,15 @@ fn spec_from_syntect(theme: Theme, fallback_name: String) -> ThemeSpec {
     }
 }
 
-/// How `include` references resolve: vendored builtins vs sibling files.
+/// How `include` references resolve. Builtins are flattened upstream and
+/// embedded one file each, so an include there has nothing to resolve
+/// against and is an error (the vendor script refuses such files too).
 enum IncludeFiles {
-    Builtin,
+    Embedded,
     Fs(Option<PathBuf>),
 }
 
 impl IncludeFiles {
-    fn builtin() -> Self {
-        IncludeFiles::Builtin
-    }
-
     fn fs(dir: Option<PathBuf>) -> Self {
         IncludeFiles::Fs(dir)
     }
@@ -148,13 +217,9 @@ impl IncludeFiles {
     fn read(&mut self, include: &str) -> Result<String, BuildError> {
         let file = include.rsplit('/').next().unwrap_or(include);
         match self {
-            IncludeFiles::Builtin => match file {
-                "dark_vs.json" => Ok(include_str!("../themes/dark_vs.json").to_string()),
-                "light_vs.json" => Ok(include_str!("../themes/light_vs.json").to_string()),
-                _ => Err(BuildError::Theme(format!(
-                    "builtin themes cannot include {include:?}"
-                ))),
-            },
+            IncludeFiles::Embedded => Err(BuildError::Theme(format!(
+                "builtin themes cannot include {include:?}"
+            ))),
             IncludeFiles::Fs(dir) => {
                 let dir = dir.clone().ok_or_else(|| {
                     BuildError::Theme(format!("cannot resolve include {include:?}"))
@@ -231,16 +296,22 @@ fn parse_vscode_json(jsonc: &str, includes: &mut IncludeFiles) -> Result<ThemeSp
         (color("editor.foreground"), color("editor.background"))
     }
 
-    // merge chain: [this, include-1, ..., include-n] (root first)
+    // merge chain: [this, include-1, ..., include-n] (root first). An
+    // include that cannot be read is an error, as in VS Code: silently
+    // dropping it would lose the base rules and recolor everything.
     let mut chain: Vec<VsTheme> = Vec::new();
     let mut next = Some(jsonc.to_string());
     while let Some(text) = next.take() {
         let theme: VsTheme = serde_json::from_str(&strip_jsonc(&text))
             .map_err(|e| BuildError::Theme(format!("invalid VS Code theme JSON: {e}")))?;
-        next = theme
-            .include
-            .as_deref()
-            .and_then(|inc| includes.read(inc).ok());
+        if let Some(inc) = theme.include.as_deref() {
+            if chain.len() >= 8 {
+                return Err(BuildError::Theme(format!(
+                    "include chain too deep at {inc:?} (cycle?)"
+                )));
+            }
+            next = Some(includes.read(inc)?);
+        }
         chain.push(theme);
     }
     let this = chain.remove(0);
@@ -426,17 +497,83 @@ mod tests {
     #[test]
     fn builtin_dark_plus_loads() {
         let spec = ThemeSpec::builtin("dark-plus").unwrap();
-        assert_eq!(spec.name, "Dark+");
+        assert_eq!(spec.name, "dark-plus");
         assert_eq!(spec.foreground.to_hex(), "#d4d4d4");
         assert_eq!(
             spec.background.map(|c| c.to_hex()),
             Some("#1e1e1e".to_string())
         );
         assert!(
-            spec.theme.scopes.len() > 50,
-            "include chain merged: {}",
+            spec.theme.scopes.len() > 150,
+            "flattened dark_vs + dark_plus rules: {}",
             spec.theme.scopes.len()
         );
+        assert_eq!(
+            spec.scope_color("keyword.control").map(|c| c.to_hex()),
+            Some("#c586c0".into())
+        );
+    }
+
+    #[test]
+    fn builtin_registry_and_aliases() {
+        let all = builtin_themes();
+        assert!(all.len() >= 60, "vendored {} themes", all.len());
+        assert!(
+            all.windows(2).all(|w| w[0].slug < w[1].slug),
+            "sorted by slug"
+        );
+        assert!(all
+            .iter()
+            .all(|t| !t.display_name.is_empty() && !t.source.is_empty()));
+        assert!(all
+            .iter()
+            .all(|t| matches!(t.license, "MIT" | "Apache-2.0")));
+        assert!(
+            builtin_theme("aurora-x").is_none(),
+            "GPL theme must not ship"
+        );
+        for alias in ["dark", "dark+", "dark-plus"] {
+            assert_eq!(builtin_theme(alias).unwrap().slug, "dark-plus");
+        }
+        for alias in ["light", "light+", "light-plus"] {
+            assert_eq!(builtin_theme(alias).unwrap().slug, "light-plus");
+        }
+        assert_eq!(builtin_theme("github-dark").unwrap().kind, ThemeKind::Dark);
+        assert_eq!(
+            builtin_theme("github-light").unwrap().kind,
+            ThemeKind::Light
+        );
+        assert!(!TM_THEMES_VERSION.is_empty());
+
+        let err = ThemeSpec::builtin("nope").unwrap_err().to_string();
+        assert!(err.contains("\"nope\"") && err.contains("dark-plus") && err.contains("nord"));
+    }
+
+    #[test]
+    fn builtin_json_is_upstream_verbatim() {
+        let t = builtin_theme("nord").unwrap();
+        let json = t.json().unwrap();
+        let on_disk = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("themes/tm/nord.json"),
+        )
+        .unwrap();
+        assert_eq!(json, on_disk);
+    }
+
+    #[test]
+    fn unreadable_include_is_an_error() {
+        let json = r##"{ "include": "./missing.json", "tokenColors": [] }"##;
+        let err = parse_vscode_json(
+            json,
+            &mut IncludeFiles::fs(Some(PathBuf::from("/nonexistent"))),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("missing.json"), "{err}");
+        let err = parse_vscode_json(json, &mut IncludeFiles::Embedded)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("builtin themes cannot include"), "{err}");
     }
 
     #[test]
@@ -461,14 +598,13 @@ mod tests {
                 { "scope": "string.quoted", "settings": { "foreground": "#00ff00" } }
             ]
         }"##;
-        let mut includes = IncludeFiles::builtin();
-        let spec = parse_vscode_json(json, &mut includes).unwrap();
+        let spec = parse_vscode_json(json, &mut IncludeFiles::Embedded).unwrap();
         assert_eq!(spec.name, "Test");
         assert_eq!(spec.theme.scopes.len(), 3);
     }
 
     fn parse(json: &str) -> ThemeSpec {
-        parse_vscode_json(json, &mut IncludeFiles::builtin()).unwrap()
+        parse_vscode_json(json, &mut IncludeFiles::Embedded).unwrap()
     }
 
     #[test]

@@ -20,3 +20,8 @@ flate2.workspace = true
 two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
 wuff = { version = "0.2.9", features = ["brotli"] }
 ttf2woff2.workspace = true
+
+# build.rs gzips the vendored themes (themes/tm) and generates the registry
+[build-dependencies]
+serde_json.workspace = true
+flate2.workspace = true
