@@ -1,9 +1,37 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { buildFont, buildFontSafe, clearCache } from './index.js'
+import { buildFont, buildFontSafe, clearCache, listThemes, tmThemesVersion } from './index.js'
 
 const FONT = readFileSync('../chromaglyph-core/tests/fixtures/JetBrainsMono-Regular.ttf')
+
+test('listThemes exposes the builtin registry with gallery swatches', () => {
+  const themes = listThemes()
+  assert.ok(themes.length >= 60, `vendored ${themes.length} themes`)
+  assert.match(tmThemesVersion(), /^\d+\.\d+\.\d+$/)
+  const names = themes.map((t) => t.name)
+  assert.deepEqual(names, [...names].sort(), 'registry order is sorted by slug')
+  assert.ok(!names.includes('aurora-x'), 'GPL theme does not ship')
+  const dark = themes.find((t) => t.name === 'dark-plus')
+  assert.equal(dark.type, 'dark')
+  assert.equal(dark.displayName, 'Dark Plus')
+  assert.equal(dark.license, 'MIT')
+  assert.equal(dark.background, '#1e1e1e')
+  assert.equal(dark.foreground, '#d4d4d4')
+  assert.equal(dark.swatches['keyword.control'], '#c586c0')
+  for (const t of themes) {
+    assert.ok(['dark', 'light'].includes(t.type), `${t.name}: type ${t.type}`)
+    assert.ok(t.source.startsWith('https://'), `${t.name}: source url`)
+    assert.ok(
+      t.swatches['keyword.control'] || t.swatches['string.quoted.double'],
+      `${t.name}: keywords or strings colored`,
+    )
+  }
+  // every builtin is accepted by the build
+  const out = buildFont({ font: FONT, themes: ['github-dark', 'github-light'], blocks: [], generic: 'js', verify: false })
+  assert.deepEqual(out.themes.map((t) => t.name), ['github-dark', 'github-light'])
+  assert.ok(out.css.includes('--chromaglyph-dark-palette: --chromaglyph-github-dark;'))
+})
 
 test('generic mode builds a font that highlights any text', () => {
   clearCache()

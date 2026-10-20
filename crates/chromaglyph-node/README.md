@@ -46,5 +46,12 @@ const result = buildFontSafe({
   cache directory.
 - One GSUB rule set serves every theme (CPAL palettes); switching is a
   CSS `@font-palette-values` flip.
+- `themes` takes builtin names or paths. The builtins are shiki's
+  [tm-themes](https://github.com/shikijs/textmate-grammars-themes)
+  collection (64 themes, MIT/Apache-2.0 only); `listThemes()` returns
+  the registry — `name`, `displayName`, `type` (`'dark' | 'light'`),
+  `license`, `source`, `foreground`, `background` and per-scope
+  `swatches` — enough to build a theme picker without compiling a font.
+  `tmThemesVersion()` tells which collection version is embedded.
 
 Build from source: `pnpm --filter @chromaglyph/node build` (requires Rust).

@@ -5,6 +5,7 @@
 //! ```ts
 //! buildFont(opts): BuildResult          // throws on failure
 //! buildFontSafe(opts): BuildResult|null // silent degradation for pipelines
+//! listThemes(): BuiltinThemeInfo[]      // the builtin theme registry
 //! clearCache(): void
 //! ```
 //!
@@ -398,6 +399,81 @@ pub fn cache_stats() -> CacheStats {
 #[napi]
 pub fn clear_cache() {
     memory_cache().lock().unwrap().clear();
+}
+
+#[napi(object)]
+pub struct BuiltinThemeInfo {
+    /// Slug to pass in `BuildOptions.themes` (`dark-plus`, `github-light`, …).
+    pub name: String,
+    pub display_name: String,
+    /// `'dark'` or `'light'`.
+    #[napi(js_name = "type")]
+    pub kind: String,
+    /// SPDX id; only permissive licenses ship (`MIT`, `Apache-2.0`).
+    pub license: String,
+    pub license_url: String,
+    /// Upstream theme file at the pinned commit.
+    pub source: String,
+    /// Default text color.
+    pub foreground: String,
+    /// Editor background (`null` when the theme does not define one).
+    pub background: Option<String>,
+    /// Resolved color per common TextMate scope (`keyword.control`,
+    /// `string.quoted.double`, `comment.line`, …); `null` leaves it on the
+    /// foreground. Enough for a theme gallery without building a font.
+    pub swatches: HashMap<String, Option<String>>,
+}
+
+/// Scopes a gallery swatch row shows, in display order.
+const SWATCH_SCOPES: [&str; 8] = [
+    "keyword.control",
+    "storage.type",
+    "string.quoted.double",
+    "comment.line",
+    "constant.numeric",
+    "entity.name.function",
+    "entity.name.type",
+    "variable.other",
+];
+
+#[napi]
+/// The builtin themes in registry order (sorted by slug). Loads every theme,
+/// so expect tens of milliseconds; call it at build time, not per request.
+pub fn list_themes() -> napi::Result<Vec<BuiltinThemeInfo>> {
+    chromaglyph_core::theme::builtin_themes()
+        .iter()
+        .map(|t| {
+            let spec = t
+                .load()
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
+            let swatches = SWATCH_SCOPES
+                .iter()
+                .map(|scope| {
+                    (
+                        scope.to_string(),
+                        spec.scope_color(scope).map(|c| c.to_hex()),
+                    )
+                })
+                .collect();
+            Ok(BuiltinThemeInfo {
+                name: t.slug.to_string(),
+                display_name: t.display_name.to_string(),
+                kind: t.kind.as_str().to_string(),
+                license: t.license.to_string(),
+                license_url: t.license_url.to_string(),
+                source: t.source.to_string(),
+                foreground: spec.foreground.to_hex(),
+                background: spec.background.map(|c| c.to_hex()),
+                swatches,
+            })
+        })
+        .collect()
+}
+
+#[napi]
+/// Version of shiki's `tm-themes` package the builtin themes come from.
+pub fn tm_themes_version() -> String {
+    chromaglyph_core::theme::TM_THEMES_VERSION.to_string()
 }
 
 fn materialize(hit: &Cached, hash: &str, cached: bool) -> BuildResult {
