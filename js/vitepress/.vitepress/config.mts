@@ -21,7 +21,7 @@ export default defineConfig({
       // exactly what chromaglyph eliminates (and double-highlighting fights
       // the font's palette). Hand the fence back to markdown-it's plain
       // escaping rule; coloring is done entirely by the font's COLR/CPAL.
-      ;(md.options as { highlight: unknown }).highlight = null
+      md.options.highlight = null
       md.use(chromaglyph, {
         font,
         themes: ['dark-plus', 'light-plus'],

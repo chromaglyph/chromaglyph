@@ -31,7 +31,7 @@ export default defineConfig({
     config(md) {
       // VitePress's built-in Shiki wraps tokens in colored <span>s — exactly
       // what chromaglyph eliminates. Hand the fence back to plain escaping.
-      ;(md.options as { highlight: unknown }).highlight = null
+      md.options.highlight = null
       md.use(chromaglyph, {
         font: resolve(process.cwd(), 'JetBrainsMono-Regular.ttf'),
         style: 'link', // not 'inline': see below
