@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **theme loader: VS Code compatibility fixes** — surfaced by running
+  shiki's `tm-themes` collection (65 themes) through the parser; 61
+  loaded before, 65 after, and several that loaded silently degraded.
+  `#rgb` / `#rgba` short hex now parses (vesper dropped 18 rules and
+  its `#FFF` foreground; slack-ochin lost its `#000` / `#FFF` editor
+  colors). The `colors` map tolerates non-string values (`null`,
+  arrays) the way VS Code does — the github-dark-* themes and night-owl
+  failed to load on them. The default foreground now follows VS Code's
+  order: `colors.editor.foreground`, then a scope-less `tokenColors`
+  rule (30 of the 65 themes rely on it; min-dark got `#d4d4d4` instead
+  of its `#b392f0`), then the per-type default — `#333333` for light
+  themes (shiki's `type` field, or judged from the background) instead
+  of the dark `#d4d4d4` that horizon-bright was getting on a cream
+  background. Multi-level `include` chains now merge in the right
+  priority (deepest include first); one-level chains, i.e. the
+  builtins, are unaffected. `Color::from_hex` also rejects signs and
+  non-ASCII input instead of accepting / panicking.
+
 ## 0.4.1 (2026-10-20)
 
 - **shaping layer: rustybuzz → harfrust** — rustybuzz is unmaintained

@@ -460,8 +460,28 @@ mod tests {
         let c = Color::from_hex("#569cd6").unwrap();
         assert_eq!(c.to_hex(), "#569cd6");
         assert_eq!(Color::from_hex("#569cd6ff").unwrap().alpha, 255);
+        assert_eq!(Color::from_hex("#abc").unwrap().to_hex(), "#aabbcc");
+        let short_alpha = Color::from_hex("#AbCd").unwrap();
+        assert_eq!(
+            (short_alpha.to_hex(), short_alpha.alpha),
+            ("#aabbcc".into(), 0xdd)
+        );
         assert!(Color::from_hex("#569cd").is_none());
         assert!(Color::from_hex("569cd6").is_none());
+        assert!(Color::from_hex("#ggg").is_none());
+        assert!(
+            Color::from_hex("#+a+b+c").is_none(),
+            "from_str_radix accepts a sign; we must not"
+        );
+        assert!(Color::from_hex("inherit").is_none());
+    }
+
+    #[test]
+    fn color_lightness() {
+        assert!(Color::from_hex("#ffffff").unwrap().is_light());
+        assert!(Color::from_hex("#fdf0ed").unwrap().is_light());
+        assert!(!Color::from_hex("#1e1e1e").unwrap().is_light());
+        assert!(!Color::from_hex("#002b36").unwrap().is_light());
     }
 
     #[test]

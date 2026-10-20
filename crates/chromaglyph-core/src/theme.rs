@@ -116,12 +116,12 @@ fn spec_from_syntect(theme: Theme, fallback_name: String) -> ThemeSpec {
         .clone()
         .filter(|n| !n.is_empty())
         .unwrap_or(fallback_name);
+    let background = theme.settings.background.map(|c| Color::rgb(c.r, c.g, c.b));
     let foreground = theme
         .settings
         .foreground
         .map(|c| Color::rgb(c.r, c.g, c.b))
-        .unwrap_or_else(|| Color::rgb(0xd4, 0xd4, 0xd4));
-    let background = theme.settings.background.map(|c| Color::rgb(c.r, c.g, c.b));
+        .unwrap_or_else(|| default_foreground(None, background));
     ThemeSpec {
         name,
         foreground,
@@ -175,12 +175,19 @@ fn parse_vscode_json(jsonc: &str, includes: &mut IncludeFiles) -> Result<ThemeSp
     struct VsTheme {
         #[serde(default)]
         name: Option<String>,
+        /// `"dark"` / `"light"`: not part of VS Code's file format (the
+        /// editor takes it from the extension manifest) but written into
+        /// every theme by shiki's `tm-themes` collection.
+        #[serde(default, rename = "type")]
+        theme_type: Option<String>,
         #[serde(default)]
         include: Option<String>,
         #[serde(default, rename = "tokenColors")]
         token_colors: Vec<VsTokenColor>,
+        /// Values are usually hex strings, but themes in the wild also put
+        /// `null` and arrays here and VS Code accepts them.
         #[serde(default)]
-        colors: std::collections::HashMap<String, String>,
+        colors: std::collections::HashMap<String, serde_json::Value>,
     }
     #[derive(serde::Deserialize)]
     struct VsTokenColor {
@@ -193,6 +200,8 @@ fn parse_vscode_json(jsonc: &str, includes: &mut IncludeFiles) -> Result<ThemeSp
     struct VsSettings {
         #[serde(default)]
         foreground: Option<String>,
+        #[serde(default)]
+        background: Option<String>,
     }
 
     fn scope_strings(scope: &Option<serde_json::Value>) -> Vec<String> {
@@ -212,15 +221,14 @@ fn parse_vscode_json(jsonc: &str, includes: &mut IncludeFiles) -> Result<ThemeSp
     }
 
     fn colors_of(theme: &VsTheme) -> (Option<Color>, Option<Color>) {
-        let fg = theme
-            .colors
-            .get("editor.foreground")
-            .and_then(|s| Color::from_hex(s));
-        let bg = theme
-            .colors
-            .get("editor.background")
-            .and_then(|s| Color::from_hex(s));
-        (fg, bg)
+        let color = |key: &str| {
+            theme
+                .colors
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .and_then(Color::from_hex)
+        };
+        (color("editor.foreground"), color("editor.background"))
     }
 
     // merge chain: [this, include-1, ..., include-n] (root first)
@@ -238,37 +246,41 @@ fn parse_vscode_json(jsonc: &str, includes: &mut IncludeFiles) -> Result<ThemeSp
     let this = chain.remove(0);
 
     let mut items: Vec<ThemeItem> = Vec::new();
-    // included rules first: syntect applies modifiers in order, so the
-    // including theme's (later) rules win ties, matching VS Code
-    for theme in &chain {
+    // a scope-less rule sets the editor defaults instead of styling a scope
+    let (mut rule_fg, mut rule_bg) = (None, None);
+    // deepest include first: syntect applies modifiers in order, so later
+    // rules win ties and each theme overrides what it includes, matching
+    // VS Code
+    for theme in chain.iter().rev().chain(std::iter::once(&this)) {
         for tc in &theme.token_colors {
-            push_items(
-                &mut items,
-                &scope_strings(&tc.scope),
-                &tc.settings.foreground,
-            );
+            let scopes = scope_strings(&tc.scope);
+            if scopes.iter().all(|s| s.is_empty()) {
+                let fg = tc.settings.foreground.as_deref().and_then(Color::from_hex);
+                let bg = tc.settings.background.as_deref().and_then(Color::from_hex);
+                rule_fg = fg.or(rule_fg);
+                rule_bg = bg.or(rule_bg);
+            } else {
+                push_items(&mut items, &scopes, &tc.settings.foreground);
+            }
         }
     }
-    for tc in &this.token_colors {
-        push_items(
-            &mut items,
-            &scope_strings(&tc.scope),
-            &tc.settings.foreground,
-        );
-    }
 
-    // editor colors: including theme wins
+    // editor colors: `colors.editor.*` (including theme first), then the
+    // scope-less rule, then VS Code's per-type default
     let (mut fg, mut bg) = (None, None);
-    for theme in &chain {
+    for theme in std::iter::once(&this).chain(chain.iter()) {
         let (f, b) = colors_of(theme);
-        fg = f.or(fg);
-        bg = b.or(bg);
+        fg = fg.or(f);
+        bg = bg.or(b);
     }
-    let (f, b) = colors_of(&this);
-    fg = f.or(fg);
-    bg = b.or(bg);
+    let background = bg.or(rule_bg);
+    let theme_type = std::iter::once(&this)
+        .chain(chain.iter())
+        .find_map(|t| t.theme_type.as_deref());
+    let foreground = fg
+        .or(rule_fg)
+        .unwrap_or_else(|| default_foreground(theme_type, background));
 
-    let foreground = fg.unwrap_or_else(|| Color::rgb(0xd4, 0xd4, 0xd4));
     let syntect_theme = Theme {
         name: this.name.clone().filter(|n| !n.is_empty()),
         author: None,
@@ -279,7 +291,7 @@ fn parse_vscode_json(jsonc: &str, includes: &mut IncludeFiles) -> Result<ThemeSp
                 b: foreground.blue,
                 a: 255,
             }),
-            background: bg.map(|c| SyntectColor {
+            background: background.map(|c| SyntectColor {
                 r: c.red,
                 g: c.green,
                 b: c.blue,
@@ -297,9 +309,23 @@ fn parse_vscode_json(jsonc: &str, includes: &mut IncludeFiles) -> Result<ThemeSp
     Ok(ThemeSpec {
         name,
         foreground,
-        background: bg,
+        background,
         theme: syntect_theme,
     })
+}
+
+/// VS Code's `editor.foreground` default for themes that set none: by theme
+/// type when the file says, else judged from the background.
+fn default_foreground(theme_type: Option<&str>, background: Option<Color>) -> Color {
+    let light = match theme_type {
+        Some(t) => t.eq_ignore_ascii_case("light"),
+        None => background.is_some_and(|c| c.is_light()),
+    };
+    if light {
+        Color::rgb(0x33, 0x33, 0x33)
+    } else {
+        Color::rgb(0xd4, 0xd4, 0xd4)
+    }
 }
 
 fn push_items(items: &mut Vec<ThemeItem>, scopes: &[String], foreground: &Option<String>) {
@@ -439,5 +465,110 @@ mod tests {
         let spec = parse_vscode_json(json, &mut includes).unwrap();
         assert_eq!(spec.name, "Test");
         assert_eq!(spec.theme.scopes.len(), 3);
+    }
+
+    fn parse(json: &str) -> ThemeSpec {
+        parse_vscode_json(json, &mut IncludeFiles::builtin()).unwrap()
+    }
+
+    #[test]
+    fn colors_map_tolerates_non_string_values() {
+        // github-dark-* ship an array, night-owl ships nulls; VS Code loads both
+        let spec = parse(
+            r##"{
+            "colors": {
+                "symbolIcon.constantForeground": ["#aff5b4", "#7ee787"],
+                "editor.lineHighlightBorder": null,
+                "editor.foreground": "#e1e4e8",
+                "editor.background": "#24292e"
+            },
+            "tokenColors": []
+        }"##,
+        );
+        assert_eq!(spec.foreground.to_hex(), "#e1e4e8");
+        assert_eq!(spec.background.map(|c| c.to_hex()), Some("#24292e".into()));
+    }
+
+    #[test]
+    fn short_hex_colors_apply() {
+        let spec = parse(
+            r##"{
+            "colors": { "editor.foreground": "#FFF", "editor.background": "#000" },
+            "tokenColors": [
+                { "scope": "keyword", "settings": { "foreground": "#f00" } }
+            ]
+        }"##,
+        );
+        assert_eq!(spec.foreground.to_hex(), "#ffffff");
+        assert_eq!(spec.background.map(|c| c.to_hex()), Some("#000000".into()));
+        assert_eq!(
+            spec.scope_color("keyword.control").map(|c| c.to_hex()),
+            Some("#ff0000".into())
+        );
+    }
+
+    #[test]
+    fn scopeless_rule_sets_editor_defaults() {
+        // no `colors`: the scope-less rule is the default (min-dark, gruvbox, ...)
+        let spec = parse(
+            r##"{
+            "tokenColors": [
+                { "settings": { "foreground": "#b392f0", "background": "#1f1f1f" } },
+                { "scope": "keyword", "settings": { "foreground": "#f97583" } }
+            ]
+        }"##,
+        );
+        assert_eq!(spec.foreground.to_hex(), "#b392f0");
+        assert_eq!(spec.background.map(|c| c.to_hex()), Some("#1f1f1f".into()));
+        assert_eq!(
+            spec.theme.scopes.len(),
+            1,
+            "scope-less rule is not a scope rule"
+        );
+        assert_eq!(
+            spec.scope_color("comment"),
+            None,
+            "uncolored scopes stay on the default foreground, not on a rule"
+        );
+
+        // `colors.editor.foreground` outranks the scope-less rule (slack-ochin)
+        let spec = parse(
+            r##"{
+            "colors": { "editor.foreground": "#000" },
+            "tokenColors": [ { "scope": "", "settings": { "foreground": "#002339" } } ]
+        }"##,
+        );
+        assert_eq!(spec.foreground.to_hex(), "#000000");
+    }
+
+    #[test]
+    fn default_foreground_follows_theme_type_then_background() {
+        let fg = |json: &str| parse(json).foreground.to_hex();
+        // shiki's `type` field decides when present
+        assert_eq!(
+            fg(r##"{ "type": "light", "colors": { "editor.background": "#fdf0ed" } }"##),
+            "#333333"
+        );
+        assert_eq!(
+            fg(r##"{ "type": "dark", "colors": { "editor.background": "#fafafa" } }"##),
+            "#d4d4d4"
+        );
+        // otherwise judge from the background; no background means dark
+        assert_eq!(
+            fg(r##"{ "colors": { "editor.background": "#ffffff" } }"##),
+            "#333333"
+        );
+        assert_eq!(
+            fg(r##"{ "colors": { "editor.background": "#1e1e1e" } }"##),
+            "#d4d4d4"
+        );
+        assert_eq!(fg(r##"{ "tokenColors": [] }"##), "#d4d4d4");
+    }
+
+    #[test]
+    fn builtin_light_plus_keeps_explicit_foreground() {
+        let spec = ThemeSpec::builtin("light-plus").unwrap();
+        assert_eq!(spec.foreground.to_hex(), "#000000");
+        assert_eq!(spec.background.map(|c| c.to_hex()), Some("#ffffff".into()));
     }
 }

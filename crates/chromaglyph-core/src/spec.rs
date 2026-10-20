@@ -24,30 +24,40 @@ impl Color {
         }
     }
 
-    /// `#rrggbb` or `#rrggbbaa`.
+    /// CSS hex forms: `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`.
     pub fn from_hex(hex: &str) -> Option<Self> {
         let hex = hex.strip_prefix('#')?;
-        match hex.len() {
-            6 => {
-                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                Some(Color::rgb(r, g, b))
-            }
-            8 => {
-                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
-                Some(Color {
-                    red: r,
-                    green: g,
-                    blue: b,
-                    alpha: a,
-                })
-            }
-            _ => None,
+        if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
         }
+        let wide = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+        let short = |i: usize| {
+            u8::from_str_radix(&hex[i..i + 1], 16)
+                .ok()
+                .map(|d| d * 0x11)
+        };
+        let (red, green, blue, alpha) = match hex.len() {
+            3 => (short(0)?, short(1)?, short(2)?, 255),
+            4 => (short(0)?, short(1)?, short(2)?, short(3)?),
+            6 => (wide(0)?, wide(2)?, wide(4)?, 255),
+            8 => (wide(0)?, wide(2)?, wide(4)?, wide(6)?),
+            _ => return None,
+        };
+        Some(Color {
+            red,
+            green,
+            blue,
+            alpha,
+        })
+    }
+
+    /// Perceived brightness above mid-gray; decides which VS Code default
+    /// foreground a theme without an explicit one gets.
+    pub fn is_light(&self) -> bool {
+        let luma = 0.299 * f32::from(self.red)
+            + 0.587 * f32::from(self.green)
+            + 0.114 * f32::from(self.blue);
+        luma > 127.5
     }
 
     pub fn to_hex(&self) -> String {
