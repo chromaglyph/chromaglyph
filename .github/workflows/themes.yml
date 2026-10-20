@@ -1,0 +1,47 @@
+name: builtin themes
+
+# The builtin theme set is shiki's tm-themes collection, vendored
+# byte-for-byte into crates/chromaglyph-core/themes/tm by
+# scripts/vendor-themes.mjs from the pinned root devDependency. This job
+# keeps the vendored copy and the lockfile in lockstep (re-run the script,
+# fail on a dirty tree) and runs the loader over every vendored theme.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  themes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Vendored themes match the pinned tm-themes
+        run: |
+          node scripts/vendor-themes.mjs
+          git diff --exit-code --stat -- crates/chromaglyph-core/themes \
+            || { echo "::error::crates/chromaglyph-core/themes is out of date — run node scripts/vendor-themes.mjs and commit"; exit 1; }
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: themes
+
+      - name: Every builtin theme loads and highlights
+        run: cargo test -p chromaglyph-core --test themes
