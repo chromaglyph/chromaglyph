@@ -1,10 +1,11 @@
-//! chromaglyph CLI: `build` and `verify`.
+//! chromaglyph CLI: `build`, `verify` and `themes`.
 //!
 //!   chromaglyph build --font JetBrainsMono-Regular.ttf --lang rust \
 //!       --input code.rs --output out.woff \
 //!       [--theme dark-plus --theme light-plus | --theme my-theme.json ...] \
 //!       [--css snippet.css] [--report r.json] [--no-verify]
 //!   chromaglyph verify --font out.woff --input code.rs [--lang rust] [--theme ...]
+//!   chromaglyph themes [--json]
 //!
 //! The output container follows --output's extension: .ttf raw sfnt,
 //! .woff2 WOFF2, anything else WOFF1.
@@ -13,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use chromaglyph_core::theme::load_theme_arg;
+use chromaglyph_core::theme::{builtin_themes, load_theme_arg, TM_THEMES_VERSION};
 use chromaglyph_core::{build, verify, Block, BuildError, BuildInput, ThemeSpec};
 use clap::{Parser, Subcommand};
 
@@ -56,9 +57,10 @@ enum Command {
         /// `html`, `css`
         #[arg(long, conflicts_with = "input")]
         generic: Option<String>,
-        /// Theme: builtin name (`dark-plus`, `light-plus`) or a path to a
-        /// VS Code .json / TextMate .tmTheme file. Repeat for multiple
-        /// palettes; the first is the default.
+        /// Theme: builtin name (`dark-plus`, `github-light`, … — see
+        /// `chromaglyph themes`) or a path to a VS Code .json / TextMate
+        /// .tmTheme file. Repeat for multiple palettes; the first is the
+        /// default.
         #[arg(long = "theme", default_values_t = default_themes())]
         themes: Vec<String>,
         /// Output font path; .ttf writes raw sfnt, .woff2 wraps WOFF2
@@ -102,6 +104,12 @@ enum Command {
         #[arg(long = "theme", default_values_t = default_themes())]
         themes: Vec<String>,
     },
+    /// List the builtin themes (slug, dark/light, license, upstream).
+    Themes {
+        /// Machine-readable JSON instead of a table
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn default_themes() -> Vec<String> {
@@ -144,6 +152,7 @@ fn main() -> ExitCode {
             lang,
             themes,
         } => cmd_verify(&font, &input, &lang, &themes),
+        Command::Themes { json } => cmd_themes(json),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -190,6 +199,47 @@ fn load_themes(args: &[String]) -> Result<Vec<ThemeSpec>, BuildError> {
         themes.push(spec);
     }
     Ok(themes)
+}
+
+fn cmd_themes(json: bool) -> Result<(), BuildError> {
+    let themes = builtin_themes();
+    if json {
+        let list: Vec<serde_json::Value> = themes
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "name": t.slug,
+                    "displayName": t.display_name,
+                    "type": t.kind.as_str(),
+                    "license": t.license,
+                    "licenseUrl": t.license_url,
+                    "source": t.source,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&list).unwrap_or_default()
+        );
+        return Ok(());
+    }
+    let slug_width = themes.iter().map(|t| t.slug.len()).max().unwrap_or(0);
+    let license_width = themes.iter().map(|t| t.license.len()).max().unwrap_or(0);
+    for t in themes {
+        println!(
+            "{:slug_width$}  {:5}  {:license_width$}  {}",
+            t.slug,
+            t.kind.as_str(),
+            t.license,
+            t.display_name
+        );
+    }
+    println!(
+        "\n{} builtin themes (tm-themes {TM_THEMES_VERSION}); `dark`/`light` alias dark-plus/light-plus.\n\
+         --theme also takes a path to a VS Code .json or TextMate .tmTheme file.",
+        themes.len()
+    );
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
