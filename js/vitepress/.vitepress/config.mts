@@ -11,8 +11,9 @@ const font = resolve(
 
 export default defineConfig({
   title: 'Chromaglyph',
-  description:
-    'Syntax highlighting compiled into a font: the DOM stays byte-identical, highlighting happens inside glyph substitutions, copy & paste stays clean.',
+  // GitHub Pages serves the project site under /chromaglyph/; local dev and
+  // any root-hosted deployment leave this unset
+  base: process.env.VITEPRESS_BASE ?? '/',
   appearance: true,
   cleanUrls: true,
   markdown: {
@@ -37,20 +38,57 @@ export default defineConfig({
       })
     },
   },
-  themeConfig: {
-    nav: [
-      { text: 'Guide', link: '/guide/how-it-works', activeMatch: '/guide/' },
-    ],
-    sidebar: [
-      {
-        text: 'Guide',
-        items: [
-          { text: 'How it works', link: '/guide/how-it-works' },
-          { text: 'Languages', link: '/guide/languages' },
-          { text: 'VitePress integration', link: '/guide/integration' },
+  locales: {
+    root: {
+      label: 'English',
+      lang: 'en-US',
+      description:
+        'Syntax highlighting compiled into a font: the DOM stays plain text, colors live in the glyphs, copy & paste stays clean.',
+      themeConfig: {
+        nav: [{ text: 'Guide', link: '/guide/how-it-works', activeMatch: '/guide/' }],
+        sidebar: [
+          {
+            text: 'Guide',
+            items: [
+              { text: 'How it works', link: '/guide/how-it-works' },
+              { text: 'Languages', link: '/guide/languages' },
+              { text: 'VitePress integration', link: '/guide/integration' },
+            ],
+          },
         ],
       },
-    ],
+    },
+    zh: {
+      label: '简体中文',
+      lang: 'zh-CN',
+      link: '/zh/',
+      description:
+        '把语法高亮编译进字体：DOM 里只有纯文本，颜色住在字形里，复制即干净。',
+      themeConfig: {
+        nav: [{ text: '指南', link: '/zh/guide/how-it-works', activeMatch: '/zh/guide/' }],
+        sidebar: [
+          {
+            text: '指南',
+            items: [
+              { text: '工作原理', link: '/zh/guide/how-it-works' },
+              { text: '支持的语言', link: '/zh/guide/languages' },
+              { text: '接入 VitePress', link: '/zh/guide/integration' },
+            ],
+          },
+        ],
+        outline: { label: '本页目录' },
+        docFooter: { prev: '上一页', next: '下一页' },
+        darkModeSwitchLabel: '外观',
+        lightModeSwitchTitle: '切换到浅色模式',
+        darkModeSwitchTitle: '切换到深色模式',
+        sidebarMenuLabel: '菜单',
+        returnToTopLabel: '回到顶部',
+        langMenuLabel: '切换语言',
+      },
+    },
+  },
+  themeConfig: {
+    logo: '/logo.svg',
     socialLinks: [
       { icon: 'github', link: 'https://github.com/chromaglyph/chromaglyph' },
     ],

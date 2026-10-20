@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Chromaglyph
   text: Syntax highlighting, compiled into a font
-  tagline: The code in the DOM stays byte-identical — all highlighting happens inside glyph substitutions. No span soup, clean copy & paste.
+  tagline: The DOM holds plain text; the colors live in the glyphs. No spans, clean copy & paste.
   actions:
     - theme: brand
       text: How it works
@@ -18,20 +18,20 @@ hero:
 
 features:
   - icon: 🎨
-    title: Zero-span highlighting
-    details: Given a static TTF, themes and known code blocks, produce a color OpenType font. Rules depend only on slots, so one GSUB serves every theme.
+    title: Zero spans
+    details: A TTF, a theme and your code blocks go in; one color OpenType font comes out. The HTML stays a plain text block.
   - icon: 🌗
-    title: One font, many palettes
-    details: Multiple themes = one font with multiple CPAL palettes. Switching appearance is a single CSS font-palette flip with zero reflow (this site's toggle is wired up).
+    title: One font, every theme
+    details: Each theme is a palette inside the same font. Dark/light is a single CSS font-palette flip with zero reflow — try the toggle.
   - icon: 📋
-    title: Copy & paste stays clean
-    details: Try copying the block below — or any block on this site. What you paste is plain code text, not a single extra tag or style.
+    title: Clean copy & paste
+    details: Copy any block on this site. You get code, not markup.
   - icon: 🛡️
-    title: Builds never fail
-    details: Occurrences that cannot be uniquely anchored degrade to uncolored and land in report.warnings; every JS-side failure silently falls back to normal rendering.
+    title: Never breaks a build
+    details: Spots that cannot be colored safely stay plain and are reported; any failure falls back to normal rendering.
 ---
 
-This site is itself a real chromaglyph deployment: the highlighting of the Rust block below does not live in the DOM — view source and you will find only a `` <pre> `` and plain text.
+This site is a real deployment. View source on the block below: one `<pre>`, plain text.
 
 ```rust
 /// A slot = one deduplicated per-theme color vector.

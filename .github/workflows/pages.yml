@@ -1,0 +1,76 @@
+name: docs
+
+# Builds the VitePress site (EN/zh) and publishes it to GitHub Pages.
+# The site is itself a chromaglyph deployment: the markdown-it plugin
+# compiles every fenced block into the font at build time, which needs
+# the native @chromaglyph/node binding (hence the Rust toolchain).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'js/vitepress/**'
+      - 'js/markdown-it/**'
+      - 'crates/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: docs
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the native node binding
+        run: pnpm build:native
+
+      - name: Build the site
+        run: pnpm --filter @chromaglyph/docs docs:build
+        env:
+          # the project site serves under /chromaglyph/; local dev and dev
+          # previews leave this unset
+          VITEPRESS_BASE: /chromaglyph/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: js/vitepress/.vitepress/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
