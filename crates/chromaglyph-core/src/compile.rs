@@ -133,8 +133,13 @@ pub struct Rule {
     pub input: Vec<u16>,
     /// Lookahead classes, innermost (rightmost of token) first.
     pub lookahead: Vec<u16>,
-    /// Slot index substituted onto every input position.
-    pub pal: u16,
+    /// Slot index substituted onto every input position. `None` emits a
+    /// zero-record rule: the shaper treats a match as applied without
+    /// substituting anything, which blocks every later rule of the same
+    /// rule set at that position — the compiled form of AFDKO's
+    /// `ignore sub` (the negative-context idiom the reference
+    /// FontWithASyntaxHighlighter uses for word-boundary guards).
+    pub pal: Option<u16>,
 }
 
 /// Everything the font builder and the verifier need to know about the plan:
@@ -148,6 +153,15 @@ pub struct GlyphPlan {
     /// glyph id -> class id (base glyphs and their alt copies share a class).
     pub class_of: HashMap<u16, u16>,
     pub rules: Vec<Rule>,
+    /// `(merged class id, member classes)`: the chain subtables' backtrack
+    /// and lookahead ClassDefs collapse every glyph of the member classes
+    /// into the one id (`None` = the three ClassDefs are identical).
+    /// Generic mode merges the word-ish letter/identifier classes so a
+    /// single backtrack entry expresses "after any word char" — the
+    /// negative-context guards need it without exploding into one rule
+    /// per (keyword × word class). The input ClassDef never merges:
+    /// rule sets stay keyed on the exact first class.
+    pub context_merge: Option<(u16, std::collections::HashSet<u16>)>,
     /// Ligature-restore rules (run before `rules` inside `calt`).
     pub lig_rules: Vec<LigRule>,
     /// Deduplicated substitution sites the ligature rules reference.
@@ -580,7 +594,15 @@ pub fn compile(
             let unresolvable = segments(s, e).any(|(ss, se)| {
                 let cands = candidates(&matcher, &mut cand_cache, ss, se);
                 build_rule(
-                    &rseq, &cells, &units, &unit_at, &class_of, ss, se, pal, &cands,
+                    &rseq,
+                    &cells,
+                    &units,
+                    &unit_at,
+                    &class_of,
+                    ss,
+                    se,
+                    Some(pal),
+                    &cands,
                 )
                 .is_none()
             });
@@ -618,7 +640,15 @@ pub fn compile(
         for (ss, se) in segments(s, e) {
             let cands = candidates(&matcher, &mut cand_cache, ss, se);
             if let Some(rule) = build_rule(
-                &rseq, &cells, &units, &unit_at, &class_of, ss, se, pal, &cands,
+                &rseq,
+                &cells,
+                &units,
+                &unit_at,
+                &class_of,
+                ss,
+                se,
+                Some(pal),
+                &cands,
             ) {
                 rules.push(rule);
             }
@@ -682,6 +712,9 @@ pub fn compile(
         alt_glyphs,
         class_of,
         rules,
+        // exact mode: every context references a precise glyph class, so
+        // the chain subtables keep one shared ClassDef
+        context_merge: None,
         lig_rules,
         lig_sites,
         units,
@@ -1023,7 +1056,7 @@ fn build_rule(
     class_of: &HashMap<u16, u16>,
     s: usize,
     e: usize,
-    pal: u16,
+    pal: Option<u16>,
     cands: &[u32],
 ) -> Option<Rule> {
     let m = e - s;
@@ -1045,7 +1078,20 @@ fn build_rule(
     let mut r = 0usize;
     let mut grow_left = true;
     loop {
-        if audit(rseq, cells, units, unit_at, s, e, pal, l, r, cands).is_some() {
+        if audit(
+            rseq,
+            cells,
+            units,
+            unit_at,
+            s,
+            e,
+            pal.expect("colored occurrence"),
+            l,
+            r,
+            cands,
+        )
+        .is_some()
+        {
             let can_l = l < max_l && l + r < budget;
             let can_r = r < max_r && l + r < budget;
             if can_l && (grow_left || !can_r) {

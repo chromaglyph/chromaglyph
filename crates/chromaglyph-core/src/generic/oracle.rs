@@ -25,6 +25,23 @@ pub fn sample_texts(spec: &LanguageSpec) -> Vec<String> {
         samples.push(format!("{a}{a} {a}x x{a} _{a} {a}_ {b}{a} a {a} b"));
         samples.push(format!("{a}\n{b} {a}{b}\n{a} at_line_start\nplain {a}"));
     }
+    // a keyword that PREFIXES another (`as` / `async`): the shorter one's
+    // continuation guard must not poison the longer one's rule at the
+    // same position, and the longer one's guard must keep the shorter
+    // inside a longer word plain
+    for (i, &short) in words.iter().enumerate() {
+        for &long in words.iter().skip(i + 1) {
+            let (short, long) = if long.len() > short.len() {
+                (short, long)
+            } else {
+                (long, short)
+            };
+            if long.starts_with(short) && long.len() > short.len() {
+                samples.push(format!("{long} {short} {long}x x{short} \\{long}"));
+                break;
+            }
+        }
+    }
     // delimiter soup: quote runs and every opener/close adjacency
     let mut soup = String::new();
     for s in spec.strings {

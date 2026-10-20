@@ -450,6 +450,25 @@ pub fn synthesize(
             v.push(id);
         }
     }
+    // letter carriers of the value regime: word-ish glyphs riding in a
+    // value keep their own state class (distinct from the space/colon
+    // carriers), so a keyword/number rule with an empty backtrack can
+    // tell a mid-value word (`zmedia`) from a word start (`x: media`) —
+    // the guard substitutes on the letter-carrier class only
+    let c_val_ident: Vec<u16> = (0..spec.blocks.len())
+        .map(|_| {
+            let id = next_class;
+            next_class += 1;
+            id
+        })
+        .collect();
+    // the merged context class: backtrack/lookahead ClassDefs collapse
+    // every word-ish letter class into this one id, so a guard rule says
+    // "after any word char" with a single entry instead of one rule per
+    // (keyword × word class). Digits stay their own class — the number
+    // rules key on "digit follows" exactly
+    let c_wordish = next_class;
+    next_class += 1;
     let c_num_state = next_class;
     next_class += 1;
     let c_end_state = next_class;
@@ -576,8 +595,8 @@ pub fn synthesize(
             if let Some(gid) = char_gid(mappings, c) {
                 let class = if group.value && !spec.blocks.is_empty() {
                     // value-position keywords keep the value regime
-                    // alive through their own glyphs
-                    block_val_state[0]
+                    // alive through their own glyphs (as letter carriers)
+                    c_val_ident[0]
                 } else {
                     class_of[&gid]
                 };
@@ -865,12 +884,19 @@ pub fn synthesize(
         for &gid in &gids {
             let class = class_of[&gid];
             if class != c_notdef && class != c_nl {
+                // word-ish carriers are letter carriers (their own class);
+                // everything else rides as an ordinary value carrier
+                let carrier = if wordish_classes.contains(&class) {
+                    c_val_ident[b]
+                } else {
+                    block_val_state[b]
+                };
                 push_alt(
                     &mut next_new,
                     &mut alt_glyphs,
                     gid,
                     layout.block_val[b],
-                    block_val_state[b],
+                    carrier,
                     &mut class_of,
                 );
             }
@@ -944,7 +970,7 @@ pub fn synthesize(
             backtrack: vec![state],
             input: vec![class],
             lookahead,
-            pal,
+            pal: Some(pal),
         });
     }
 
@@ -962,7 +988,7 @@ pub fn synthesize(
             backtrack: vec![span_state[j]],
             input,
             lookahead: vec![],
-            pal: layout.span_close[j],
+            pal: Some(layout.span_close[j]),
         });
     }
     for (k, s) in spec.strings.iter().enumerate() {
@@ -973,7 +999,7 @@ pub fn synthesize(
             backtrack: vec![str_state[k]],
             input: vec![class],
             lookahead: vec![],
-            pal: layout.str_close[k],
+            pal: Some(layout.str_close[k]),
         });
     }
     // markup tag exits: `>` / `/>` from the name, attr and value states
@@ -995,14 +1021,14 @@ pub fn synthesize(
                         backtrack: vec![state],
                         input,
                         lookahead: vec![],
-                        pal: layout.tag_close[t],
+                        pal: Some(layout.tag_close[t]),
                     });
                 }
                 terminators.entry(gt).or_default().push(Rule {
                     backtrack: vec![state],
                     input: vec![gt],
                     lookahead: vec![],
-                    pal: layout.tag_close[t],
+                    pal: Some(layout.tag_close[t]),
                 });
             }
         }
@@ -1014,7 +1040,7 @@ pub fn synthesize(
                 backtrack: vec![tag_vstr_state[t][q]],
                 input: vec![class],
                 lookahead: vec![],
-                pal: layout.tag_attr_plain[t],
+                pal: Some(layout.tag_attr_plain[t]),
             });
         }
         if let Some(&lt) = tag.open.chars().next().and_then(|c| char_class.get(&c)) {
@@ -1023,7 +1049,7 @@ pub fn synthesize(
                     backtrack: vec![state],
                     input: vec![lt],
                     lookahead: vec![C_IDENT],
-                    pal: layout.tag_name_plain[t],
+                    pal: Some(layout.tag_name_plain[t]),
                 });
             }
         }
@@ -1043,7 +1069,7 @@ pub fn synthesize(
             backtrack: vec![],
             input,
             lookahead: vec![],
-            pal: layout.span_open[j],
+            pal: Some(layout.span_open[j]),
         });
     }
     for (k, s) in spec.strings.iter().enumerate() {
@@ -1054,7 +1080,7 @@ pub fn synthesize(
             backtrack: vec![],
             input: vec![class],
             lookahead: vec![],
-            pal: layout.str_open[k],
+            pal: Some(layout.str_open[k]),
         });
     }
     // markup tag openings: `<` + identifier lookahead (a lone `<` is
@@ -1068,7 +1094,7 @@ pub fn synthesize(
             backtrack: vec![],
             input: vec![lt],
             lookahead: vec![C_IDENT],
-            pal: layout.tag_name_plain[t],
+            pal: Some(layout.tag_name_plain[t]),
         });
         if let Some(&sl) = tag
             .self_close
@@ -1082,7 +1108,7 @@ pub fn synthesize(
                     backtrack: vec![],
                     input: vec![lt, sl],
                     lookahead: vec![C_IDENT],
-                    pal: layout.tag_name_plain[t],
+                    pal: Some(layout.tag_name_plain[t]),
                 });
             }
         }
@@ -1125,13 +1151,13 @@ pub fn synthesize(
             backtrack: vec![str_state[k]],
             input,
             lookahead: vec![],
-            pal: layout.interp_open[k],
+            pal: Some(layout.interp_open[k]),
         });
         interp_resume.entry(close_cls).or_default().push(Rule {
             backtrack: vec![interp_state[k]],
             input: vec![close_cls],
             lookahead: vec![],
-            pal: layout.str_body[k],
+            pal: Some(layout.str_body[k]),
         });
     }
     for rules in interp_openers.values_mut() {
@@ -1211,6 +1237,27 @@ pub fn synthesize(
     sel_anchor.sort_unstable();
     sel_anchor.dedup();
 
+    // keywords longest-first, shared by every class's rule set: a longer
+    // keyword sharing a first letter with a shorter one (`async` / `as`)
+    // must get its rule before the shorter one's continuation guard,
+    // which blocks the rest of the rule set at that position
+    let mut kw_longest_first: Vec<(usize, &str)> = spec
+        .keywords
+        .iter()
+        .enumerate()
+        .flat_map(|(g, group)| group.words.iter().map(move |&w| (g, w)))
+        .collect();
+    kw_longest_first.sort_by_key(|&(_, w)| std::cmp::Reverse(w.chars().count()));
+
+    // every class a word-ish glyph may carry in a backtrack/lookahead
+    // window: the merged word class, plain digits, and the (unmerged)
+    // keyword-letter classes of embedded digits
+    let word_ctx_classes = || {
+        let mut v = vec![c_wordish, c_digit];
+        v.extend(digit_letter_classes.iter().copied());
+        v
+    };
+
     for &class in &present {
         if let Some(rules) = terminators.get(&class) {
             by_class
@@ -1250,7 +1297,7 @@ pub fn synthesize(
                         backtrack: vec![str_state[k]],
                         input: vec![c_esc, x],
                         lookahead: vec![],
-                        pal: layout.str_body[k],
+                        pal: Some(layout.str_body[k]),
                     });
                 }
             }
@@ -1332,7 +1379,7 @@ pub fn synthesize(
                     backtrack: vec![tag_attr_state[t]],
                     input: vec![class],
                     lookahead: vec![],
-                    pal: layout.tag_val_plain[t],
+                    pal: Some(layout.tag_val_plain[t]),
                 });
             }
             if !wordish {
@@ -1340,13 +1387,13 @@ pub fn synthesize(
                     backtrack: vec![tag_name_state[t]],
                     input: vec![class],
                     lookahead: vec![],
-                    pal: layout.tag_attr_plain[t],
+                    pal: Some(layout.tag_attr_plain[t]),
                 });
                 by_class.entry(class).or_default().push(Rule {
                     backtrack: vec![tag_attr_state[t]],
                     input: vec![class],
                     lookahead: vec![],
-                    pal: layout.tag_attr_plain[t],
+                    pal: Some(layout.tag_attr_plain[t]),
                 });
                 if let Some(q) = tag
                     .value_quotes
@@ -1358,14 +1405,14 @@ pub fn synthesize(
                         backtrack: vec![tag_val_state[t]],
                         input: vec![class],
                         lookahead: vec![],
-                        pal: layout.tag_valstr[t][q],
+                        pal: Some(layout.tag_valstr[t][q]),
                     });
                 } else {
                     by_class.entry(class).or_default().push(Rule {
                         backtrack: vec![tag_val_state[t]],
                         input: vec![class],
                         lookahead: vec![],
-                        pal: layout.tag_attr_plain[t],
+                        pal: Some(layout.tag_attr_plain[t]),
                     });
                 }
             }
@@ -1384,8 +1431,13 @@ pub fn synthesize(
         }
         if spec.numbers && class == c_dot {
             // `.` continues a number only when a digit follows: 3.14 yes,
-            // 1.max stops before the dot
-            prop(&mut by_class, class, c_num_state, layout.num, vec![c_digit]);
+            // 1.max stops before the dot. The lookahead enumerates every
+            // class a digit GLYPH carries — plain digits share c_digit,
+            // but digits inside keywords (`char16_t`'s 1) carry their
+            // keyword letter classes (unmerged, exactly for this)
+            for la in std::iter::once(c_digit).chain(digit_letter_classes.iter().copied()) {
+                prop(&mut by_class, class, c_num_state, layout.num, vec![la]);
+            }
         }
         if num_body(class) {
             prop(&mut by_class, class, c_num_state, layout.num, vec![]);
@@ -1396,65 +1448,134 @@ pub fn synthesize(
                 .or_default()
                 .extend(rules.iter().cloned());
         }
-        // a number opens after a word boundary (or at a line start) —
-        // including on keyword-embedded digits' classes (char8_t's 8)
-        if spec.numbers && (class == c_digit || digit_letter_classes.contains(&class)) {
-            for &bt in &boundaries {
+        // ---- negative-context guards + empty-context rules --------------
+        // The keyword and number rules below carry EMPTY backtrack and
+        // lookahead sequences. An empty context is not "no context": it
+        // matches unconditionally, including at a run start — and a
+        // browser shapes every source line of a `pre` as its own run, so
+        // a column-0 keyword has no glyph behind it that a boundary
+        // backtrack could ever see. The price is that an empty backtrack
+        // also matches mid-word, which no boundary enumeration can
+        // exclude; the guards below (earlier in the same rule set — the
+        // shaper stops at the first match) supply those negatives, the
+        // compiled form of AFDKO's `ignore sub` idiom.
+        let digit_rule_class = class == c_digit || digit_letter_classes.contains(&class);
+
+        // selector-word continuation, before any keyword rule: a
+        // mid-word selector letter is consumed here, so no keyword can
+        // fire inside a selector word
+        for (b, _block) in spec.blocks.iter().enumerate() {
+            if wordish_classes.contains(&class) {
+                prop(
+                    &mut by_class,
+                    class,
+                    block_sel_state[b],
+                    layout.block_sel[b],
+                    vec![],
+                );
+            }
+        }
+        // value regime, mid-word: after a letter carrier the glyph rides
+        // on as a carrier (never a keyword or number)
+        for (b, _block) in spec.blocks.iter().enumerate() {
+            if wordish_classes.contains(&class) {
+                by_class.entry(class).or_default().push(Rule {
+                    backtrack: vec![c_val_ident[b]],
+                    input: vec![class],
+                    lookahead: vec![],
+                    pal: Some(layout.block_val[b]),
+                });
+            }
+        }
+        // non-block languages: after any word char (the merged class) or
+        // a bare digit, the glyph starts no keyword and no number. The
+        // zero-record rule matches and blocks without substituting
+        let kw_starts = spec.keywords.iter().any(|g| {
+            g.words
+                .iter()
+                .any(|w| w.chars().next().and_then(|c| letter_class.get(&c)) == Some(&class))
+        });
+        if spec.blocks.is_empty() && (kw_starts || digit_rule_class) {
+            for bt in word_ctx_classes() {
                 by_class.entry(class).or_default().push(Rule {
                     backtrack: vec![bt],
                     input: vec![class],
                     lookahead: vec![],
-                    pal: layout.num,
+                    pal: None,
                 });
             }
         }
-        // keywords, attached to the rule set of their first letter's
-        // class: four boundary combinations (plain punctuation / newline
-        // on each side)
-        for (g, group) in spec.keywords.iter().enumerate() {
-            for kw in group.words {
-                let Some(first) = kw.chars().next() else {
-                    continue;
-                };
-                if letter_class.get(&first) != Some(&class) {
-                    continue;
-                }
-                let input: Vec<u16> = kw.chars().map(|c| letter_class[&c]).collect();
-                // a followed_by keyword (CSS property names) fires only
-                // when its char follows; ordinary keywords fire at any
-                // boundary on both sides
-                let las: Vec<Vec<u16>> =
-                    match group.followed_by.and_then(|c| char_class.get(&c).copied()) {
-                        Some(cls) => vec![vec![cls]],
-                        None if spec.blocks.is_empty() => vec![vec![C_NOTWORD]],
-                        // block languages: the next glyph may be a plain
-                        // `;`/`{` (its own class) or a carried space (the
-                        // value state) — the whole boundary set
-                        None => boundaries.iter().map(|&b| vec![b]).collect(),
-                    };
-                // a followed_by word never sits in the value regime; the
-                // value state is an anchor only for value-position
-                // keywords (`!important`, `inherit`)
-                let bts: Vec<u16> = if group.followed_by.is_some() {
-                    boundaries
-                        .iter()
-                        .copied()
-                        .filter(|&c| !block_val_state.contains(&c))
-                        .collect()
-                } else {
-                    boundaries.clone()
-                };
-                for &bt in &bts {
-                    for la in &las {
+        // a word that CONTINUES past a keyword never colors it: guard on
+        // a word-ish lookahead, per non-followed keyword (a followed_by
+        // keyword's exact-char lookahead is its own guard). Keywords
+        // order LONGEST FIRST with the coloring rule directly after its
+        // guard: `as` must not poison `async` at the same position —
+        // the guard matches `as` + word-ish and blocks everything later
+        // in this rule set, so `async`'s rule has to come first
+        for &(g, kw) in &kw_longest_first {
+            let group = &spec.keywords[g];
+            let Some(first) = kw.chars().next() else {
+                continue;
+            };
+            if letter_class.get(&first) != Some(&class) {
+                continue;
+            }
+            let input: Vec<u16> = kw.chars().map(|c| letter_class[&c]).collect();
+            // the continuation guard is for plain groups only — a
+            // followed_by keyword's exact-char lookahead is its own guard
+            if group.followed_by.is_none() {
+                for la in word_ctx_classes() {
+                    if spec.blocks.is_empty() {
                         by_class.entry(class).or_default().push(Rule {
-                            backtrack: vec![bt],
+                            backtrack: vec![],
                             input: input.clone(),
-                            lookahead: la.clone(),
-                            pal: layout.kw[g],
+                            lookahead: vec![la],
+                            pal: None,
+                        });
+                    } else {
+                        // block languages: the substituted palette must
+                        // keep the regime alive — carriers inside a
+                        // value, selector colors outside it
+                        for bt in [block_val_state[0], c_val_ident[0]] {
+                            by_class.entry(class).or_default().push(Rule {
+                                backtrack: vec![bt],
+                                input: input.clone(),
+                                lookahead: vec![la],
+                                pal: Some(layout.block_val[0]),
+                            });
+                        }
+                        by_class.entry(class).or_default().push(Rule {
+                            backtrack: vec![],
+                            input: input.clone(),
+                            lookahead: vec![la],
+                            pal: Some(layout.block_sel[0]),
                         });
                     }
                 }
             }
+            // the keyword itself: empty backtrack (a run start is an
+            // anchor), empty lookahead for plain groups (a run end is a
+            // boundary), the followed char for followed_by groups
+            let la: Vec<u16> = match group.followed_by.and_then(|c| char_class.get(&c)) {
+                Some(&cls) => vec![cls],
+                None => Vec::new(),
+            };
+            by_class.entry(class).or_default().push(Rule {
+                backtrack: Vec::new(),
+                input,
+                lookahead: la,
+                pal: Some(layout.kw[g]),
+            });
+        }
+        // numbers open at a run start like keywords — including on the
+        // keyword-embedded digits' classes (char8_t's 8)
+        if spec.numbers && digit_rule_class {
+            by_class.entry(class).or_default().push(Rule {
+                backtrack: Vec::new(),
+                input: vec![class],
+                lookahead: Vec::new(),
+                pal: Some(layout.num),
+            });
         }
         // property-sheet (CSS) blocks — after keywords so a property
         // word (keyword + colon lookahead) beats the selector open at
@@ -1467,22 +1588,15 @@ pub fn synthesize(
                 .filter_map(|c| char_class.get(c).copied())
                 .collect();
             let wordish = wordish_classes.contains(&class);
+            // the open after an anchor — plain boundary, a value exit,
+            // or an anchor char
             if wordish {
-                // word continuation, then the open after an anchor —
-                // plain boundary, a value exit, or an anchor char
-                prop(
-                    &mut by_class,
-                    class,
-                    block_sel_state[b],
-                    layout.block_sel[b],
-                    vec![],
-                );
                 for &bt in &sel_anchor {
                     by_class.entry(class).or_default().push(Rule {
                         backtrack: vec![bt],
                         input: vec![class],
                         lookahead: vec![],
-                        pal: layout.block_sel[b],
+                        pal: Some(layout.block_sel[b]),
                     });
                 }
             }
@@ -1491,72 +1605,82 @@ pub fn synthesize(
             // class) and selector words (which carry the selector
             // state) all land here
             if Some(class) == colon_cls {
-                let mut bts: Vec<u16> = wordish_classes.iter().copied().collect();
-                bts.sort_unstable();
-                bts.push(block_sel_state[b]);
-                for bt in bts {
+                let mut colon_bts = word_ctx_classes();
+                colon_bts.push(block_sel_state[b]);
+                for bt in colon_bts {
                     by_class.entry(class).or_default().push(Rule {
                         backtrack: vec![bt],
                         input: vec![class],
                         lookahead: vec![],
-                        pal: layout.block_val[b],
+                        pal: Some(layout.block_val[b]),
                     });
                 }
             }
-            // value regime: digits still open numbers (colored), the
-            // exit chars terminate, everything else rides as plain
-            // carriers — and the glyph right after a number hands the
-            // regime back (excluded: the exits own their classes)
+            // value regime: the exit chars terminate (both carrier
+            // kinds hand the regime over), everything else rides as
+            // plain carriers — and the glyph right after a number hands
+            // the regime back (excluded: the exits own their classes)
             if !end_cls.contains(&class) {
-                if class == c_digit && spec.numbers {
-                    by_class.entry(class).or_default().push(Rule {
-                        backtrack: vec![block_val_state[b]],
-                        input: vec![class],
-                        lookahead: vec![],
-                        pal: layout.num,
-                    });
+                for bt in [block_val_state[b], c_val_ident[b]] {
+                    prop(&mut by_class, class, bt, layout.block_val[b], vec![]);
                 }
-                prop(
-                    &mut by_class,
-                    class,
-                    block_val_state[b],
-                    layout.block_val[b],
-                    vec![],
-                );
                 if spec.numbers {
                     by_class.entry(class).or_default().push(Rule {
                         backtrack: vec![c_num_state],
                         input: vec![class],
                         lookahead: vec![],
-                        pal: layout.block_val[b],
+                        pal: Some(layout.block_val[b]),
                     });
                 }
             } else {
-                by_class.entry(class).or_default().push(Rule {
-                    backtrack: vec![block_val_state[b]],
-                    input: vec![class],
-                    lookahead: vec![],
-                    pal: layout.block_end[b],
-                });
+                for bt in [block_val_state[b], c_val_ident[b]] {
+                    by_class.entry(class).or_default().push(Rule {
+                        backtrack: vec![bt],
+                        input: vec![class],
+                        lookahead: vec![],
+                        pal: Some(layout.block_end[b]),
+                    });
+                }
                 if spec.numbers {
                     // `4px;` — the exit follows the number state
                     by_class.entry(class).or_default().push(Rule {
                         backtrack: vec![c_num_state],
                         input: vec![class],
                         lookahead: vec![],
-                        pal: layout.block_end[b],
+                        pal: Some(layout.block_end[b]),
                     });
                 }
+            }
+            // the selector open at a run start — last of the class's
+            // rules: everything that could own the position (keywords,
+            // the value regime's carriers) has had its turn
+            if wordish {
+                by_class.entry(class).or_default().push(Rule {
+                    backtrack: Vec::new(),
+                    input: vec![class],
+                    lookahead: Vec::new(),
+                    pal: Some(layout.block_sel[b]),
+                });
             }
         }
     }
     let rules: Vec<Rule> = by_class.into_values().flatten().collect();
+
+    // the backtrack/lookahead ClassDefs merge every word-ish class but
+    // the digits into `c_wordish` (see its definition); the input def
+    // never merges, so rule sets stay keyed on exact first classes
+    let context_merge: HashSet<u16> = wordish_classes
+        .iter()
+        .copied()
+        .filter(|&c| c != c_digit && !digit_letter_classes.contains(&c))
+        .collect();
 
     Ok(GlyphPlan {
         cells: Vec::new(),
         alt_glyphs,
         class_of,
         rules,
+        context_merge: Some((c_wordish, context_merge)),
         // the generic state machine has no build-time content to shape:
         // no ligature sites, no per-cell units (nothing consumes them here)
         lig_rules: Vec::new(),

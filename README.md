@@ -189,10 +189,6 @@ per-version known limitations.
   (`.woff2`, both outline flavors) or raw sfnt (`.ttf`).
 - Generic mode is line-scoped (see above) and one language per font —
   merging languages would color `type` in a Rust block via TS rules.
-- Generic mode keywords/numbers need a preceding in-line boundary
-  glyph, so a keyword at the very start of a line stays plain (a
-  designed limit of the in-font lexer; everything after it colors
-  normally).
 
 ## Tech
 

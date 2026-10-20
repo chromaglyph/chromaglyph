@@ -146,38 +146,58 @@ pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
     // ---- the two chain lookups, restore first -----------------------------
     let mut feature_lookups: Vec<u16> = Vec::new();
     if !plan.lig_rules.is_empty() {
-        let packed: Vec<PackedRule<'_>> = plan
+        let packed: Vec<PackedRule> = plan
             .lig_rules
             .iter()
             .map(|rule| PackedRule {
-                backtrack: &rule.backtrack,
-                input: &rule.input,
-                lookahead: &rule.lookahead,
+                backtrack: rule.backtrack.clone(),
+                input: rule.input.clone(),
+                lookahead: rule.lookahead.clone(),
                 records: vec![SequenceLookupRecord::new(
                     0,
                     num_palettes + rule.site, // the site's nested lookup
                 )],
             })
             .collect();
-        lookups.push(chain_lookup(&packed, &class_glyphs, &glyphs_of_class));
+        lookups.push(chain_lookup(&packed, &class_glyphs, &glyphs_of_class, None));
         feature_lookups.push(next);
         next += 1;
     }
 
     if !plan.rules.is_empty() {
-        let packed: Vec<PackedRule<'_>> = plan
+        let merge = plan.context_merge.as_ref().map(|(id, set)| (*id, set));
+        let remap = |classes: &[u16]| -> Vec<u16> {
+            match &merge {
+                Some((merged, set)) => classes
+                    .iter()
+                    .map(|&c| if set.contains(&c) { *merged } else { c })
+                    .collect(),
+                None => classes.to_vec(),
+            }
+        };
+        let packed: Vec<PackedRule> = plan
             .rules
             .iter()
             .map(|rule| PackedRule {
-                backtrack: &rule.backtrack,
-                input: &rule.input,
-                lookahead: &rule.lookahead,
-                records: (0..rule.input.len() as u16)
-                    .map(|i| SequenceLookupRecord::new(i, rule.pal))
-                    .collect(),
+                backtrack: remap(&rule.backtrack),
+                input: rule.input.clone(),
+                lookahead: remap(&rule.lookahead),
+                records: match rule.pal {
+                    Some(pal) => (0..rule.input.len() as u16)
+                        .map(|i| SequenceLookupRecord::new(i, pal))
+                        .collect(),
+                    // zero records: the rule matches and blocks, but
+                    // substitutes nothing (an `ignore sub`)
+                    None => Vec::new(),
+                },
             })
             .collect();
-        lookups.push(chain_lookup(&packed, &class_glyphs, &glyphs_of_class));
+        lookups.push(chain_lookup(
+            &packed,
+            &class_glyphs,
+            &glyphs_of_class,
+            merge,
+        ));
         feature_lookups.push(next);
     }
 
@@ -199,11 +219,12 @@ pub fn build_gsub(plan: &GlyphPlan) -> Option<Gsub> {
 }
 
 /// One chain-context rule flattened for subtable packing: class windows
-/// plus the precomputed nested-lookup records.
-struct PackedRule<'r> {
-    backtrack: &'r [u16],
-    input: &'r [u16],
-    lookahead: &'r [u16],
+/// (backtrack/lookahead already remapped through the merge, when the plan
+/// asks for one) plus the precomputed nested-lookup records.
+struct PackedRule {
+    backtrack: Vec<u16>,
+    input: Vec<u16>,
+    lookahead: Vec<u16>,
     records: Vec<SequenceLookupRecord>,
 }
 
@@ -211,10 +232,18 @@ struct PackedRule<'r> {
 /// chunk, grouped by first input class) and wrap them into one lookup —
 /// a plain ChainContextual lookup when a single subtable suffices, an
 /// Extension lookup otherwise.
+///
+/// `merge` (`(merged class id, class set)`) makes the backtrack and
+/// lookahead ClassDefs collapse every glyph of the given classes into
+/// one class — the input ClassDef (and rule-set selection) never
+/// merges. `None` keeps the three ClassDefs identical, as exact mode
+/// requires (its contexts reference precise glyph classes).
+#[allow(clippy::too_many_arguments)]
 fn chain_lookup(
-    packed: &[PackedRule<'_>],
+    packed: &[PackedRule],
     class_glyphs: &[(u16, u16)],
     glyphs_of_class: &HashMap<u16, Vec<u16>>,
+    merge: Option<(u16, &std::collections::HashSet<u16>)>,
 ) -> SubstitutionLookup {
     // ---- chunk rules into subtable-sized groups ---------------------------
     // Grouped by first input class; classes themselves may be split. The
@@ -236,15 +265,15 @@ fn chain_lookup(
     let budget = MAX_SUBTABLE_BYTES
         .saturating_sub(3 * classdef_bytes)
         .max(2048);
-    let mut rules_by_class: HashMap<u16, Vec<&PackedRule<'_>>> = HashMap::new();
+    let mut rules_by_class: HashMap<u16, Vec<&PackedRule>> = HashMap::new();
     for rule in packed {
         rules_by_class.entry(rule.input[0]).or_default().push(rule);
     }
     let mut classes: Vec<u16> = rules_by_class.keys().copied().collect();
     classes.sort_unstable();
 
-    let mut chunks: Vec<Vec<(u16, Vec<&PackedRule<'_>>)>> = Vec::new();
-    let mut current: Vec<(u16, Vec<&PackedRule<'_>>)> = Vec::new();
+    let mut chunks: Vec<Vec<(u16, Vec<&PackedRule>)>> = Vec::new();
+    let mut current: Vec<(u16, Vec<&PackedRule>)> = Vec::new();
     let mut current_bytes = 0usize;
     for &class in &classes {
         let rules = &rules_by_class[&class];
@@ -271,7 +300,7 @@ fn chain_lookup(
         for &(class, ref rules) in chunk {
             let seq_rules: Vec<ChainedClassSequenceRule> = rules
                 .iter()
-                .map(|r| to_chain_rule(r.backtrack, r.input, r.lookahead, &r.records))
+                .map(|r| to_chain_rule(&r.backtrack, &r.input, &r.lookahead, &r.records))
                 .collect();
             sets[class as usize] = Some(ChainedClassSequenceRuleSet::new(seq_rules));
             if let Some(gids) = glyphs_of_class.get(&class) {
@@ -280,19 +309,46 @@ fn chain_lookup(
                 }
             }
         }
-        let ranges: Vec<ClassRangeRecord> = class_glyphs
-            .iter()
-            .map(|&(gid, class)| {
-                ClassRangeRecord::new(GlyphId16::new(gid), GlyphId16::new(gid), class)
-            })
-            .collect();
-        let class_def = ClassDef::Format2(ClassDefFormat2::new(ranges));
+        // contiguous same-class glyph runs merge into one range record —
+        // the engine allocates alt ids kind-major precisely so the
+        // ClassDefs collapse into a handful of ranges instead of one
+        // record per glyph (the three ClassDefs no longer dedupe once
+        // backtrack/lookahead merge, so the win matters)
+        let ranges = |merged: bool| -> Vec<ClassRangeRecord> {
+            let mut out: Vec<ClassRangeRecord> = Vec::new();
+            for &(gid, class) in class_glyphs {
+                let class = if merged {
+                    match merge {
+                        Some((m, set)) if set.contains(&class) => m,
+                        _ => class,
+                    }
+                } else {
+                    class
+                };
+                match out.last_mut() {
+                    Some(rec)
+                        if rec.class == class
+                            && u32::from(rec.end_glyph_id) + 1 == u32::from(gid) =>
+                    {
+                        rec.end_glyph_id = GlyphId16::new(gid);
+                    }
+                    _ => out.push(ClassRangeRecord::new(
+                        GlyphId16::new(gid),
+                        GlyphId16::new(gid),
+                        class,
+                    )),
+                }
+            }
+            out
+        };
+        let input_def = ClassDef::Format2(ClassDefFormat2::new(ranges(false)));
+        let context_def = ClassDef::Format2(ClassDefFormat2::new(ranges(true)));
         chain_contexts.push(ChainedSequenceContext::Format2(
             ChainedSequenceContextFormat2::new(
                 coverage.build(),
-                class_def.clone(),
-                class_def.clone(),
-                class_def,
+                context_def.clone(),
+                input_def.clone(),
+                context_def,
                 sets,
             ),
         ));
@@ -318,12 +374,9 @@ fn chain_lookup(
 }
 
 /// Split one class's rules into groups that each fit the subtable budget.
-fn split_class_rules<'r>(
-    rules: &[&'r PackedRule<'r>],
-    budget: usize,
-) -> Vec<Vec<&'r PackedRule<'r>>> {
-    let mut groups: Vec<Vec<&'r PackedRule<'r>>> = Vec::new();
-    let mut current: Vec<&'r PackedRule<'r>> = Vec::new();
+fn split_class_rules<'a>(rules: &[&'a PackedRule], budget: usize) -> Vec<Vec<&'a PackedRule>> {
+    let mut groups: Vec<Vec<&'a PackedRule>> = Vec::new();
+    let mut current: Vec<&'a PackedRule> = Vec::new();
     let mut bytes = 0usize;
     for &rule in rules {
         let b = est_rule_bytes(rule);
@@ -340,7 +393,7 @@ fn split_class_rules<'r>(
     groups
 }
 
-fn est_rule_bytes(rule: &PackedRule<'_>) -> usize {
+fn est_rule_bytes(rule: &PackedRule) -> usize {
     // backtrack u16s + input-1 u16s + lookahead u16s + one 4-byte lookup
     // record per nested application + counts
     8 + 2 * (rule.backtrack.len() + rule.lookahead.len() + rule.input.len())

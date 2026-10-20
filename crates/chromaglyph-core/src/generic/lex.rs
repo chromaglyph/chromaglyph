@@ -57,30 +57,26 @@ pub enum Tok {
 pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Vec<Tok> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = vec![Tok::Plain; chars.len()];
-    // a word boundary glyph: mapped, not an identifier char, not a
-    // newline, and not one of the delimiter chars that live in their own
-    // classes (quotes, span delimiters, the dot, the escape char)
-    let boundary = |c: char| {
-        mapped(c)
-            && c != '\n'
-            && c != '\r'
-            && !is_ident(c, spec.ident_extra)
-            && !spec.strings.iter().any(|s| s.quote == c)
-            && !spec
-                .spans
-                .iter()
-                .any(|s| s.open.contains(c) || s.close.contains(c))
-            && c != '.'
-            && c != '\\'
-            // interpolation opener/closer chars carry their own glyph
-            // classes in the engine (exact-sequence `${` matching), so
-            // they stop anchoring keywords and numbers there too — the
-            // lexer must agree or the oracle diverges (shell `$1` found
-            // it; js `{keyword` was latent)
-            && !spec.strings.iter().any(|s| match s.interpolation {
-                Some((open, close)) => open.contains(c) || close == c,
-                None => false,
-            })
+    // A shaping run starts at the text start and restarts after every
+    // barrier (a newline, an unmapped char): the engine's empty-backtrack
+    // keyword/number rules fire at a run start exactly as they do after
+    // any glyph. A word position anchors when the previous char is not an
+    // identifier char — punctuation, quotes, close delimiters, `.`, `\`,
+    // braces — or the run just started. The only negative is a word char
+    // (or a word-char carrier) before it, which the engine expresses with
+    // its `ignore sub`-style guards.
+    let run_start = |i: usize| {
+        i == 0 || {
+            let p = chars[i - 1];
+            p == '\n' || p == '\r' || !mapped(p)
+        }
+    };
+    let anchor = |i: usize| run_start(i) || !is_ident(chars[i - 1], spec.ident_extra);
+    let la_ok = |i: usize| {
+        i >= chars.len() || {
+            let n = chars[i];
+            !mapped(n) || !is_ident(n, spec.ident_extra)
+        }
     };
     let starts = |i: usize, delim: &str| -> bool {
         let cs: Vec<char> = delim.chars().collect();
@@ -96,10 +92,6 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
     // reset it — their closing glyphs carry the generic end state in
     // the engine, which no block rule anchors on
     let mut blk: Option<(usize, bool)> = None;
-    // index just past a closer that actually closed on this line (a
-    // span/string that died at a newline never closed — the engine's
-    // end state never existed there, so nothing anchors)
-    let mut closed_at: Option<usize> = None;
     let mut i = 0;
     'outer: while i < chars.len() {
         for &j in &span_order {
@@ -129,7 +121,6 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                             *tok = Tok::SpanClose(j);
                         }
                         i += n;
-                        closed_at = Some(i);
                         break;
                     }
                     let c = chars[i];
@@ -141,9 +132,6 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                 }
             }
             blk = None;
-            if closed_at != Some(i) {
-                closed_at = None;
-            }
             continue 'outer;
         }
         // markup tags: one inline walk from the opener, mirroring the
@@ -294,7 +282,6 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                 if c == s.quote && mapped(c) {
                     out[i] = Tok::StrClose(k);
                     i += 1;
-                    closed_at = Some(i);
                     break;
                 }
                 // escape pair: `\` + any mapped non-newline glyph becomes
@@ -351,32 +338,50 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                 i += 1;
             }
             blk = None;
-            if closed_at != Some(i) {
-                closed_at = None;
-            }
             continue 'outer;
         }
         if spec.numbers && chars[i].is_ascii_digit() && mapped(chars[i]) {
             let start = i;
+            // a run start, any non-word glyph, or a value carrier
+            // anchors the number (inside a value even mid-word: the
+            // letter carriers are not word chars, so the font's empty
+            // backtracks fire there)
             let in_val = matches!(blk, Some((_, true)));
-            let closed_anchor = !spec.blocks.is_empty() && closed_at == Some(start);
-            if start > 0 && (boundary(chars[start - 1]) || in_val || closed_anchor) {
-                while i < chars.len() && is_ident(chars[i], spec.ident_extra) {
+            if anchor(start) || in_val {
+                let span_here = |i: usize| {
+                    spec.spans
+                        .iter()
+                        .any(|sp| starts(i, sp.open) && all_mapped(sp.open))
+                };
+                while i < chars.len()
+                    && is_ident(chars[i], spec.ident_extra)
+                    && mapped(chars[i])
+                    && !span_here(i)
+                {
                     out[i] = Tok::Number;
                     i += 1;
                 }
                 // fractional part: a dot continues the number only when
                 // a digit follows it (mirrors the font's lookahead rule)
                 while i < chars.len() {
-                    let continues = is_ident(chars[i], spec.ident_extra)
-                        || (chars[i] == '.'
-                            && i + 1 < chars.len()
-                            && chars[i + 1].is_ascii_digit());
+                    let continues =
+                        (is_ident(chars[i], spec.ident_extra) && mapped(chars[i]) && !span_here(i))
+                            || (chars[i] == '.'
+                                && mapped(chars[i])
+                                && i + 1 < chars.len()
+                                && chars[i + 1].is_ascii_digit()
+                                && mapped(chars[i + 1]));
                     if !continues {
                         break;
                     }
                     out[i] = Tok::Number;
                     i += 1;
+                }
+                // the first glyph after a number hands the value regime
+                // over (the font's after-number rule fires on the number
+                // state wherever the number colored, value or not)
+                if !spec.blocks.is_empty() {
+                    blk = Some((0, true));
                 }
                 continue;
             }
@@ -384,9 +389,25 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
             // open a selector word (`.14px` after an anchor): fall
             // through to the ident walk below instead of skipping it
         }
-        if is_ident(chars[i], spec.ident_extra) {
+        if is_ident(chars[i], spec.ident_extra) && mapped(chars[i]) {
             let start = i;
-            while i < chars.len() && is_ident(chars[i], spec.ident_extra) {
+            let in_val = matches!(blk, Some((_, true)));
+            // the walk stops at an unmapped char (a run break: the word
+            // cannot continue through it), at a span opener that matches
+            // here (C# `record@"…"`: the verbatim `@"` must reach the
+            // main loop's span check, not vanish inside the word), and —
+            // inside a value regime — at the first digit (the font
+            // colors digits as numbers even mid-word there; the letter
+            // carriers anchor them)
+            while i < chars.len()
+                && is_ident(chars[i], spec.ident_extra)
+                && mapped(chars[i])
+                && !(in_val && spec.numbers && chars[i].is_ascii_digit())
+                && !spec
+                    .spans
+                    .iter()
+                    .any(|sp| starts(i, sp.open) && all_mapped(sp.open))
+            {
                 i += 1;
             }
             let word: String = chars[start..i].iter().collect();
@@ -394,34 +415,28 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                 .keywords
                 .iter()
                 .position(|g| g.words.contains(&word.as_str()));
-            let in_val = matches!(blk, Some((_, true)));
-            // a word after a closing delimiter (string quote, span
-            // close) anchors only in block languages: there the generic
-            // end state is a keyword boundary, elsewhere it is not
-            let closed_before = !spec.blocks.is_empty() && closed_at == Some(start);
-            let anchor_before = start > 0 && boundary(chars[start - 1]);
-            let sel_anchor_before = start > 0
-                && (anchor_before
-                    || closed_before
-                    || spec
-                        .blocks
-                        .iter()
-                        .any(|b| b.anchors.contains(&chars[start - 1])));
             let mut colored = false;
             if let Some(g) = group {
-                let la_ok = match spec.keywords[g].followed_by {
+                let kw_la_ok = match spec.keywords[g].followed_by {
                     Some(fc) => chars.get(i) == Some(&fc) && mapped(fc),
-                    None => i < chars.len() && boundary(chars[i]),
+                    None => la_ok(i),
                 };
-                if la_ok
-                    && word.chars().all(mapped)
-                    && start > 0
-                    && (anchor_before || closed_before || in_val)
-                {
+                if kw_la_ok && anchor(start) {
                     for tok in out.iter_mut().take(i).skip(start) {
                         *tok = Tok::Keyword(g);
                     }
                     colored = true;
+                    // a value keyword's copies carry the value state (an
+                    // exit right after the word still terminates), so the
+                    // word itself opens the regime wherever it colors;
+                    // any other keyword's copies keep their base letter
+                    // classes, which carry nothing — the regime dies there
+                    if !spec.blocks.is_empty() {
+                        blk = match spec.keywords[g].value {
+                            true => Some((0, true)),
+                            false => None,
+                        };
+                    }
                 }
             }
             if !colored {
@@ -436,7 +451,7 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
                             *tok = Tok::Sel(bi);
                         }
                     }
-                    None if sel_anchor_before && !spec.blocks.is_empty() => {
+                    None if anchor(start) && !spec.blocks.is_empty() => {
                         // the open: which block owns it is ambiguous with
                         // several blocks — shipped languages carry one
                         for tok in out.iter_mut().take(i).skip(start) {
@@ -506,29 +521,30 @@ mod tests {
 
     #[test]
     fn lex_keywords_and_boundaries() {
-        // keyword between punctuation colors; at text start it cannot
-        // (no glyph exists for the shaper to backtrack on)
+        // keyword between punctuation colors; at text start it colors
+        // too (an empty backtrack needs no anchor glyph)
         let t = toks("a let b");
         assert_eq!(&t[2..5], &[Tok::Keyword(0); 3]);
         let t = toks("let x");
-        assert_eq!(&t[0..3], &[Tok::Plain; 3], "text-start keyword stays plain");
+        assert_eq!(&t[0..3], &[Tok::Keyword(0); 3], "text-start keyword colors");
         // inside an identifier it is never a keyword
         let t = toks("a let_x b");
         assert_eq!(&t[2..6], &[Tok::Plain; 4]);
-        // adjacent to delimiter classes it stays plain (those glyphs live
-        // outside the not-a-word-char class)
+        // adjacent to a quote it colors (the empty lookahead fires at
+        // the run's end and after any non-word glyph)
         let t = toks("a let\" b");
-        assert_eq!(&t[2..5], &[Tok::Plain; 3]);
+        assert_eq!(&t[2..5], &[Tok::Keyword(0); 3]);
     }
 
     #[test]
-    fn lex_line_start_keywords_stay_plain() {
-        // every source line is its own shaping run in a browser: a
-        // column-0 keyword has no in-run glyph to anchor on — even when
-        // the font maps `\n` (pixel-verified in a real browser)
+    fn lex_line_start_keywords_color() {
+        // every source line is its own shaping run in a browser, and the
+        // empty-backtrack rules fire at a run start — a column-0 keyword
+        // colors without any in-run glyph before it (the v1.1 injected
+        // newline glyph never shaped; empty contexts need no glyph)
         let t = lex(&rust(), "a\nfn b", &|_| true);
-        assert_eq!(&t[2..4], &[Tok::Plain; 2], "line start: no anchor");
-        // one space of indentation and the space glyph anchors it
+        assert_eq!(&t[2..4], &[Tok::Keyword(0); 2], "line start colors");
+        // one space of indentation colors it too
         let t = lex(&rust(), "a\n fn b", &|_| true);
         assert_eq!(&t[3..5], &[Tok::Keyword(0); 2]);
     }
@@ -540,7 +556,10 @@ mod tests {
         assert_eq!(t[0], Tok::StrOpen(0));
         assert_eq!(t[1], Tok::StrBody(0));
         assert_eq!(t[2], Tok::Plain);
-        assert_eq!(&t[3..9], &[Tok::Plain; 6]);
+        // the fresh line colors its keywords: run start and a space
+        assert_eq!(&t[3..5], &[Tok::Keyword(0); 2]);
+        assert_eq!(t[5], Tok::Plain);
+        assert_eq!(&t[6..9], &[Tok::Keyword(0); 3]);
     }
 
     #[test]
@@ -555,8 +574,8 @@ mod tests {
         assert_eq!(t[8], Tok::Plain); // newline ends the comment
         assert_eq!(
             &t[9..11],
-            &[Tok::Plain; 2],
-            "line-start keyword stays plain"
+            &[Tok::Keyword(0); 2],
+            "line-start keyword colors at the run start"
         );
     }
 
@@ -597,8 +616,8 @@ mod tests {
         let t = lex(&rust(), "\n42", &|_| true);
         assert_eq!(
             &t[1..3],
-            &[Tok::Plain; 2],
-            "number at line start has no anchor"
+            &[Tok::Number; 2],
+            "number at line start colors at the run start"
         );
         let t = lex(&rust(), "a\n 42", &|_| true);
         assert_eq!(&t[3..5], &[Tok::Number; 2], "indented number colors");
@@ -645,7 +664,7 @@ mod tests {
         let t = toks("\"x\\\nlet y");
         assert_eq!(t[2], Tok::StrBody(0), "the lone backslash is body");
         assert_eq!(t[3], Tok::Plain, "the newline");
-        assert_eq!(&t[4..7], &[Tok::Plain; 3]);
+        assert_eq!(&t[4..7], &[Tok::Keyword(0); 3], "fresh line: run start");
     }
 
     #[test]
@@ -830,11 +849,11 @@ mod tests {
         assert_eq!(t[0], Tok::SpanOpen(2));
         assert_eq!(&t[1..7], &[Tok::SpanBody(2); 6]);
         assert_eq!(t[7], Tok::Plain, "newline ends the comment");
-        assert_eq!(&t[8..11], &[Tok::Plain; 3], "def at line start: no anchor");
+        assert_eq!(&t[8..11], &[Tok::Keyword(1); 3], "def colors at line start");
         assert_eq!(
             &t[21..25],
-            &[Tok::Plain; 4],
-            "keyword at line end: no lookahead glyph in its run"
+            &[Tok::Keyword(0); 4],
+            "keyword at line end: the empty lookahead fires at the run end"
         );
         // indented mid-line keywords color normally
         let t = lex(&spec, "z = 1\n    if x and not y:\n        pass\n", &|_| {

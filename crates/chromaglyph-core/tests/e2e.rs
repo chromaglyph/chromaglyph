@@ -792,7 +792,9 @@ fn generic_mode_new_languages() {
         (chromaglyph_core::generic::lua(), 220),
         (chromaglyph_core::generic::shell(), 220),
         (chromaglyph_core::generic::html(), 180),
-        (chromaglyph_core::generic::css(), 1400),
+        // empty-context rules + guards replace the boundary enumeration,
+        // so CSS needs far fewer rules than the 0.3.x boundary sets
+        (chromaglyph_core::generic::css(), 1100),
     ] {
         let out = build(&BuildInput {
             font_bytes: FONT,

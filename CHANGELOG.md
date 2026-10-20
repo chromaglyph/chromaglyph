@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+- **generic mode: keywords and numbers color at line starts (and line
+  ends)** — the documented column-0 limitation is gone. Browsers shape
+  every source line of a `pre` as its own run, so a column-0 keyword has
+  no in-run glyph a boundary backtrack could ever see; v1.1's injected
+  newline glyph was browser-verified fiction and the boundary-enumerated
+  rules that replaced it stayed silent there. The fix removes the
+  boundary enumeration instead of feeding it an anchor: keyword and
+  number rules now carry EMPTY backtrack and lookahead sequences, which
+  match unconditionally — including at a run start and past a font-
+  fallback run break (an emoji). The mid-word false matches an empty
+  context cannot exclude are supplied by `ignore sub`-style guard rules
+  placed earlier in the same rule set (a zero-lookup-record rule matches
+  and blocks without substituting — the compiled form of the AFDKO
+  idiom the reference FontWithASyntaxHighlighter uses), plus real-
+  substitution guards in block languages where the regime must survive
+  (mid-value letters ride as letter carriers, selector words as
+  selector-colored glyphs). Two structural companions: keywords emit
+  LONGEST-FIRST with their guard directly before the rule, so `as`'s
+  guard cannot poison `async` at the same position (the reference
+  avoided this by giving every keyword its own lookup); and the chain
+  subtables' backtrack/lookahead ClassDefs merge the word-ish letter
+  classes into one class (the input ClassDef never merges), so a guard
+  says "after any word char" in one entry instead of one rule per
+  (keyword × word class). Consequences beyond line starts: keywords
+  adjacent to quotes, `.`, `\`, `}` and closing delimiters now color
+  (the old boundary set excluded them); a keyword immediately after an
+  unmapped char colors (the run restarts there in a browser);
+  col-0 selector words and `!`-anchored value keywords color in CSS;
+  and words break at unmapped chars exactly where browser runs do.
+  Rule count per language drops (CSS 1,557 → 1,223: empty contexts +
+  guards replace the boundary cross-product). C# verbatim identifiers
+  keep `@return` plain by making `@` an identifier char (the word is
+  `@return`, never the keyword; the `@"` span still wins at `@` because
+  the word walk stops at a matching span opener). Verified
+  token-by-token with pixel statistics on a rendered page in a real
+  browser: `fn` at column 0 renders the keyword blue (59,123,170)
+  matching indented `let`/`return`, `main` stays foreground gray, and
+  `fnx`/`xfn` stay plain — the guards hold in Chromium's shaper.
+- **generic mode oracle fixes found by the new samples**: C++ `3.14`
+  left the dot uncolored when the following digit is a keyword letter
+  (`char16_t`'s `1` carries a keyword letter class, not `c_digit`) —
+  pre-existing, never sampled because random assembly joins pieces
+  without separators; the dot-continuation rule now enumerates every
+  class a digit glyph carries, and those digit-letter classes are
+  excluded from the context merge so the lookahead stays exact. The
+  oracle lexer now models the engine's after-number value handback (a
+  colored number opens the phantom regime its successor glyph rides)
+  and the value keyword's own state carrying (`important` opens the
+  regime wherever it colors; any non-value keyword's base-class copies
+  end it). New adversarial samples lock the prefix-keyword pairs
+  (`as`/`async`) per language.
+
 ## 0.4.0 (2026-10-19)
 
 - **WOFF2 output** (`--output font.woff2`; `format: 'woff2'` in

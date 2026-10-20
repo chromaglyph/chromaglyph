@@ -172,9 +172,11 @@ pub fn spec() -> LanguageSpec {
         blocks: &[],
         numbers: true,
         number_scope: "constant.numeric.cs",
-        // '@' verbatim identifiers (@return) must not color the word after
-        // them — '@' lives in a span opener, so it is not a boundary glyph
-        ident_extra: &[],
+        // '@' is an identifier char: a verbatim identifier (@return) forms
+        // one word with its '@', so the keyword never matches inside it
+        // (the @" verbatim-string span still wins at '@' — a quote is not
+        // an identifier char, and spans match before the word walk)
+        ident_extra: &['@'],
     }
 }
 
