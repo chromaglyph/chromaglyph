@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- **64 builtin themes** — the builtin set is now shiki's `tm-themes`
+  collection (1.12.12) instead of just dark-plus/light-plus: the same
+  VS Code theme files VS Code and shiki use, vendored byte-for-byte
+  under `crates/chromaglyph-core/themes/tm/` by
+  `scripts/vendor-themes.mjs` and embedded gzipped by `build.rs` —
+  1.79 MB of JSON costs ~250 KB in every binary. aurora-x ships
+  upstream under GPL-3.0 and is excluded; everything vendored is
+  MIT/Apache-2.0 with notices in `themes/tm/NOTICE`. Any slug works
+  wherever a theme name goes (`github-dark`, `catppuccin-mocha`, …):
+  `chromaglyph themes` lists them, the Node binding's `listThemes()`
+  exposes the registry with per-scope color swatches, and the docs
+  site gained a bilingual theme gallery with credits. Updating is
+  `pnpm up tm-themes` + re-running the vendor script; CI fails if the
+  vendored copy and the lockfile drift, and a regression test loads
+  every builtin. Two visible changes: builtin `ThemeSpec::name` is the
+  slug (`dark-plus`, not `Dark+`), so palette CSS names are
+  `--chromaglyph-dark-plus` / `--chromaglyph-light-plus` — which the
+  README documented all along; the `--chromaglyph-dark/light-palette`
+  aliases are unchanged. And dark-plus/light-plus now come from
+  shiki's flattened files, checked identical to the previous pair over
+  every selector path both mention (354 paths) except `markup.italic`,
+  which lost the foreground VS Code added after the commit shiki pins.
+  Also: a theme `include` that cannot be read is now an error (as in
+  VS Code) instead of silently dropping the base rules, and include
+  chains are capped at 8 levels against cycles.
+
 - **theme loader: VS Code compatibility fixes** — surfaced by running
   shiki's `tm-themes` collection (65 themes) through the parser; 61
   loaded before, 65 after, and several that loaded silently degraded.
