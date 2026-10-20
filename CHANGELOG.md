@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.0 (2026-10-20)
+
 - **64 builtin themes** — the builtin set is now shiki's `tm-themes`
   collection (1.12.12) instead of just dark-plus/light-plus: the same
   VS Code theme files VS Code and shiki use, vendored byte-for-byte
