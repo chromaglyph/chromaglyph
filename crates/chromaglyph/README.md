@@ -9,7 +9,7 @@ chromaglyph build --font JetBrainsMono-Regular.ttf --input code.rs \
 chromaglyph verify --font out.woff --input code.rs
 ```
 
-Build runs the rustybuzz oracle by default (`--no-verify` to skip). Themes:
+Build runs the harfrust oracle by default (`--no-verify` to skip). Themes:
 builtin `dark-plus` / `light-plus` or any VS Code `.json` / TextMate
 `.tmTheme` path. Output `.woff` (WOFF1, default) or `.ttf`.
 

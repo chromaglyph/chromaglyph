@@ -45,7 +45,7 @@ tokenize + theme → compile → fontbuild → verify
   default, so the variation tables are simply dropped). CFF2
   (variable-OTF) outlines and CID-keyed CFF are rejected with a clear
   error.
-- **verify** — rustybuzz shapes the produced font in-process and compares
+- **verify** — harfrust shapes the produced font in-process and compares
   glyph ids per character (shaping is theme-independent, so one pass
   suffices); palettes are read back from CPAL. `build` runs this by
   default.
@@ -192,7 +192,7 @@ per-version known limitations.
 
 ## Tech
 
-`read-fonts` / `skrifa` / `write-fonts` (fontations) · rustybuzz (shaping
+`read-fonts` / `skrifa` / `write-fonts` (fontations) · harfrust (shaping
 oracle) · syntect (grammars & themes) · optional tree-sitter (semantic) ·
 flate2 (WOFF1) · ttf2woff2 (WOFF2 encode) · wuff (WOFF2 decode).
 

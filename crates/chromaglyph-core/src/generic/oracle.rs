@@ -1,5 +1,5 @@
 //! The oracle: spec-derived sample texts (curated per language plus a
-//! deterministic-random assembly) and the rustybuzz shaper diff that
+//! deterministic-random assembly) and the harfrust shaper diff that
 //! verifies the produced font against the reference lexer.
 
 use std::collections::HashMap;
@@ -156,10 +156,11 @@ pub fn verify_generic(
 ) -> VerifyResult {
     let layout = layout(spec);
     let mut result = VerifyResult::ok();
-    let Some(face) = rustybuzz::Face::from_slice(ttf, 0) else {
-        result.fail("rustybuzz cannot parse the produced font".into());
+    let Some(font) = harfrust::Font::new(ttf.to_vec(), 0) else {
+        result.fail("harfrust cannot parse the produced font".into());
         return result;
     };
+    let face = harfrust::ShaperFont::new(&font);
     for sample in samples {
         let toks = lex(spec, sample, &|ch| charmap(ch).is_some());
         // (byte offset, expected glyph id) per char
@@ -176,9 +177,10 @@ pub fn verify_generic(
             })
             .collect();
 
-        let mut buffer = rustybuzz::UnicodeBuffer::new();
-        buffer.push_str(sample);
-        let infos = rustybuzz::shape(&face, &[], buffer).glyph_infos().to_vec();
+        let Some(infos) = crate::shape::shape_text(&face, sample) else {
+            result.fail(format!("{sample:?}: the shaper rejected the text"));
+            continue;
+        };
 
         let mut cells = expected.iter();
         let mut pending = cells.next().copied();

@@ -13,7 +13,8 @@ chromaglyph-core = { path = "crates/chromaglyph-core", version = "0.4.0" }
 read-fonts = "0.45"
 skrifa = "0.48"
 write-fonts = "0.54"
-rustybuzz = "0.20"
+# rustybuzz 已停止维护（RUSTSEC-2026-0206），shaping 层用官方继任者 harfrust
+harfrust = "0.14"
 # 纯 Rust 路线：fancy-regex 代替 onig（零 C 依赖），自带默认语法集与主题
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 clap = { version = "4", features = ["derive"] }

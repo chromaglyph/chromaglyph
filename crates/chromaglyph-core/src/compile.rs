@@ -12,7 +12,7 @@
 //! The source font's own GSUB is dropped from the output font, so its
 //! ligatures would be lost. Instead of keeping (and subsetting) the source
 //! layout tables, the build *shapes* each block with the source font
-//! (rustybuzz — the same algorithm browsers run) and re-materializes every
+//! (harfrust — the same algorithm browsers run) and re-materializes every
 //! substitution the shaper performed as one more minimal-window rule: the
 //! pristine per-char glyphs become the shaped glyph through a nested
 //! single/ligature substitution. A site whose member cells color uniformly
@@ -39,7 +39,7 @@
 //! is a pure `@font-palette-values` flip, no re-shaping.
 //!
 //! Two invariants make the generated rules correct under any shaper that
-//! applies `calt` left-to-right (HarfBuzz, rustybuzz, browsers):
+//! applies `calt` left-to-right (HarfBuzz, harfrust, browsers):
 //!
 //! 1. **Form-insensitive contexts.** Context classes contain the base glyph
 //!    *and all of its colored copies*, so a context matches no matter whether
@@ -70,7 +70,7 @@ pub struct Cell {
     pub pal: Option<u16>,
 }
 
-/// One glyph of build-time shaping ground truth (rustybuzz over the source
+/// One glyph of build-time shaping ground truth (harfrust over the source
 /// font): the glyph id and the byte offset of the cluster it descends from.
 #[derive(Clone, Copy, Debug)]
 pub struct ShapedGlyph {
@@ -199,7 +199,7 @@ pub struct PreparedBlock<'a> {
     pub colors: Vec<Vec<Option<Color>>>,
 }
 
-/// HarfBuzz/rustybuzz never apply a contextual rule whose total window
+/// HarfBuzz/harfrust never apply a contextual rule whose total window
 /// (backtrack + input + lookahead) exceeds this many glyphs.
 const SHAPER_MAX_CONTEXT: usize = 64;
 /// Long occurrences (comments, strings) are colored by several chained
@@ -382,7 +382,7 @@ pub fn compile(
                 )
             });
         if !aligned {
-            // rustybuzz and the per-char model disagree on this block
+            // harfrust and the per-char model disagree on this block
             // (merged clusters, bidi reordering, glyph count mismatch):
             // fall back to the classic per-character view
             misaligned_blocks += 1;

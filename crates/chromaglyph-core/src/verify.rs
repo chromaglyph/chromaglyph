@@ -1,6 +1,6 @@
-//! Stage 5 of the pipeline: the rustybuzz oracle.
+//! Stage 5 of the pipeline: the harfrust oracle.
 //!
-//! The produced font is shaped in-process with rustybuzz (the same shaping
+//! The produced font is shaped in-process with harfrust (the same shaping
 //! algorithm HarfBuzz uses, which is what browsers run). For every block we
 //! compare the shaped glyph stream against the plan's **units** — the glyph
 //! the output font is supposed to produce per position (a plain cell's
@@ -21,7 +21,6 @@
 use std::collections::HashMap;
 
 use read_fonts::{FontRef, TableProvider};
-use rustybuzz::{Face, UnicodeBuffer};
 
 use crate::compile::{GlyphPlan, PreparedBlock};
 use crate::error::BuildError;
@@ -61,25 +60,31 @@ pub fn verify_plan(ttf: &[u8], blocks: &[PreparedBlock<'_>], plan: &GlyphPlan) -
         alt_of.insert((base, pal), alt);
     }
 
-    let face = match Face::from_slice(ttf, 0) {
-        Some(face) => face,
+    let font = match harfrust::Font::new(ttf.to_vec(), 0) {
+        Some(font) => font,
         None => {
             let mut result = VerifyResult::ok();
-            result.fail("rustybuzz cannot parse the produced font".into());
+            result.fail("harfrust cannot parse the produced font".into());
             return result;
         }
     };
+    let face = harfrust::ShaperFont::new(&font);
 
     for (block_idx, &(lo, hi)) in plan.block_ranges.iter().enumerate() {
         let block = &blocks[block_idx];
-        let mut buffer = UnicodeBuffer::new();
-        buffer.push_str(block.text);
-        let shaped = rustybuzz::shape(&face, &[], buffer);
-
-        let infos = shaped.glyph_infos();
+        let infos = match crate::shape::shape_text(&face, block.text) {
+            Some(infos) => infos,
+            None => {
+                result.fail(format!(
+                    "block '{}': the shaper rejected the text",
+                    block.id
+                ));
+                continue;
+            }
+        };
         // The shaper produces no glyph for hidden controls in browsers
         // (variation selectors unresolved by cmap14 get deleted), but
-        // rustybuzz emits an extra glyph for them — alignment therefore
+        // harfrust emits an extra glyph for them — alignment therefore
         // walks clusters, skipping glyphs whose cluster belongs to a
         // hidden cell. Every non-hidden cell expects exactly one glyph at
         // its own byte offset: the covered unit's glyph (colored copy or
@@ -394,13 +399,14 @@ pub fn verify_font(
     )?;
 
     let mut result = VerifyResult::ok();
-    let face = match Face::from_slice(ttf, 0) {
-        Some(face) => face,
+    let font = match harfrust::Font::new(ttf.to_vec(), 0) {
+        Some(font) => font,
         None => {
-            result.fail("rustybuzz cannot parse the produced font".into());
+            result.fail("harfrust cannot parse the produced font".into());
             return Ok(result);
         }
     };
+    let face = harfrust::ShaperFont::new(&font);
     let Some(painted) = read_painted(ttf) else {
         if plan.slots.is_empty() {
             return Ok(result);
@@ -411,10 +417,16 @@ pub fn verify_font(
     let num_slots = plan.slots.len();
 
     for (block_idx, block) in prepared.iter().enumerate() {
-        let mut buffer = UnicodeBuffer::new();
-        buffer.push_str(block.text);
-        let shaped = rustybuzz::shape(&face, &[], buffer);
-        let infos = shaped.glyph_infos();
+        let infos = match crate::shape::shape_text(&face, block.text) {
+            Some(infos) => infos,
+            None => {
+                result.fail(format!(
+                    "block '{}': the shaper rejected the text",
+                    block.id
+                ));
+                continue;
+            }
+        };
 
         // non-hidden cells of the block, in order
         let cells: Vec<usize> = plan
@@ -427,7 +439,7 @@ pub fn verify_font(
             })
             .unwrap_or_default();
         // real glyphs only: a glyph is real iff its cluster is the byte
-        // offset of a non-hidden cell (rustybuzz emits extra glyphs for
+        // offset of a non-hidden cell (harfrust emits extra glyphs for
         // hidden controls — their clusters belong to hidden cells, which
         // never collide with a non-hidden cell's byte offset)
         let mut cell_of_cluster = HashMap::new();

@@ -946,7 +946,7 @@ pub fn synthesize(
     // ---- newline: no glyph, on purpose -----------------------------------
     // Browsers shape each source line as its own run (the `\n` is consumed
     // as the forced break), so mapping a newline glyph would change
-    // nothing in a real renderer — rustybuzz alone would shape across it
+    // nothing in a real renderer — harfrust alone would shape across it
     // and "verify" behavior no browser has. `plain_glyphs` stays empty;
     // the model treats `\n`/`\r` as hard barriers (class c_nl / notdef
     // participate in no rule), exactly like unmapped characters.

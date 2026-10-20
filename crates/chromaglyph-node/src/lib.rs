@@ -60,7 +60,7 @@ pub struct BuildOptions {
     /// `csharp`, `php`, `ruby`, `lua`, `shell`, `html`, `css`) instead of compiling
     /// `blocks` (which are ignored); `semantic` is ignored too.
     pub generic: Option<String>,
-    /// Run the rustybuzz oracle (default true).
+    /// Run the harfrust oracle (default true).
     pub verify: Option<bool>,
     /// Overlay tree-sitter semantic colors (parameters, types, calls,
     /// constants) on top of the syntactic highlighting (default false;

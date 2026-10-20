@@ -13,7 +13,7 @@ tokenize+theme → compile → fontbuild → verify
 3. **fontbuild**: source font tables are preserved byte-for-byte where
    possible; colored copies are zero-outline glyphs plus COLRv0 layer
    references to the base glyphs, one CPAL palette per theme.
-4. **verify**: rustybuzz shapes the produced font in-process and the
+4. **verify**: harfrust shapes the produced font in-process and the
    substituted glyph ids are compared character by character, then every
    palette is read back from CPAL and checked.
 

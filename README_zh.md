@@ -37,7 +37,7 @@ tokenize+theme → compile → fontbuild → verify
   自动解包；可变 TrueType 钉到默认实例（glyf 轮廓本身就是默认实例，
   直接丢弃变体表即可）。CFF2（可变 OTF 轮廓）与 CID-keyed CFF 会带
   明确报错地拒绝。
-- **verify**（预言机）：rustybuzz 进程内整形产出的字体，逐字符比对替换后的
+- **verify**（预言机）：harfrust 进程内整形产出的字体，逐字符比对替换后的
   glyph id（整形与主题无关，验一次即可）；再按调色板逐一读回 CPAL 核对颜色。
   `build` 默认自跑。
 
@@ -168,7 +168,7 @@ const file = await unified()
 
 ## 技术选型
 
-`read-fonts` / `skrifa` / `write-fonts`（fontations 系）· rustybuzz（整形
+`read-fonts` / `skrifa` / `write-fonts`（fontations 系）· harfrust（整形
 预言机）· syntect（语法/主题）· 可选 tree-sitter（语义层）· flate2（WOFF1）
 · ttf2woff2（WOFF2 编码）· wuff（WOFF2 解码）。
 

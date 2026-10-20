@@ -17,7 +17,7 @@
 //! 3. [`fontbuild`] — assemble the output font, subset to the glyphs the
 //!    blocks use (empty colored copies + COLR layers referencing base
 //!    glyphs; generic mode keeps the full charset)
-//! 4. [`verify`] — rustybuzz oracle + per-palette color readback
+//! 4. [`verify`] — harfrust oracle + per-palette color readback
 
 #![forbid(unsafe_code)]
 
@@ -27,6 +27,7 @@ pub mod error;
 pub mod fontbuild;
 pub mod generic;
 pub mod gsub;
+mod shape;
 pub mod spec;
 pub mod theme;
 pub mod tokenize;
@@ -73,7 +74,7 @@ pub struct BuildInput<'a> {
     /// The first theme is the default palette.
     pub themes: &'a [ThemeSpec],
     pub blocks: &'a [Block<'a>],
-    /// Run the rustybuzz oracle and fail the build on mismatch (default on).
+    /// Run the harfrust oracle and fail the build on mismatch (default on).
     pub run_verify: bool,
     /// Generic mode: synthesize rules that highlight **any** text of this
     /// language (keywords, line comments, strings); `blocks` are ignored.
@@ -139,7 +140,7 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
         return Err(BuildError::Theme("at least one theme is required".into()));
     }
     // unwrap WOFF containers / extract the requested collection member so
-    // everything downstream (load, the rustybuzz ligature shaper) sees a
+    // everything downstream (load, the harfrust ligature shaper) sees a
     // plain sfnt
     let sfnt = fontbuild::normalize_input(input.font_bytes, input.font_index)?;
     let loaded = fontbuild::load(sfnt.as_ref())?;
@@ -186,27 +187,28 @@ pub fn build(input: &BuildInput<'_>) -> Result<BuildOutput, BuildError> {
             let variant_log = std::cell::RefCell::new(Vec::new());
             // ligature re-materialization: shape each block with the source
             // font so the compiler sees the glyphs a browser would render.
-            // A rustybuzz parse failure here degrades to ligatures-off
+            // A harfrust parse failure here degrades to ligatures-off
             // (read-fonts already accepted the font, so this is unlikely).
-            let face = input
+            let ligature_font = input
                 .ligatures
-                .then(|| rustybuzz::Face::from_slice(sfnt.as_ref(), 0))
+                .then(|| harfrust::Font::new(sfnt.as_ref().to_vec(), 0))
                 .flatten();
+            let ligature_shaper = ligature_font.as_ref().map(harfrust::ShaperFont::new);
             let shape_fn;
-            let shaper: Option<compile::Shaper<'_>> = match &face {
-                Some(face) => {
+            let shaper: Option<compile::Shaper<'_>> = match &ligature_shaper {
+                Some(shaper_font) => {
                     shape_fn = |text: &str| {
-                        let mut buffer = rustybuzz::UnicodeBuffer::new();
-                        buffer.push_str(text);
-                        let shaped = rustybuzz::shape(face, &[], buffer);
-                        shaped
-                            .glyph_infos()
-                            .iter()
-                            .map(|i| compile::ShapedGlyph {
-                                glyph: i.glyph_id as u16,
-                                cluster: i.cluster,
+                        shape::shape_text(shaper_font, text)
+                            .map(|infos| {
+                                infos
+                                    .iter()
+                                    .map(|i| compile::ShapedGlyph {
+                                        glyph: i.glyph_id as u16,
+                                        cluster: i.cluster,
+                                    })
+                                    .collect()
                             })
-                            .collect()
+                            .unwrap_or_default()
                     };
                     Some(&shape_fn)
                 }

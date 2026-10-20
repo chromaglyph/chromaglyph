@@ -48,7 +48,7 @@ Inspect `file.data.chromaglyph` for `{ cached, contentHash, css, warnings }`.
 | `langs` | `null` | Filter fences by language (`['rust', 'ts']`); `null` takes every fenced block. |
 | `embed` | `true` | Inline the font as a data: URI; `false` emits files into `outDir`. |
 | `outDir` | `'chromaglyph-out'` | Where emitted font/CSS assets go (`embed: false`). |
-| `verify` | `true` | Run the rustybuzz oracle over the produced font before shipping it. |
+| `verify` | `true` | Run the harfrust oracle over the produced font before shipping it. |
 | `semantic` | `false` | Overlay tree-sitter semantic colors (parameters, variables-as-scoped, types, calls) on top of the syntactic highlighting — rust/js/ts/python/java only; other languages silently stay syntactic. |
 | `ligatures` | `false` | Preserve the source font's ligatures (`!=`, `->`, `www`, …): every substitution the font's own shaping performs is re-materialized as a build-time rule, so ligatures render exactly as the font intends while staying highlighted. Without it the source font's layout tables are dropped (they would fight the coloring rules) and ligature sequences render per-character. Ligature sites spanning multiple colors degrade to plain per-char text (colors win; warnings name them). |
 | `format` | `'woff'` | Output container: `'woff2'` (Brotli, 15–30% smaller) or `'woff'`; both outline flavors ride in woff2. The generated CSS/data-URI mime always names the container that actually shipped. |

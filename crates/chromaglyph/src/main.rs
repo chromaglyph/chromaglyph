@@ -72,7 +72,7 @@ enum Command {
         /// Optional path for the JSON build report
         #[arg(long)]
         report: Option<PathBuf>,
-        /// Skip the built-in rustybuzz verification pass
+        /// Skip the built-in harfrust verification pass
         #[arg(long)]
         no_verify: bool,
         /// Overlay tree-sitter semantic colors (parameters, types, calls,
@@ -89,7 +89,7 @@ enum Command {
         #[arg(long)]
         ligatures: bool,
     },
-    /// Re-check a built font against input content (the rustybuzz oracle).
+    /// Re-check a built font against input content (the harfrust oracle).
     Verify {
         /// Font produced by `chromaglyph build` (.ttf, .woff or .woff2)
         #[arg(long)]

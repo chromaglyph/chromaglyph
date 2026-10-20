@@ -12,7 +12,7 @@ export interface RemarkChromaglyphOptions {
   embed?: boolean
   /** Directory for emitted font files when `embed` is false. */
   outDir?: string
-  /** Run the rustybuzz oracle (default true). */
+  /** Run the harfrust oracle (default true). */
   verify?: boolean
   /** Preserve the source font's ligatures (`!=`, `->`, …) in exact mode:
    *  each substitution the font's own shaping performs is re-materialized

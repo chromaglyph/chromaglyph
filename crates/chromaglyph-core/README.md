@@ -14,7 +14,7 @@ library: `(font, themes, blocks) → (woff, css, report)`.
   fail on ambiguity
 - colored copies are empty glyphs referenced by COLRv0 layers (~zero bytes
   per color); one CPAL palette per theme
-- built-in rustybuzz oracle verifies every substituted glyph and every
+- built-in harfrust oracle verifies every substituted glyph and every
   palette before the font ships
 
 ```rust

@@ -37,7 +37,7 @@
 //! by one space and it colors; the spaces are in-run backtrack). This
 //! was verified pixel-exact in a real browser; the earlier v1.1 idea of
 //! injecting a newline glyph to keep runs whole does not hold —
-//! rustybuzz shapes the whole text as one run and would happily verify
+//! harfrust shapes the whole text as one run and would happily verify
 //! the fiction.
 //!
 //! Three mechanisms make the states work under real shapers (which apply

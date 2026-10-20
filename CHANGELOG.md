@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **shaping layer: rustybuzz → harfrust** — rustybuzz is unmaintained
+  (RUSTSEC-2026-0206); the oracle and the ligature re-materializer now
+  shape with harfrust, its official successor under the harfbuzz
+  organization. harfrust tracks HarfBuzz 13 (closer to what browsers
+  run) and parses fonts through read-fonts, the same stack the rest of
+  the pipeline already uses. No behavioral drift: the full e2e suite
+  (exact-mode oracle, generic-mode oracle over curated + random
+  samples, ligature and UVS walks) passes unchanged; `rustybuzz::shape`
+  guessed segment properties implicitly, which the new shared
+  `shape::shape_text` entry point does explicitly before shaping.
+
 - **generic mode: keywords and numbers color at line starts (and line
   ends)** — the documented column-0 limitation is gone. Browsers shape
   every source line of a `pre` as its own run, so a column-0 keyword has

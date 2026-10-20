@@ -14,7 +14,7 @@ const result = buildFontSafe({
     { id: 'block-0', lang: 'rust', text: 'fn main() {}' },
     { id: 'block-1', lang: 'js', text: 'const x = 1' },
   ],
-  verify: true,                          // rustybuzz oracle (default on)
+  verify: true,                          // harfrust oracle (default on)
   ligatures: true,                       // keep the font's != -> ligatures, highlighted
   format: 'woff2',                       // output container: 'woff' (default) | 'woff2'
   cacheDir: '.cache',                    // optional on-disk cache

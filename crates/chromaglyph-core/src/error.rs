@@ -17,7 +17,7 @@ pub enum BuildError {
     BadTokens(String),
     /// A write-fonts table failed to serialize.
     TableWrite(String),
-    /// The rustybuzz oracle disagreed with the intended highlighting.
+    /// The harfrust oracle disagreed with the intended highlighting.
     VerifyFailed(Vec<String>),
     /// WOFF wrapping/unwrapping failure.
     Woff(String),

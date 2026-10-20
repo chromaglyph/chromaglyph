@@ -1,12 +1,24 @@
 //! End-to-end: fixture TTF + code snippet + two themes → one color font
-//! with two CPAL palettes, verified by the rustybuzz oracle (inside
+//! with two CPAL palettes, verified by the harfrust oracle (inside
 //! `build`), then re-verified standalone from the woff bytes.
 
 use chromaglyph_core::theme::ThemeSpec;
 use chromaglyph_core::{build, verify, Block, BuildInput, OutputFormat};
+use harfrust::ShaperFont;
 use read_fonts::TableProvider;
 
 const FONT: &[u8] = include_bytes!("fixtures/JetBrainsMono-Regular.ttf");
+
+/// Shapes `text` the way the oracle does: default features, segment
+/// properties guessed from the text (what `rustybuzz::shape` did
+/// implicitly).
+fn shape(face: &ShaperFont<'_, '_>, text: &str) -> Vec<harfrust::GlyphInfo> {
+    let mut buffer = harfrust::Buffer::new();
+    buffer.push_str(text);
+    buffer.guess_segment_properties();
+    harfrust::shape(face, &mut buffer, harfrust::ShapeOptions::new()).unwrap();
+    buffer.glyph_infos().to_vec()
+}
 
 const SAMPLE: &str = r#"// chromaglyph m2
 fn main() {
@@ -622,7 +634,7 @@ fn emoji_and_variation_selectors_shape_and_color() {
 
 /// A source font with a cmap format 14 (UVS) subtable: `base + VS16` must
 /// resolve to the variant glyph both at compile time (the cell carries the
-/// UVS glyph id) and in the oracle (rustybuzz resolves via the cmap14 that
+/// UVS glyph id) and in the oracle (harfrust resolves via the cmap14 that
 /// passes through to the output font).
 #[test]
 fn cmap14_variation_sequence_resolves_to_variant_glyph() {
@@ -723,7 +735,7 @@ fn inject_cmap14_uvs(font: &[u8], base: char, selector: char) -> Vec<u8> {
 
 /// Generic mode: one font that highlights ANY Rust text (content unknown
 /// at build time) — keywords, line comments, strings — verified by the
-/// rustybuzz oracle against the reference lexer on curated + random
+/// harfrust oracle against the reference lexer on curated + random
 /// samples.
 #[test]
 fn generic_mode_highlights_arbitrary_text() {
@@ -1543,7 +1555,7 @@ fn generic_font_glyphs_stay_aligned() {
 }
 
 /// Exact mode with `ligatures: true`: the build shapes each block with the
-/// source font (rustybuzz) and re-materializes every substitution as a
+/// source font (harfrust) and re-materializes every substitution as a
 /// rule. This fixture expresses its `!=`/`->` "ligatures" as per-character
 /// contextual alternates (same glyph count, different glyphs) — the
 /// restore path must bring those alternates back, colored, with both the
@@ -1598,12 +1610,10 @@ fn exact_mode_restores_contextual_alternates() {
     let charmap = skrifa::charmap::Charmap::new(&font);
     let bang = charmap.map('!').unwrap().to_u32() as u16;
     let eq = charmap.map('=').unwrap().to_u32() as u16;
-    let face = rustybuzz::Face::from_slice(&out.ttf, 0).unwrap();
-    let mut buffer = rustybuzz::UnicodeBuffer::new();
-    buffer.push_str(src);
-    let shaped = rustybuzz::shape(&face, &[], buffer);
+    let shape_font = harfrust::Font::new(out.ttf.clone(), 0).unwrap();
+    let face = harfrust::ShaperFont::new(&shape_font);
+    let shaped = shape(&face, src);
     let bang_at = shaped
-        .glyph_infos()
         .iter()
         .find(|i| i.cluster == 18)
         .expect("a glyph covers the != site");
@@ -1684,14 +1694,12 @@ fn injected_ligature_colored_uncolored_and_mixed() {
     let charmap = skrifa::charmap::Charmap::new(&font);
     let f_gid = charmap.map('f').unwrap().to_u32() as u16;
     let i_gid = charmap.map('i').unwrap().to_u32() as u16;
-    let face = rustybuzz::Face::from_slice(&out.ttf, 0).unwrap();
-    let mut buffer = rustybuzz::UnicodeBuffer::new();
-    buffer.push_str(colored_src);
-    let shaped = rustybuzz::shape(&face, &[], buffer);
+    let shape_font = harfrust::Font::new(out.ttf.clone(), 0).unwrap();
+    let face = harfrust::ShaperFont::new(&shape_font);
+    let shaped = shape(&face, colored_src);
     let site = colored_src.find("fi").unwrap();
     // ONE glyph at the site cluster: not f, not i — the ligature
     let at_site: Vec<u16> = shaped
-        .glyph_infos()
         .iter()
         .filter(|g| g.cluster as usize == site)
         .map(|g| g.glyph_id as u16)
@@ -1744,13 +1752,11 @@ fn injected_ligature_colored_uncolored_and_mixed() {
     })
     .expect("uncolored ligature build + oracle");
     let font = FontRef::new(&out.ttf).unwrap();
-    let face = rustybuzz::Face::from_slice(&out.ttf, 0).unwrap();
-    let mut buffer = rustybuzz::UnicodeBuffer::new();
-    buffer.push_str(plain_src);
-    let shaped = rustybuzz::shape(&face, &[], buffer);
+    let shape_font = harfrust::Font::new(out.ttf.clone(), 0).unwrap();
+    let face = harfrust::ShaperFont::new(&shape_font);
+    let shaped = shape(&face, plain_src);
     let site = plain_src.find("fi").unwrap();
     let at_site: Vec<u16> = shaped
-        .glyph_infos()
         .iter()
         .filter(|g| g.cluster as usize == site)
         .map(|g| g.glyph_id as u16)
@@ -1799,16 +1805,14 @@ fn injected_ligature_colored_uncolored_and_mixed() {
         "{:?}",
         out.report.warnings
     );
-    let face = rustybuzz::Face::from_slice(&out.ttf, 0).unwrap();
-    let mut buffer = rustybuzz::UnicodeBuffer::new();
-    buffer.push_str(mixed_src);
-    let shaped = rustybuzz::shape(&face, &[], buffer);
+    let shape_font = harfrust::Font::new(out.ttf.clone(), 0).unwrap();
+    let face = harfrust::ShaperFont::new(&shape_font);
+    let shaped = shape(&face, mixed_src);
     // per-build subset numbering: read the mixed font's own cmap
     let mixed_font = FontRef::new(&out.ttf).unwrap();
     let mixed_charmap = skrifa::charmap::Charmap::new(&mixed_font);
     let mixed_f = mixed_charmap.map('f').unwrap().to_u32() as u16;
     let at_site: Vec<u16> = shaped
-        .glyph_infos()
         .iter()
         .filter(|g| g.cluster as usize == fi_at)
         .map(|g| g.glyph_id as u16)
@@ -1818,7 +1822,6 @@ fn injected_ligature_colored_uncolored_and_mixed() {
     // a colored copy
     let mixed_i = mixed_charmap.map('i').unwrap().to_u32() as u16;
     let i_at = shaped
-        .glyph_infos()
         .iter()
         .find(|g| g.cluster as usize == fi_at + 1)
         .unwrap();

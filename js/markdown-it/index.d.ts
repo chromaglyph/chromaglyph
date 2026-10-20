@@ -21,7 +21,7 @@ export interface MarkdownItChromaglyphOptions {
    *   entity-escaped by SSR, so it never reaches the browser.
    */
   style?: 'inline' | 'link'
-  /** Run the rustybuzz oracle (default true). */
+  /** Run the harfrust oracle (default true). */
   verify?: boolean
   /** Preserve the source font's ligatures (`!=`, `->`, …) in exact mode
    *  (see the remark plugin's option of the same name). Default false. */

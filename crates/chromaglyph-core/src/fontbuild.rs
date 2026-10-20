@@ -674,7 +674,7 @@ pub fn assemble(
             // up: composite component gids inside the verbatim glyf then
             // pointed at the wrong glyphs (self-references included), and
             // browsers rejected the whole font at OTS (0.2.2 generic-mode
-            // regression; the rustybuzz oracle only diffs glyph ids and
+            // regression; the harfrust oracle only diffs glyph ids and
             // never walks outlines, so it stayed green)
             offsets.extend(loca_offsets.iter().skip(1).copied());
         }
