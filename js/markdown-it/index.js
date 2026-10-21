@@ -118,21 +118,30 @@ function markdownItChromaglyph(md, options = {}) {
     return `<style>\n${assets.css}</style>`
   }
 
-  // per-render context consumed by the fence renderer below; saved and
-  // restored so nested md.render calls (e.g. snippet includes) stay isolated
-  let current = null
   // last successful build(s): one BuildResult (page mode) or one per
   // language (lang mode), for tests/introspection after render finished
   let lastResult = null
   let lastResults = null
 
-  const origRender = md.render.bind(md)
-  md.render = (src, env) => {
-    // phase 1: parse once (this is exactly what md.render does internally)
-    const tokens = md.parse(src, env)
+  // Collect the fences of one parse and build their font(s) in a core rule
+  // at the end of the parse chain; the per-render context rides on env (a
+  // fresh object per parse, so nested renders — frontmatter excerpts,
+  // snippet includes — stay isolated for free). This must NOT be done by
+  // replacing md.render with a from-scratch parse+render: host frameworks
+  // assemble their markdown features as wrappers AROUND the render entry
+  // points (VitePress's sfc plugin initializes env.sfcBlocks in its
+  // md.render wrapper so html_block can hoist top-level <script setup>/
+  // <style> out of the template; frontmatter wraps md.parse; headers and
+  // title wrap renderer.render). A re-implemented render bypasses every
+  // wrapper above it — the <script setup> then stayed inside the Vue
+  // template and the client compiler rejected the page ("Tags with side
+  // effect (<script> and <style>) are ignored in client component
+  // templates"). A core rule runs inside every render path, however many
+  // wrappers surround it.
+  md.core.ruler.push('chromaglyph_fonts', (state) => {
     const fenceIndex = new Map() // token -> block index
     const blocks = []
-    for (const token of tokens) {
+    for (const token of state.tokens) {
       if (token.type !== 'fence' || token.hidden) continue
       const lang = String(token.info || '').trim().split(/\s+/)[0] || 'plain'
       if (langs && !langs.includes(lang)) continue
@@ -140,20 +149,20 @@ function markdownItChromaglyph(md, options = {}) {
       blocks.push({ id: `block-${blocks.length}`, lang, text: token.content })
     }
 
-    // phase 2: builds; silent degradation on failure (one font read per
-    // render, shared by every language group)
-    const fontBytes = loadFont()
-    const emit = (group, scope) => {
-      const built = buildFontSafe({ font: fontBytes, themes, blocks: group, verify, semantic, ligatures, format, cacheDir: diskCache })
-      if (!built) return null
-      const assets = buildCssAssets(built, { embed, outDir, cwd, ...(scope ? { lang: scope } : {}) })
-      return { built, tag: styleTag(assets) }
-    }
-
     let css = null
     let result = null
     let results = null
     if (blocks.length > 0) {
+      // builds; silent degradation on failure (one font read per render,
+      // shared by every language group)
+      const fontBytes = loadFont()
+      const emit = (group, scope) => {
+        const built = buildFontSafe({ font: fontBytes, themes, blocks: group, verify, semantic, ligatures, format, cacheDir: diskCache })
+        if (!built) return null
+        const assets = buildCssAssets(built, { embed, outDir, cwd, ...(scope ? { lang: scope } : {}) })
+        return { built, tag: styleTag(assets) }
+      }
+
       if (grouping === 'lang') {
         // group by language in first-appearance order; plain blocks form
         // their own zero-rule group; one failing language never takes the
@@ -187,15 +196,8 @@ function markdownItChromaglyph(md, options = {}) {
     lastResult = result
     lastResults = results
 
-    // phase 3: render from the already-parsed tokens with our fence rule
-    const previous = current
-    current = { css, result, results, fenceIndex, injected: false }
-    try {
-      return md.renderer.render(tokens, md.options, env)
-    } finally {
-      current = previous
-    }
-  }
+    state.env.chromaglyph = { css, fenceIndex, injected: false }
+  })
 
   // chain onto whatever fence rule is installed (VitePress ships its own)
   const prevFence = md.renderer.rules.fence
@@ -203,6 +205,7 @@ function markdownItChromaglyph(md, options = {}) {
     const base = prevFence
       ? prevFence(tokens, idx, opts, env, self)
       : self.renderToken(tokens, idx, opts)
+    const current = env && env.chromaglyph
     if (!current) return base
     const token = tokens[idx]
     if (!current.fenceIndex.has(token)) return base

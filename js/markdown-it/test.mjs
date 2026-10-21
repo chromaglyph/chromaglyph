@@ -133,6 +133,41 @@ test('chained after another fence rule (VitePress-like)', () => {
   assert.ok(html.includes('<style>'))
 })
 
+test('a wrapper chain around md.render (VitePress-like sfc hoisting) keeps working', () => {
+  // VitePress assembles its markdown features as wrappers around the render
+  // entry points: its sfc plugin initializes env.sfcBlocks inside its own
+  // md.render wrapper and its html_block rule hoists top-level
+  // <script setup>/<style> blocks out of the template from there. chromaglyph
+  // used to replace md.render with a from-scratch parse+render, bypassing
+  // that wrapper — env.sfcBlocks stayed unset, the script stayed in the
+  // html, and Vue's client compiler rejected the page ("Tags with side
+  // effect ... ignored in client component templates").
+  const md = new MarkdownIt({ html: true })
+  // host wrappers install BEFORE the user's markdown.config (chromaglyph)
+  const prevHtmlBlock = md.renderer.rules.html_block
+  md.renderer.rules.html_block = (tokens, idx, opts, env, self) => {
+    const hoisted = env.sfcBlocks
+    if (!hoisted || !/^<script[\s\S]*<\/script>$/.test(tokens[idx].content.trim())) {
+      return prevHtmlBlock(tokens, idx, opts, env, self)
+    }
+    hoisted.scripts.push(tokens[idx].content)
+    return ''
+  }
+  const render = md.render.bind(md)
+  md.render = (src, env = {}) => {
+    env.sfcBlocks = { scripts: [] }
+    return render(src, env)
+  }
+  md.use(chromaglyph, { font: FONT })
+
+  const html = md.render(
+    '# t\n\n```rust\nfn main() {}\n```\n\n<script setup>\nconst x = 1\n</script>\n',
+  )
+  assert.ok(!html.includes('<script'), `script must be hoisted out of the html: ${html}`)
+  assert.ok(html.includes('<style>'), 'chromaglyph still injects its stylesheet')
+  assert.ok(/data-chromaglyph="0"/.test(html), 'fence still marked')
+})
+
 test('file mode emits assets', () => {
   const outDir = '/tmp/cg-mdit-test'
   const md = makeMd({ embed: false, outDir })
