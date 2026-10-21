@@ -226,6 +226,11 @@ const remarkChromaglyph: Plugin<[RemarkChromaglyphOptions?], Root> = (options) =
       return { result, assets }
     }
 
+    // inject the stylesheet as the document's first node; pipelines must
+    // keep raw html downstream (remarkRehype + rehypeStringify with
+    // allowDangerousHtml, or rehype-raw). MDX pipelines reject
+    // plugin-injected `html` nodes — the Docusaurus adapter rewrites the
+    // node to MDX's native `jsx` type; no single node type survives both.
     const inject = (value: string) => {
       tree.children.unshift({ type: 'html', value })
     }
