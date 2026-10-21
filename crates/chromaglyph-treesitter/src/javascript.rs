@@ -93,6 +93,20 @@ pub(crate) fn handle_js(node: Node, _source: &[u8], spans: &mut Vec<SemanticSpan
                 push_range(ctor, TYPE, spans);
             }
         }
+        // object-literal properties `{ msg: value }`: identifier keys color
+        // like member access (`obj.msg`); quoted, numeric and computed keys
+        // keep their syntactic colors (string, expression)
+        "pair" => {
+            if let Some(key) = node.child_by_field_name("key") {
+                if key.kind() == "property_identifier" {
+                    push_range(key, PROPERTY, spans);
+                }
+            }
+        }
+        // `{ msg }` shorthand in an expression. The destructuring twin
+        // `shorthand_property_identifier_pattern` is a variable binding,
+        // not a property, and stays syntactic
+        "shorthand_property_identifier" => push_range(node, PROPERTY, spans),
         // typescript annotations: declared type names and the builtins
         // (string, number, …) which the grammar types as predefined_type
         "type_identifier" | "predefined_type" => push_range(node, TYPE, spans),
@@ -145,6 +159,39 @@ mod tests {
         assert!(!all("n").contains(&CONSTANT), "let binding is reassignable");
         assert!(all("N").contains(&CONSTANT), "const literal");
         assert!(!all("v").contains(&CONSTANT), "var binding");
+    }
+
+    #[test]
+    fn object_literal_keys_js_and_ts() {
+        let src = "const o = { msg: 'message', short, 'quoted': 1, [k]: 2 };\nconst { msg: m, short2 } = o;\n";
+        for lang in ["js", "ts"] {
+            let spans = semantic_spans(lang, src);
+            let get = |needle: &str| {
+                spans
+                    .iter()
+                    .filter(|s| &src[s.start..s.end] == needle)
+                    .map(|s| s.scope)
+                    .collect::<Vec<_>>()
+            };
+            assert!(
+                get("msg").contains(&PROPERTY),
+                "{lang}: `{{
+ msg: ..}}` key"
+            );
+            assert!(
+                get("short").contains(&PROPERTY),
+                "{lang}: `{{ short }}` shorthand"
+            );
+            assert!(
+                !get("quoted").contains(&PROPERTY),
+                "{lang}: quoted key keeps its string color"
+            );
+            // destructuring: bindings, not properties
+            let destructured = spans
+                .iter()
+                .any(|s| s.scope == PROPERTY && s.start > src.find("const {").unwrap());
+            assert!(!destructured, "{lang}: patterns stay syntactic");
+        }
     }
 
     #[test]

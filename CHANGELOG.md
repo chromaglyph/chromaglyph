@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **tree-sitter semantic layer colors JS/TS object-literal keys**
+  (`{ msg: 'message' }`, `{ msg }`): identifier keys and expression
+  shorthand now get the `variable.other.property` span like member
+  access. Before, only TS keys were colored — via the syntactic
+  grammar's `meta.object-literal.key`, which the JS grammar names
+  `meta.mapping.key` and no VS Code theme colors. Quoted, numeric and
+  computed keys, and destructuring shorthand (`const { msg } = o`, a
+  binding, not a property), keep their syntactic colors.
+
 ## js 0.5.0 (2026-10-21)
 
 - **All five JS packages are TypeScript** (`src/` + tsdown + vitest;

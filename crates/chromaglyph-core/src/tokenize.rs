@@ -219,4 +219,40 @@ mod tests {
             "plain text has no coloring"
         );
     }
+
+    #[test]
+    fn semantic_object_key_colors_js_like_ts() {
+        // the JS grammar scopes object keys `meta.mapping.key` where TS's
+        // uses `meta.object-literal.key` — dark-plus colors only the
+        // latter, so a JS key stays plain syntactically; the semantic
+        // layer's property span must resolve to the same blue or JS never
+        // matches TS in an editor
+        let ss = crate::tokenize::syntax_set();
+        let th = themes();
+        let js = "const o = {\n  msg: 'message'\n};\n";
+        let block = Block {
+            id: "t".into(),
+            lang: "javascript".into(),
+            text: js,
+        };
+        let mut colors = colorize_block(&block, &th, ss).unwrap();
+        let ms = js.find("msg").unwrap();
+        let me = ms + "msg".len();
+        assert!(
+            colors[0][ms..me].iter().all(|c| c.is_none()),
+            "syntactic JS leaves the key plain (the bug this overlay fixes)"
+        );
+        apply_semantic(
+            &mut colors,
+            js,
+            &[(ms, me, "variable.other.property".into())],
+            &th,
+        );
+        assert!(
+            colors[0][ms..me]
+                .iter()
+                .all(|c| c.map(|c| c.to_hex()) == Some("#9cdcfe".into())),
+            "dark-plus colors variable.other.property like TS's syntactic key"
+        );
+    }
 }
