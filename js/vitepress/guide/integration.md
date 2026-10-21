@@ -71,12 +71,18 @@ and to the theme's editor background. Both sit behind CSS variables, so a
 class-based toggle overrides them in one place, no runtime JS:
 
 ```css
-/* .vitepress/theme/style.css */
-:root {
+/* .vitepress/theme/style.css — the override goes ON the chromaglyph
+   elements, never :root: var() substitution happens at the declaring
+   element, and with grouping: 'lang' the palette aliases live on each
+   [data-chromaglyph-lang] scope, invisible from :root. A :root-level
+   override silently degrades to the dark fallback in BOTH modes. */
+[data-chromaglyph],
+[data-chromaglyph-lang] {
   --chromaglyph-palette: var(--chromaglyph-light-palette);
   --chromaglyph-bg: var(--vp-code-block-bg); /* VitePress's own block bg */
 }
-html.dark {
+html.dark [data-chromaglyph],
+html.dark [data-chromaglyph-lang] {
   --chromaglyph-palette: var(--chromaglyph-dark-palette);
 }
 ```

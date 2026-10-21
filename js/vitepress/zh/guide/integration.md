@@ -57,12 +57,17 @@ Vue 框架会把 markdown 输出**当作 Vue 模板编译**，插件默认的内
 生成的 CSS 默认用 `prefers-color-scheme` 做深浅切换，背景取主题的编辑器背景。两者都在 CSS 变量之后，基于 class 的切换只需在一处覆盖，无需运行时 JS：
 
 ```css
-/* .vitepress/theme/style.css */
-:root {
+/* .vitepress/theme/style.css — 覆盖必须写在 chromaglyph 元素上,不能写
+   :root:var() 替换发生在声明元素处,而 grouping: 'lang' 下调色板别名定义
+   在每个 [data-chromaglyph-lang] 作用域上,:root 看不见。写在 :root 的
+   覆盖会在两种外观模式下都静默退化成深色 fallback。 */
+[data-chromaglyph],
+[data-chromaglyph-lang] {
   --chromaglyph-palette: var(--chromaglyph-light-palette);
   --chromaglyph-bg: var(--vp-code-block-bg); /* VitePress 自己的代码块背景 */
 }
-html.dark {
+html.dark [data-chromaglyph],
+html.dark [data-chromaglyph-lang] {
   --chromaglyph-palette: var(--chromaglyph-dark-palette);
 }
 ```

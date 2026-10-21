@@ -129,10 +129,20 @@
   --vp-custom-block-tip-code-bg: var(--vp-c-brand-soft);
 }
 
-:root {
+/* The palette override must live ON the chromaglyph-scoped elements, not
+   :root — var() substitution happens at the declaring element, and with
+   grouping: 'lang' the aliases (--chromaglyph-dark/light-palette) are
+   defined on each [data-chromaglyph-lang] scope, invisible from :root.
+   A :root-level --chromaglyph-palette resolves to invalid there, so the
+   font-palette fallback (always dark) wins in BOTH appearance modes.
+   Element-level works for 'page' grouping too: the aliases then sit on
+   :root and inherit down to these same elements. */
+[data-chromaglyph],
+[data-chromaglyph-lang] {
   --chromaglyph-palette: var(--chromaglyph-light-palette);
   --chromaglyph-bg: var(--vp-code-block-bg); /* or any bg you want */
 }
-html.dark {
+html.dark [data-chromaglyph],
+html.dark [data-chromaglyph-lang] {
   --chromaglyph-palette: var(--chromaglyph-dark-palette);
 }

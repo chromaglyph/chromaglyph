@@ -35,6 +35,7 @@ export default defineConfig({
         semantic: true,
         ligatures: true,
         cacheDir: '.chromaglyph-cache',
+        grouping: 'lang',
       })
     },
   },

@@ -65,14 +65,26 @@ override both through two CSS variables — no runtime JS, and the override
 wins in both modes at once:
 
 ```css
-:root {
+/* scope the override to the chromaglyph elements, not :root — see below */
+[data-chromaglyph],
+[data-chromaglyph-lang] {
   --chromaglyph-palette: var(--chromaglyph-light-palette);
   --chromaglyph-bg: var(--vp-code-block-bg); /* or any bg you want */
 }
-html.dark {
+html.dark [data-chromaglyph],
+html.dark [data-chromaglyph-lang] {
   --chromaglyph-palette: var(--chromaglyph-dark-palette);
 }
 ```
+
+The override must live **on the chromaglyph elements**, not on `:root`:
+`var()` substitution happens at the declaring element, and with
+`grouping: 'lang'` the aliases (`--chromaglyph-dark/light-palette`) are
+defined on each `[data-chromaglyph-lang]` scope — invisible from `:root`.
+A `:root`-level `--chromaglyph-palette` resolves to invalid there and the
+font-palette fallback (always dark) wins in **both** modes. Element-level
+works for `grouping: 'page'` too: the aliases then sit on `:root` and
+inherit down to the same elements.
 
 The injected stylesheet defines the hash-free aliases
 `--chromaglyph-dark-palette` / `--chromaglyph-light-palette` (pointing at
