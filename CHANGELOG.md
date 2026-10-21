@@ -19,6 +19,12 @@
   computed keys, and destructuring shorthand (`const { msg } = o`, a
   binding, not a property), keep their syntactic colors.
 
+## js 0.6.0 (2026-10-21)
+
+- No code changes. Released to align the JS line with native 0.6.0 and
+  to exercise the npm trusted-publisher configurations of the five
+  plugin packages from CI.
+
 ## js 0.5.0 (2026-10-21)
 
 - **All five JS packages are TypeScript** (`src/` + tsdown + vitest;
