@@ -7,14 +7,14 @@ hero:
   tagline: The DOM holds plain text; the colors live in the glyphs. No spans, clean copy & paste.
   actions:
     - theme: brand
+      text: Get started
+      link: /guide/getting-started
+    - theme: alt
       text: How it works
       link: /guide/how-it-works
     - theme: alt
       text: Languages
       link: /guide/languages
-    - theme: alt
-      text: VitePress integration
-      link: /guide/integration
 
 features:
   - icon: 🎨

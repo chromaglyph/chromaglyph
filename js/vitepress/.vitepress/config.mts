@@ -46,11 +46,12 @@ export default defineConfig({
       description:
         'Syntax highlighting compiled into a font: the DOM stays plain text, colors live in the glyphs, copy & paste stays clean.',
       themeConfig: {
-        nav: [{ text: 'Guide', link: '/guide/how-it-works', activeMatch: '/guide/' }],
+        nav: [{ text: 'Guide', link: '/guide/getting-started', activeMatch: '/guide/' }],
         sidebar: [
           {
             text: 'Guide',
             items: [
+              { text: 'Getting started', link: '/guide/getting-started' },
               { text: 'How it works', link: '/guide/how-it-works' },
               { text: 'Languages', link: '/guide/languages' },
               { text: 'Themes', link: '/guide/themes' },
@@ -67,11 +68,12 @@ export default defineConfig({
       description:
         '把语法高亮编译进字体：DOM 里只有纯文本，颜色住在字形里，复制即干净。',
       themeConfig: {
-        nav: [{ text: '指南', link: '/zh/guide/how-it-works', activeMatch: '/zh/guide/' }],
+        nav: [{ text: '指南', link: '/zh/guide/getting-started', activeMatch: '/zh/guide/' }],
         sidebar: [
           {
             text: '指南',
             items: [
+              { text: '快速上手', link: '/zh/guide/getting-started' },
               { text: '工作原理', link: '/zh/guide/how-it-works' },
               { text: '支持的语言', link: '/zh/guide/languages' },
               { text: '主题', link: '/zh/guide/themes' },

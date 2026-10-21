@@ -1,8 +1,20 @@
 # Languages
 
-The eleven blocks on this page are batched into **one font** per render
-(cross-language global disambiguation). Every block copies out as plain
-text.
+Language support comes in two tiers:
+
+- **Exact mode** (`--input` — and what every JS plugin runs) highlights
+  **any language the bundled grammar set covers**: syntect's defaults plus
+  the two-face extras, all real TextMate grammars parsed at build time.
+  No builtin language list is involved.
+- **Generic mode** (`--generic`) currently supports a limited set of
+  builtin languages only — rust, js, ts, python, go, java, c, cpp,
+  csharp, php, ruby, lua, shell, html, css — each a glyph-substitution
+  state machine synthesized from a hand-written spec. The sections below
+  cover eleven of them (PHP, Ruby, Lua and Shell round out the list).
+
+Every block on this page is rendered in exact mode and copies out as
+plain text — this site groups one font per language; the default grouping
+batches the whole page into one font.
 
 ## Rust
 

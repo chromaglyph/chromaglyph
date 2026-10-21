@@ -7,14 +7,14 @@ hero:
   tagline: DOM 里只有纯文本，颜色住在字形里。没有 span，复制即干净。
   actions:
     - theme: brand
+      text: 快速上手
+      link: /zh/guide/getting-started
+    - theme: alt
       text: 工作原理
       link: /zh/guide/how-it-works
     - theme: alt
       text: 支持的语言
       link: /zh/guide/languages
-    - theme: alt
-      text: 接入 VitePress
-      link: /zh/guide/integration
 
 features:
   - icon: 🎨
