@@ -1,0 +1,41 @@
+{
+  "name": "@chromaglyph/eleventy",
+  "version": "0.4.1",
+  "description": "Eleventy integration: chromaglyph syntax highlighting compiled into a color font, via the markdown-it pipeline",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "dependencies": {
+    "@chromaglyph/markdown-it": "workspace:*",
+    "@chromaglyph/node": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14",
+    "markdown-it": "^14",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run && tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">= 18"
+  }
+}

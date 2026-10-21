@@ -1,0 +1,51 @@
+{
+  "name": "@chromaglyph/astro",
+  "version": "0.4.1",
+  "description": "Astro / Starlight integration: chromaglyph syntax highlighting compiled into a color font, via the remark pipeline",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "dependencies": {
+    "@chromaglyph/node": "workspace:*",
+    "@chromaglyph/remark": "workspace:*"
+  },
+  "peerDependencies": {
+    "@astrojs/starlight": "*"
+  },
+  "peerDependenciesMeta": {
+    "@astrojs/starlight": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "rehype-stringify": "^10",
+    "remark-parse": "^11",
+    "remark-rehype": "^11",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "unified": "^11",
+    "vitest": "catalog:"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run && tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">= 18"
+  }
+}

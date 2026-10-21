@@ -1,0 +1,44 @@
+{
+  "name": "@chromaglyph/docusaurus",
+  "version": "0.4.1",
+  "description": "Docusaurus integration: chromaglyph syntax highlighting compiled into a color font, MDX-safe via the remark pipeline",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "dependencies": {
+    "@chromaglyph/node": "workspace:*",
+    "@chromaglyph/remark": "workspace:*"
+  },
+  "devDependencies": {
+    "@mdx-js/mdx": "^3",
+    "@types/hast": "^3",
+    "@types/mdast": "^4",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "unified": "^11",
+    "vfile": "^6",
+    "vitest": "catalog:"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run && tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">= 18"
+  }
+}
