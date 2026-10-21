@@ -2,8 +2,8 @@
   "name": "@chromaglyph/docs",
   "private": true,
   "scripts": {
-    "docs:dev": "node scripts/gen-themes.mjs && vitepress dev",
-    "docs:build": "node scripts/gen-themes.mjs && vitepress build",
+    "docs:dev": "pnpm --filter @chromaglyph/markdown-it build && node scripts/gen-themes.mjs && vitepress dev",
+    "docs:build": "pnpm --filter @chromaglyph/markdown-it build && node scripts/gen-themes.mjs && vitepress build",
     "docs:preview": "vitepress preview"
   },
   "dependencies": {
