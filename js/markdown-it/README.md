@@ -83,12 +83,16 @@ font, so SPA page swaps stay correct) and reads palette and background as
 makes the block follow the framework's theming instead of the baked
 `#1e1e1e`/`#ffffff`.
 
-The plugin wraps `md.render` — the markdown is parsed once, every
-fenced code block batches into a single font (cross-language
+The plugin hooks the markdown-it core rule chain — every fenced code
+block of one parse batches into a single font (cross-language
 disambiguation included), and already-highlighted fences from other
 rules chain through untouched. VitePress is supported out of the box:
 register inside the markdown config and the existing Shiki/highlight
-pipeline keeps working for anything this plugin skips.
+pipeline keeps working for anything this plugin skips. Host wrappers
+around `md.render`/`md.parse` (VitePress's `<script setup>`/`<style>`
+sfc-block hoisting, frontmatter extraction, header resolution) are left
+fully intact — the plugin never replaces the render entry points, so
+`<script setup>` blocks in markdown keep compiling.
 
 - **Zero config**: the font is inlined as a data: URI in an injected
   `<style>` (set `embed: false` plus `outDir` to emit files instead).
