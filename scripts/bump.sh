@@ -13,8 +13,9 @@
 #     - Cargo.lock / pnpm-lock.yaml 再生成(CI 用 --frozen-lockfile,必须同步)
 #     - CHANGELOG.md 的 "## Unreleased" 折叠为 "## X.Y.Z (日期)"
 #
-#   JS 线(--js)——@chromaglyph/remark + @chromaglyph/markdown-it,
-#   两包要求当前版本一致,一起升。
+#   JS 线(--js)——五个 JS 包要求当前版本一致,一起升:
+#     @chromaglyph/remark + @chromaglyph/markdown-it(核心插件)
+#     @chromaglyph/astro / docusaurus / eleventy(框架适配器)
 #
 # 用法:
 #   scripts/bump.sh [--dry-run] [--tag] [-m 描述] <major|minor|patch|X.Y.Z>
@@ -96,10 +97,14 @@ resolve_new() { # $1=基准版本 $2=major|minor|patch|X.Y.Z
   esac
 }
 
+JS_PKGS="remark markdown-it astro docusaurus eleventy"
+
 if [ "$JS" -eq 1 ]; then
   BASE=$(node -p 'require("./js/remark/package.json").version')
-  JS_MD=$(node -p 'require("./js/markdown-it/package.json").version')
-  [ "$BASE" = "$JS_MD" ] || die "@chromaglyph/remark($BASE) 与 @chromaglyph/markdown-it($JS_MD) 版本已分叉,请先手动对齐"
+  for p in $JS_PKGS; do
+    V=$(node -p "require(\"./js/$p/package.json\").version")
+    [ "$V" = "$BASE" ] || die "@chromaglyph/$p($V) 与 @chromaglyph/remark($BASE) 版本已分叉,请先手动对齐"
+  done
 else
   BASE=$(native_base)
   [ "$(printf '%s\n' "$BASE" | grep -c .)" -eq 1 ] \
@@ -159,9 +164,8 @@ fold_changelog() {
 if [ "$DRY" -eq 1 ]; then echo "== dry-run =="; fi
 
 if [ "$JS" -eq 1 ]; then
-  echo "JS 线: @chromaglyph/remark + @chromaglyph/markdown-it  $BASE -> $NEW"
-  pkg_set_version js/remark/package.json
-  pkg_set_version js/markdown-it/package.json
+  echo "JS 线: @chromaglyph/$(echo $JS_PKGS | tr ' ' ',')  $BASE -> $NEW"
+  for p in $JS_PKGS; do pkg_set_version "js/$p/package.json"; done
   # 不跑 pnpm install:js 包自身版本不进 lockfile,跑 install 反而会把
   # npm 上已发布的平台包 optionalDependencies 拉进 lockfile 并自动改写
   # pnpm-workspace.yaml(minimumReleaseAgeExclude),与 js 发版无关
@@ -193,7 +197,8 @@ fi
 
 if [ "$DRY" -eq 0 ]; then
   if [ "$JS" -eq 1 ]; then
-    VERIFY_FILES="js/remark/package.json js/markdown-it/package.json"
+    VERIFY_FILES=""
+    for p in $JS_PKGS; do VERIFY_FILES="$VERIFY_FILES js/$p/package.json"; done
   else
     VERIFY_FILES="Cargo.toml crates/chromaglyph/Cargo.toml crates/chromaglyph-node/Cargo.toml \
 crates/chromaglyph-node/package.json npm/chromaglyph/package.json \

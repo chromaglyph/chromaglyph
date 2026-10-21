@@ -196,11 +196,20 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      - name: Publish @chromaglyph/remark and @chromaglyph/markdown-it
+      # The JS packages ship dist/ built from src/ (tsdown); the versions
+      # of the adapters depend on remark/markdown-it being on npm first,
+      # so the loop below publishes in dependency order
+      - name: Build @chromaglyph JS packages
+        run: >
+          pnpm --filter @chromaglyph/remark --filter @chromaglyph/markdown-it
+          --filter @chromaglyph/astro --filter @chromaglyph/docusaurus
+          --filter @chromaglyph/eleventy build
+
+      - name: Publish @chromaglyph JS packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          for pkg in remark markdown-it; do
+          for pkg in remark markdown-it astro docusaurus eleventy; do
             VERSION=$(node -p "require('./js/$pkg/package.json').version")
             if npm view "@chromaglyph/$pkg@$VERSION" version >/dev/null 2>&1; then
               echo "@chromaglyph/$pkg@$VERSION already on npm, skipping"
