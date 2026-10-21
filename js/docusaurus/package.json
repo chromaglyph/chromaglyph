@@ -1,6 +1,6 @@
 {
   "name": "@chromaglyph/docusaurus",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Docusaurus integration: chromaglyph syntax highlighting compiled into a color font, MDX-safe via the remark pipeline",
   "license": "Apache-2.0",
   "type": "module",

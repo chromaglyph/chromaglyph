@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## js 0.5.0 (2026-10-21)
+
+- **All five JS packages are TypeScript** (`src/` + tsdown + vitest;
+  declarations generate from source — the hand-maintained `.d.ts` files
+  are gone; public APIs unchanged). Toolchain versions share a pnpm
+  catalog; packages stay ESM-only with an `exports` map.
+- **New framework integrations** — `@chromaglyph/astro` (Starlight
+  plugin: disables Shiki, installs the remark pipeline, preserves user
+  remarkPlugins), `@chromaglyph/docusaurus` (remark+rehype halves; the
+  stylesheet ships as a data-URI `<link>` element because MDX rejects
+  plugin-injected `html` nodes and entity-escapes CSS text in JSX),
+  `@chromaglyph/eleventy` (`amendLibrary` callback around the
+  markdown-it plugin; ESM config required).
+- `@chromaglyph/remark` gains `style: 'link'` — the data-URI
+  `<link rel="stylesheet">` shape that MDX/Vue pipelines need.
+- `@chromaglyph/markdown-it` fix: fence collection and font building
+  moved into a markdown-it core rule with per-render state on `env`;
+  replacing `md.render` used to bypass host render wrappers, so
+  VitePress's `<script setup>` blocks stayed inside the Vue template and
+  the client compiler rejected the page.
+- Release tooling: `bump.sh --js` and the CI publish job cover all five
+  packages; publishing builds `dist/` first and runs in dependency
+  order.
+
 ## 0.5.0 (2026-10-20)
 
 - **64 builtin themes** — the builtin set is now shiki's `tm-themes`

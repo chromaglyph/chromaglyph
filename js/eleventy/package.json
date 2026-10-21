@@ -1,6 +1,6 @@
 {
   "name": "@chromaglyph/eleventy",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Eleventy integration: chromaglyph syntax highlighting compiled into a color font, via the markdown-it pipeline",
   "license": "Apache-2.0",
   "type": "module",
