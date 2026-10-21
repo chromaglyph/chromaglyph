@@ -9,7 +9,8 @@
 #     - chromaglyph-core / chromaglyph-treesitter 两处 path 依赖的 version 要求
 #     - @chromaglyph/node 版本 + 7 个平台包 optionalDependencies pin
 #     - npm/@chromaglyph/node-* 平台包模板(CI 发布时会再写一次版本)
-#     - npm/chromaglyph(npm 版 CLI 占位包)
+#     - js/cli(chromaglyph npm 版 CLI 启动器包)+ 7 个 @chromaglyph/cli-*
+#       平台包 optionalDependencies pin 与 npm/@chromaglyph/cli-* 模板
 #     - Cargo.lock / pnpm-lock.yaml 再生成(CI 用 --frozen-lockfile,必须同步)
 #     - CHANGELOG.md 的 "## Unreleased" 折叠为 "## X.Y.Z (日期)"
 #
@@ -134,7 +135,7 @@ const j = JSON.parse(fs.readFileSync(PKG_FILE, "utf8"));
 j.version = PKG_VER;
 if (PKG_PIN === "1" && j.optionalDependencies) {
   for (const k of Object.keys(j.optionalDependencies)) {
-    if (k.startsWith("@chromaglyph/node-")) j.optionalDependencies[k] = PKG_VER;
+    if (/^@chromaglyph\/(node|cli)-/.test(k)) j.optionalDependencies[k] = PKG_VER;
   }
 }
 fs.writeFileSync(PKG_FILE, JSON.stringify(j, null, 2) + "\n");
@@ -182,8 +183,8 @@ else
   done
 
   pkg_set_version crates/chromaglyph-node/package.json 1
-  pkg_set_version npm/chromaglyph/package.json
-  for p in npm/@chromaglyph/node-*/package.json; do
+  pkg_set_version js/cli/package.json 1
+  for p in npm/@chromaglyph/*/package.json; do
     pkg_set_version "$p"
   done
 
@@ -201,8 +202,8 @@ if [ "$DRY" -eq 0 ]; then
     for p in $JS_PKGS; do VERIFY_FILES="$VERIFY_FILES js/$p/package.json"; done
   else
     VERIFY_FILES="Cargo.toml crates/chromaglyph/Cargo.toml crates/chromaglyph-node/Cargo.toml \
-crates/chromaglyph-node/package.json npm/chromaglyph/package.json \
-npm/@chromaglyph/node-*/package.json"
+crates/chromaglyph-node/package.json js/cli/package.json \
+npm/@chromaglyph/*/package.json"
     [ "$FOLDED" -eq 1 ] && VERIFY_FILES="$VERIFY_FILES CHANGELOG.md"
   fi
   MISS=0
@@ -216,7 +217,7 @@ npm/@chromaglyph/node-*/package.json"
   if [ "$TAG" -eq 1 ]; then
     git add Cargo.toml Cargo.lock pnpm-lock.yaml CHANGELOG.md \
            crates/chromaglyph/Cargo.toml crates/chromaglyph-node \
-           npm/chromaglyph npm/@chromaglyph
+           js/cli npm/@chromaglyph
     git commit -m "release $NEW${DESC:+: $DESC}"
     git tag -a "v$NEW" -m "release $NEW"
     cat <<EOF

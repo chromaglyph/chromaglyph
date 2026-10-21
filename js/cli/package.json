@@ -1,0 +1,38 @@
+{
+  "name": "chromaglyph",
+  "version": "0.5.0",
+  "description": "The chromaglyph CLI: syntax highlighting compiled into an OpenType color font, with a prebuilt binary for every platform",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "homepage": "https://github.com/chromaglyph/chromaglyph#readme",
+  "bugs": "https://github.com/chromaglyph/chromaglyph/issues",
+  "bin": {
+    "chromaglyph": "bin/chromaglyph.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "font",
+    "syntax-highlighting",
+    "opentype",
+    "color-font",
+    "colr",
+    "cli"
+  ],
+  "optionalDependencies": {
+    "@chromaglyph/cli-darwin-arm64": "0.5.0",
+    "@chromaglyph/cli-darwin-x64": "0.5.0",
+    "@chromaglyph/cli-linux-arm64-gnu": "0.5.0",
+    "@chromaglyph/cli-linux-arm64-musl": "0.5.0",
+    "@chromaglyph/cli-linux-x64-gnu": "0.5.0",
+    "@chromaglyph/cli-linux-x64-musl": "0.5.0",
+    "@chromaglyph/cli-win32-x64-msvc": "0.5.0"
+  }
+}

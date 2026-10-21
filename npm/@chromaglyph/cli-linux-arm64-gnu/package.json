@@ -1,0 +1,19 @@
+{
+  "name": "@chromaglyph/cli-linux-arm64-gnu",
+  "version": "0.5.0",
+  "description": "chromaglyph CLI binary for linux-arm64-gnu (Linux arm64, glibc)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "chromaglyph"
+  ]
+}

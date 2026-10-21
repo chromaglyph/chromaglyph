@@ -1,12 +1,16 @@
 name: cli release binaries
 
 # Prebuilt `chromaglyph` CLI binaries for the full platform matrix,
-# attached to a GitHub Release on version tags (v*). workflow_dispatch
-# builds the same matrix and keeps the archives as workflow artifacts —
-# a dry run for the pipeline that touches nothing public.
+# attached to a GitHub Release on version tags (v*). On the same tags the
+# binaries are also published as the @chromaglyph/cli-* npm platform
+# packages plus the `chromaglyph` launcher package (js/cli) — the npm
+# side needs the NPM_TOKEN secret. workflow_dispatch builds the same
+# matrix and keeps the archives as workflow artifacts — a dry run for
+# the pipeline that touches nothing public.
 
 permissions:
   contents: write
+  id-token: write
 
 on:
   push:
@@ -105,6 +109,70 @@ jobs:
             chromaglyph-${{ matrix.target }}.zip
           if-no-files-found: error
           retention-days: 14
+
+      # registry-url writes ~/.npmrc wiring NODE_AUTH_TOKEN into npm for
+      # the publish step below
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Stage binary into npm platform package
+        shell: bash
+        run: |
+          EXE=""
+          if [[ "${{ matrix.target }}" == *windows* ]]; then EXE=".exe"; fi
+          PKG="npm/@chromaglyph/cli-${{ matrix.platform }}"
+          mkdir -p "$PKG"
+          # the same (ad-hoc signed, stripped) binary the release archive
+          # carries; the committed template package.json is already at the
+          # tag's version
+          cp "target/${{ matrix.target }}/release/chromaglyph${EXE}" "$PKG/"
+
+      - name: Publish @chromaglyph/cli platform package (release tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          PKG="npm/@chromaglyph/cli-${{ matrix.platform }}"
+          NAME="@chromaglyph/cli-${{ matrix.platform }}"
+          VERSION=$(node -p "require('./js/cli/package.json').version")
+          # idempotent: a platform already published (e.g. a re-pushed
+          # tag) skips instead of failing the whole run
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION already on npm, skipping"
+            exit 0
+          fi
+          cd "$PKG"
+          npm publish --access public --provenance
+
+  # The `chromaglyph` launcher package (js/cli) resolves and spawns the
+  # platform binary, so it ships after every @chromaglyph/cli-* of the
+  # same version is on npm.
+  publish-cli:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish chromaglyph (npm launcher package)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./js/cli/package.json').version")
+          if npm view "chromaglyph@$VERSION" version >/dev/null 2>&1; then
+            echo "chromaglyph@$VERSION already on npm, skipping"
+            exit 0
+          fi
+          cd js/cli
+          npm publish --access public --provenance
 
   release:
     needs: build

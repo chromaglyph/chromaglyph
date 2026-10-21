@@ -9,8 +9,10 @@
   提供 7 个目标，附带 `SHA256SUMS`（macOS arm64/x64、Linux gnu/musl、
   Windows x64；musl 全静态）。macOS 包为 ad-hoc 签名，首次运行可能需要
   `xattr -d com.apple.quarantine <binary>`。
+- **npm CLI**：`npm install -g chromaglyph`——同一 CLI，按平台安装
+  预编译二进制。
 - **cargo**：`cargo install chromaglyph`。
-- **npm**：`@chromaglyph/node` 在 Node 里封装了同一引擎。
+- **Node API**：`@chromaglyph/node` 在 Node 里封装了同一引擎。
 
 ## 第一个字体
 

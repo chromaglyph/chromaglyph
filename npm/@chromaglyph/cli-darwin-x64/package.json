@@ -1,0 +1,19 @@
+{
+  "name": "@chromaglyph/cli-darwin-x64",
+  "version": "0.5.0",
+  "description": "chromaglyph CLI binary for darwin-x64 (macOS Intel)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "chromaglyph"
+  ]
+}

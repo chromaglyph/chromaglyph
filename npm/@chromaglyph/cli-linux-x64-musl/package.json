@@ -1,0 +1,19 @@
+{
+  "name": "@chromaglyph/cli-linux-x64-musl",
+  "version": "0.5.0",
+  "description": "chromaglyph CLI binary for linux-x64-musl (Linux x64, musl — fully static)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "chromaglyph"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@chromaglyph/cli-darwin-arm64",
+  "version": "0.5.0",
+  "description": "chromaglyph CLI binary for darwin-arm64 (macOS Apple Silicon)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chromaglyph/chromaglyph.git"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "chromaglyph"
+  ]
+}

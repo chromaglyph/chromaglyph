@@ -68,10 +68,12 @@ Details, trade-offs and live examples: [How it works](https://chromaglyph.github
 
 - **Prebuilt binaries**: GitHub Releases, 7 targets with `SHA256SUMS`
   (macOS arm64/x64, Linux gnu/musl, Windows x64; musl is fully static).
+- **npm**: `npm install -g chromaglyph` — the same CLI, a prebuilt
+  binary per platform via `@chromaglyph/cli-*` optional dependencies.
 - **cargo**: `cargo install chromaglyph`
-- **npm**: `@chromaglyph/node`, plus the `@chromaglyph/remark`,
+- **npm libraries**: `@chromaglyph/node`, plus the `@chromaglyph/remark`,
   `@chromaglyph/markdown-it`, `@chromaglyph/astro`, `@chromaglyph/docusaurus`
-  and `@chromaglyph/eleventy` plugins.
+  and `@chromaglyph/eleventy` plugins for build-time JS pipelines.
 
 ## Quick start
 

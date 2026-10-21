@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **`chromaglyph` on npm**: `npm install -g chromaglyph` installs the
+  CLI with a prebuilt binary for the platform — the `chromaglyph`
+  launcher package resolves and spawns one of seven `@chromaglyph/cli-*`
+  optional packages, published from the cli-release workflow with the
+  same binaries as the GitHub Releases. The 0.5.0 `chromaglyph` npm
+  package was a name reservation.
 - **tree-sitter semantic layer colors JS/TS object-literal keys**
   (`{ msg: 'message' }`, `{ msg }`): identifier keys and expression
   shorthand now get the `variable.other.property` span like member

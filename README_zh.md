@@ -56,10 +56,12 @@ tokenize+theme → compile → fontbuild → verify
 
 - **预编译二进制**：GitHub Releases 提供 7 个目标，附带 `SHA256SUMS`
   （macOS arm64/x64、Linux gnu/musl、Windows x64；musl 全静态）。
+- **npm**：`npm install -g chromaglyph`——同一 CLI，经 `@chromaglyph/cli-*`
+  optional dependencies 按平台安装预编译二进制。
 - **cargo**：`cargo install chromaglyph`。
-- **npm**：`@chromaglyph/node`，以及 `@chromaglyph/remark`、
+- **npm 库**：`@chromaglyph/node`，以及 `@chromaglyph/remark`、
   `@chromaglyph/markdown-it`、`@chromaglyph/astro`、`@chromaglyph/docusaurus`
-  与 `@chromaglyph/eleventy` 插件。
+  与 `@chromaglyph/eleventy` 插件，用于构建期 JS 管线。
 
 ## 快速上手
 

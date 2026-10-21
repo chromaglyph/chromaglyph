@@ -11,8 +11,10 @@ verification — the build takes care of.
   targets with `SHA256SUMS` (macOS arm64/x64, Linux gnu/musl, Windows x64;
   musl is fully static). macOS builds are ad-hoc signed — first run may
   need `xattr -d com.apple.quarantine <binary>`.
+- **npm CLI**: `npm install -g chromaglyph` — the same CLI, a prebuilt
+  binary per platform.
 - **cargo**: `cargo install chromaglyph`
-- **npm**: `@chromaglyph/node` wraps the same engine for Node.
+- **Node API**: `@chromaglyph/node` wraps the same engine for Node.
 
 ## Your first font
 

@@ -16,3 +16,7 @@ js/vitepress/.vitepress/dist/
 js/vitepress/.chromaglyph-cache/
 js/vitepress/dist/
 themes.data.json
+
+# npm CLI 平台包里暂存的二进制(CI 打包时复制进来)
+npm/@chromaglyph/cli-*/chromaglyph
+npm/@chromaglyph/cli-*/chromaglyph.exe
