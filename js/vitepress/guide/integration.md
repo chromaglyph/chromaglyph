@@ -1,7 +1,25 @@
-# VitePress integration
+# Integrations
 
-VitePress renders through markdown-it, so `@chromaglyph/markdown-it` plugs
-in with two framework switches and one `md.use`:
+chromaglyph ships adapters for the frameworks people actually ship docs
+with. Each one exists because the framework's pipeline has a hard
+constraint the generic plugin cannot guess — the adapter absorbs that
+knowledge so you don't have to:
+
+| Framework | Package | Pipeline | Stylesheet |
+|-----------|---------|----------|------------|
+| VitePress | `@chromaglyph/markdown-it` | markdown-it | `style: 'link'` |
+| Astro / Starlight | `@chromaglyph/astro` | remark | `<link>` (forced) |
+| Docusaurus | `@chromaglyph/docusaurus` | remark + MDX | `<link>` (forced) |
+| Eleventy | `@chromaglyph/eleventy` | markdown-it | inline `<style>` |
+
+The engine options (`font`, `themes`, `langs`, `grouping`, `semantic`,
+`ligatures`, `format`, `embed`, `cacheDir`) mean the same thing
+everywhere — see each package's README for the full table.
+
+## VitePress
+
+VitePress renders through markdown-it, so `@chromaglyph/markdown-it`
+plugs in with two framework switches and one `md.use`:
 
 ```ts
 // .vitepress/config.mts
@@ -31,7 +49,7 @@ export default defineConfig({
 })
 ```
 
-## Why `style: 'link'`
+### Why `style: 'link'`
 
 Vue frameworks compile markdown output **as a Vue template**, and the
 plugin's default inline `<style>` does not survive it:
@@ -46,7 +64,7 @@ element whose attributes survive both. The `v-pre` the plugin puts on every
 `<pre>` matters for the same reason — without it Vue reads `{{ }}` in code
 as interpolation.
 
-## The appearance toggle
+### The appearance toggle
 
 The generated CSS defaults to `prefers-color-scheme` for the light/dark flip
 and to the theme's editor background. Both sit behind CSS variables, so a
@@ -75,7 +93,84 @@ html.dark {
 The same two variables serve any class-based toggle (Nuxt's `dark-mode`, a
 `.dark` you flip yourself). Sites that follow the OS scheme need nothing.
 
+## Astro / Starlight
+
+Starlight needs one plugin entry — it disables Shiki and installs the
+remark pipeline for you:
+
+```js
+// astro.config.mjs
+import starlight from '@astrojs/starlight'
+import { starlightPlugin } from '@chromaglyph/astro'
+import { defineConfig } from 'astro/config'
+
+export default defineConfig({
+  integrations: [
+    starlight({
+      plugins: [starlightPlugin({
+        font: './JetBrainsMono-Regular.ttf',
+        cacheDir: '.chromaglyph-cache',
+      })],
+    }),
+  ],
+})
+```
+
+Plain Astro (without Starlight) uses `@chromaglyph/remark` directly with
+`markdown.syntaxHighlight: false` — Astro's pipeline keeps raw html, so
+the default inline `<style>` works there.
+
+## Docusaurus
+
+Docusaurus renders markdown through **MDX**, which compiles the output to
+JSX — the most constrained pipeline of the set. Both obvious stylesheet
+shapes break: an injected `html` node dies in MDX's hast→estree step
+("Cannot handle unknown node `raw`"), and CSS text in a `<style>` collides
+with JSX expression syntax (`{}`). The adapter splits the work across
+both plugin lists and ships the stylesheet as a data-URI `<link>`:
+
+```js
+// docusaurus.config.mjs
+import {
+  remarkChromaglyphDocusaurus,
+  rehypeChromaglyphDocusaurus,
+} from '@chromaglyph/docusaurus'
+
+export default {
+  markdown: {
+    remarkPlugins: [[remarkChromaglyphDocusaurus, { font: './JBM.ttf' }]],
+    rehypePlugins: [rehypeChromaglyphDocusaurus],
+  },
+  themeConfig: {
+    prism: { disable: true }, // Prism's colored spans fight the palette
+  },
+}
+```
+
+## Eleventy
+
+Eleventy renders through markdown-it; `@chromaglyph/eleventy` provides
+the `amendLibrary` callback. Use an ESM config (the chromaglyph packages
+are ESM-only, like the unified ecosystem they build on):
+
+```js
+// eleventy.config.mjs
+import { withChromaglyph } from '@chromaglyph/eleventy'
+
+export default function (eleventyConfig) {
+  eleventyConfig.amendLibrary('md', withChromaglyph({
+    font: './JetBrainsMono-Regular.ttf',
+    cacheDir: '.chromaglyph-cache',
+  }))
+}
+```
+
+Eleventy's output is plain HTML, so the default inline `<style>` is the
+right shape there.
+
 ## Guarantees
+
+Every adapter inherits the engine's guarantees:
 
 - **Silent degradation**: a failed font build renders the document
   unhighlighted (no stylesheet, no font); the site build never breaks.
