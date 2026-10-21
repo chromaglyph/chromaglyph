@@ -4,11 +4,16 @@
   "description": "markdown-it plugin (VitePress-ready): highlight code blocks by compiling them into a chromaglyph color font",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "index.js",
-  "types": "index.d.ts",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    }
+  },
   "files": [
-    "index.js",
-    "index.d.ts"
+    "dist"
   ],
   "repository": {
     "type": "git",
@@ -18,10 +23,16 @@
     "@chromaglyph/node": "workspace:*"
   },
   "devDependencies": {
-    "markdown-it": "^14"
+    "@types/markdown-it": "^14",
+    "markdown-it": "^14",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   },
   "scripts": {
-    "test": "node test.mjs"
+    "build": "tsdown",
+    "test": "vitest run && tsc --noEmit",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">= 18"

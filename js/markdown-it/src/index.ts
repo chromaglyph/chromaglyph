@@ -25,28 +25,81 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
-import { buildFontSafe } from '@chromaglyph/node'
-import { buildCssAssets } from '@chromaglyph/node/css'
+import type MarkdownIt from 'markdown-it'
+import type {
+  Options as MarkdownItOptions,
+  PluginWithOptions,
+  Renderer,
+  StateCore,
+  Token,
+} from 'markdown-it'
+import { buildFontSafe, type BuildResult } from '@chromaglyph/node'
+import { buildCssAssets, type CssAssets, type CssAssetsOptions } from '@chromaglyph/node/css'
 
-/**
- * @param {import('markdown-it').MarkdownIt} md
- * @param {{
- *  font: string | Uint8Array,
- *  themes?: string[],
- *  langs?: string[] | null,
- *  embed?: boolean,
- *  outDir?: string,
- *  style?: 'inline' | 'link',
- *  verify?: boolean,
- *  semantic?: boolean,
- *  ligatures?: boolean,
- *  format?: 'woff' | 'woff2',
- *  cacheDir?: string,   // on-disk cache for cross-process builds; ignored when NODE_ENV=development
- *  cwd?: string,
- *  grouping?: 'page' | 'lang',
- * }} [options]
- */
-function markdownItChromaglyph(md, options = {}) {
+export interface MarkdownItChromaglyphOptions {
+  /** Path or buffer of the static TrueType source font (required). */
+  font: string | Uint8Array
+  /** Builtin theme names or paths to VS Code .json / .tmTheme files. */
+  themes?: string[]
+  /** Restrict processing to these languages; others keep default styling. */
+  langs?: string[] | null
+  /** Inline the font as a data: URI in the injected stylesheet (default true). */
+  embed?: boolean
+  /** Directory for emitted font files when `embed` is false. */
+  outDir?: string
+  /**
+   * How the stylesheet reaches the page (default 'inline').
+   * - 'inline': `<style>` tag — plain markdown-it HTML pipelines.
+   * - 'link': `<link rel="stylesheet">` — required for Vue-template
+   *   frameworks (VitePress, Nuxt Content): a `<style>` inside a Vue
+   *   component template is rejected by the client compiler and
+   *   entity-escaped by SSR, so it never reaches the browser.
+   */
+  style?: 'inline' | 'link'
+  /** Run the harfrust oracle (default true). */
+  verify?: boolean
+  /** Overlay tree-sitter semantic colors on the syntactic highlighting
+   *  (parameters, variables-as-scoped, types, calls). Default false. */
+  semantic?: boolean
+  /** Preserve the source font's ligatures (`!=`, `->`, …) while
+   *  highlighted; mixed-color sites degrade to per-char text (colors win).
+   *  Default false. */
+  ligatures?: boolean
+  /** Output container: `'woff2'` (Brotli, smaller) or `'woff'` (zlib,
+   *  default); both outline flavors ride in woff2. */
+  format?: 'woff' | 'woff2'
+  /** On-disk cache directory for incremental site builds; ignored when
+   *  NODE_ENV=development (dev-server HMR would write one font per
+   *  intermediate edit state). */
+  cacheDir?: string
+  /** Base directory for relative `font`/`outDir` paths (default: cwd). */
+  cwd?: string
+  /**
+   * 'page' (default): all fences of one render batch into ONE font;
+   * 'lang': one font per language — fences carry `data-chromaglyph-lang`
+   * and the CSS scopes each font to its own language's blocks. Editing one
+   * language's snippet then rebuilds only that language's font, and
+   * identical text under different languages can highlight each its own
+   * way. Costs one subset base font (~10K) per extra language on a page.
+   */
+  grouping?: 'page' | 'lang'
+}
+
+/** Per-render context the core rule produces and the fence rule consumes. */
+interface ChromaglyphRenderContext {
+  css: string | null
+  fenceIndex: Map<Token, number>
+  injected: boolean
+}
+
+type WithChromaglyph = MarkdownIt & {
+  chromaglyph?: () => BuildResult | BuildResult[] | null
+}
+
+const markdownItChromaglyph: PluginWithOptions<MarkdownItChromaglyphOptions | undefined> = (
+  md,
+  options,
+) => {
   const {
     font,
     themes = ['dark-plus', 'light-plus'],
@@ -73,7 +126,7 @@ function markdownItChromaglyph(md, options = {}) {
     // 片段只重建该语言的字体，其余语言命中缓存；不同语言的相同文本也可各自
     // 着色。代价是每多一种语言多一份（子集化后 ~10K 的）基础字体。
     grouping = 'page',
-  } = options
+  } = options ?? {} as Partial<MarkdownItChromaglyphOptions>
 
   if (!font) {
     throw new Error('markdownItChromaglyph: the `font` option (path or buffer of a static TTF) is required')
@@ -96,18 +149,18 @@ function markdownItChromaglyph(md, options = {}) {
     )
   }
 
-  const loadFont = () =>
+  const loadFont = (): Buffer =>
     Buffer.isBuffer(font)
       ? font
       : readFileSync(isAbsolute(String(font)) ? String(font) : resolve(cwd, String(font)))
 
   // fence 语言要进 HTML 属性和 CSS 选择器,收窄到肯定安全的字符集
-  const scopeValue = (lang) => lang.replace(/[^a-zA-Z0-9_+#.-]/g, '') || 'x'
+  const scopeValue = (lang: string) => lang.replace(/[^a-zA-Z0-9_+#.-]/g, '') || 'x'
 
   // stylesheet tag for one build (inline <style>, data-URI <link>, or a
   // written-out css file + <link>); per-language mode concatenates one
   // tag per font, the page mode emits exactly one
-  const styleTag = (assets) => {
+  const styleTag = (assets: CssAssets): string => {
     if (style === 'link') {
       if (embed) {
         return `<link rel="stylesheet" href="data:text/css;base64,${Buffer.from(assets.css).toString('base64')}">`
@@ -120,8 +173,8 @@ function markdownItChromaglyph(md, options = {}) {
 
   // last successful build(s): one BuildResult (page mode) or one per
   // language (lang mode), for tests/introspection after render finished
-  let lastResult = null
-  let lastResults = null
+  let lastResult: BuildResult | null = null
+  let lastResults: BuildResult[] | null = null
 
   // Collect the fences of one parse and build their font(s) in a core rule
   // at the end of the parse chain; the per-render context rides on env (a
@@ -138,9 +191,9 @@ function markdownItChromaglyph(md, options = {}) {
   // effect (<script> and <style>) are ignored in client component
   // templates"). A core rule runs inside every render path, however many
   // wrappers surround it.
-  md.core.ruler.push('chromaglyph_fonts', (state) => {
-    const fenceIndex = new Map() // token -> block index
-    const blocks = []
+  md.core.ruler.push('chromaglyph_fonts', (state: StateCore) => {
+    const fenceIndex = new Map<Token, number>() // token -> block index
+    const blocks: { id: string; lang: string; text: string }[] = []
     for (const token of state.tokens) {
       if (token.type !== 'fence' || token.hidden) continue
       const lang = String(token.info || '').trim().split(/\s+/)[0] || 'plain'
@@ -149,17 +202,26 @@ function markdownItChromaglyph(md, options = {}) {
       blocks.push({ id: `block-${blocks.length}`, lang, text: token.content })
     }
 
-    let css = null
-    let result = null
-    let results = null
+    let css: string | null = null
+    let result: BuildResult | null = null
+    let results: BuildResult[] | null = null
     if (blocks.length > 0) {
       // builds; silent degradation on failure (one font read per render,
       // shared by every language group)
       const fontBytes = loadFont()
-      const emit = (group, scope) => {
-        const built = buildFontSafe({ font: fontBytes, themes, blocks: group, verify, semantic, ligatures, format, cacheDir: diskCache })
+      const emit = (group: { lang: string; text: string }[], scope?: string) => {
+        const built = buildFontSafe({
+          font: fontBytes,
+          themes,
+          blocks: group.map((b, i) => ({ id: `block-${i}`, lang: b.lang, text: b.text })),
+          verify,
+          semantic,
+          ligatures,
+          format,
+          cacheDir: diskCache,
+        })
         if (!built) return null
-        const assets = buildCssAssets(built, { embed, outDir, cwd, ...(scope ? { lang: scope } : {}) })
+        const assets = buildCssAssets(built, { embed, outDir, cwd, ...(scope ? { lang: scope } : {}) } satisfies CssAssetsOptions)
         return { built, tag: styleTag(assets) }
       }
 
@@ -167,13 +229,13 @@ function markdownItChromaglyph(md, options = {}) {
         // group by language in first-appearance order; plain blocks form
         // their own zero-rule group; one failing language never takes the
         // others down
-        const byLang = new Map()
+        const byLang = new Map<string, typeof blocks>()
         for (const block of blocks) {
           if (!byLang.has(block.lang)) byLang.set(block.lang, [])
-          byLang.get(block.lang).push(block)
+          byLang.get(block.lang)!.push(block)
         }
         results = []
-        const tags = []
+        const tags: string[] = []
         for (const [lang, group] of byLang) {
           const made = emit(
             group.map((b, i) => ({ id: `block-${i}`, lang: b.lang, text: b.text })),
@@ -196,24 +258,33 @@ function markdownItChromaglyph(md, options = {}) {
     lastResult = result
     lastResults = results
 
-    state.env.chromaglyph = { css, fenceIndex, injected: false }
+    state.env.chromaglyph = { css, fenceIndex, injected: false } satisfies ChromaglyphRenderContext
   })
 
   // chain onto whatever fence rule is installed (VitePress ships its own)
   const prevFence = md.renderer.rules.fence
-  md.renderer.rules.fence = (tokens, idx, opts, env, self) => {
+  md.renderer.rules.fence = (
+    tokens: Token[],
+    idx: number,
+    opts: MarkdownItOptions,
+    env: { chromaglyph?: ChromaglyphRenderContext } | undefined,
+    self: Renderer,
+  ) => {
     const base = prevFence
       ? prevFence(tokens, idx, opts, env, self)
       : self.renderToken(tokens, idx, opts)
     const current = env && env.chromaglyph
     if (!current) return base
     const token = tokens[idx]
-    if (!current.fenceIndex.has(token)) return base
-    const index = current.fenceIndex.get(token)
+    if (!token || !current.fenceIndex.has(token)) return base
+    const index = current.fenceIndex.get(token)!
     // v-pre：Vue 系框架按模板编译 markdown 产物，代码里的 {{ }} 会被当成
     // 插值；纯 HTML 管线里它只是一个无害的自定义属性。lang 分组模式下
     // 额外携带语言标记，CSS 据此把每语言的字体 scope 到自己的代码块
-    const scopeAttr = grouping === 'lang' ? ` data-chromaglyph-lang="${scopeValue(String(token.info || '').trim().split(/\s+/)[0] || 'plain')}"` : ''
+    const scopeAttr =
+      grouping === 'lang'
+        ? ` data-chromaglyph-lang="${scopeValue(String(token.info || '').trim().split(/\s+/)[0] || 'plain')}"`
+        : ''
     let out = base.includes('<pre')
       ? base.replace('<pre', `<pre v-pre data-chromaglyph="${index}"${scopeAttr}`)
       : base
@@ -225,7 +296,7 @@ function markdownItChromaglyph(md, options = {}) {
   }
 
   // expose the last successful build result(s) for tests/introspection
-  md.chromaglyph = () => (grouping === 'lang' ? lastResults : lastResult)
+  ;(md as WithChromaglyph).chromaglyph = () => (grouping === 'lang' ? lastResults : lastResult)
 }
 
 export { markdownItChromaglyph }

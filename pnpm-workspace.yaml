@@ -4,7 +4,7 @@ packages:
 minimumReleaseAgeExclude:
   - '@chromaglyph/node-darwin-arm64@0.1.0 || 0.2.0 || 0.2.1 || 0.2.2 || 0.3.0 || 0.4.1 || 0.5.0'
   - '@chromaglyph/node-darwin-x64@0.2.0 || 0.2.1 || 0.2.2 || 0.3.0 || 0.4.1 || 0.5.0'
-  - '@chromaglyph/node-linux-arm64-gnu@0.2.0 || 0.2.1 || 0.2.2 || 0.3.0 || 0.4.1'
+  - '@chromaglyph/node-linux-arm64-gnu@0.2.0 || 0.2.1 || 0.2.2 || 0.3.0 || 0.4.1 || 0.5.0'
   - '@chromaglyph/node-linux-arm64-musl@0.2.0 || 0.2.1 || 0.2.2 || 0.3.0 || 0.4.1 || 0.5.0'
   - '@chromaglyph/node-linux-x64-gnu@0.2.0 || 0.2.1 || 0.2.2 || 0.3.0 || 0.4.1 || 0.5.0'
   - '@chromaglyph/node-linux-x64-musl@0.2.0 || 0.2.1 || 0.2.2 || 0.3.0 || 0.4.1 || 0.5.0'
@@ -12,3 +12,9 @@ minimumReleaseAgeExclude:
 allowBuilds:
   esbuild: true
   vue-demi: true
+# 版本目录:JS 包共享的工具链版本(catalog: 引用)
+catalog:
+  tsdown: ^0.23.1
+  typescript: ^5.9.3
+  vitest: ^5.0.5
+
