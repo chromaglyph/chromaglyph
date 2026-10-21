@@ -26,21 +26,28 @@ jobs:
         include:
           - os: macos-latest        # arm64 runner
             target: aarch64-apple-darwin
+            platform: darwin-arm64
           - os: macos-latest        # cross to x64
             target: x86_64-apple-darwin
+            platform: darwin-x64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            platform: linux-x64-gnu
           - os: ubuntu-latest       # cross via zig (static)
             target: x86_64-unknown-linux-musl
+            platform: linux-x64-musl
             zig: 'true'
           - os: ubuntu-latest       # cross via zig
             target: aarch64-unknown-linux-gnu
+            platform: linux-arm64-gnu
             zig: 'true'
           - os: ubuntu-latest       # cross via zig (static)
             target: aarch64-unknown-linux-musl
+            platform: linux-arm64-musl
             zig: 'true'
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            platform: win32-x64-msvc
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     steps:
