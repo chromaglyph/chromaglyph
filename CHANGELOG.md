@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.0 (2026-10-21)
+
 - **`chromaglyph` on npm**: `npm install -g chromaglyph` installs the
   CLI with a prebuilt binary for the platform — the `chromaglyph`
   launcher package resolves and spawns one of seven `@chromaglyph/cli-*`

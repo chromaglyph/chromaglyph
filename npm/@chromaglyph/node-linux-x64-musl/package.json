@@ -1,6 +1,6 @@
 {
   "name": "@chromaglyph/node-linux-x64-musl",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "chromaglyph napi binary for linux-x64-musl",
   "license": "Apache-2.0",
   "repository": {

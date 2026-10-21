@@ -1,6 +1,6 @@
 {
   "name": "@chromaglyph/cli-linux-arm64-gnu",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "chromaglyph CLI binary for linux-arm64-gnu (Linux arm64, glibc)",
   "license": "Apache-2.0",
   "repository": {
