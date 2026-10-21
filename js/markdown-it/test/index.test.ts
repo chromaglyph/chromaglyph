@@ -1,10 +1,10 @@
-import test from 'node:test'
+import { test } from 'vitest'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import MarkdownIt from 'markdown-it'
-import { clearCache } from '@chromaglyph/node'
-import chromaglyph from './index.js'
+import { clearCache, type BuildResult } from '@chromaglyph/node'
+import chromaglyph, { type MarkdownItChromaglyphOptions } from '../src/index'
 
 const FONT = readFileSync('../../crates/chromaglyph-core/tests/fixtures/JetBrainsMono-Regular.ttf')
 const MARKDOWN = `# demo
@@ -22,7 +22,9 @@ const n = 42; // the answer
 \`\`\`
 `
 
-function makeMd(options = {}) {
+const glyphs = (md: MarkdownIt) => (md as { chromaglyph?: () => BuildResult | BuildResult[] }).chromaglyph?.()
+
+function makeMd(options: Partial<MarkdownItChromaglyphOptions> = {}) {
   const md = new MarkdownIt({ html: true })
   md.use(chromaglyph, { font: FONT, ...options })
   return md
@@ -41,7 +43,7 @@ test('batches all fences into one font with a single injected style', () => {
 test('code text stays byte-identical (escaped, not transformed)', () => {
   const plain = new MarkdownIt().render(MARKDOWN)
   const ours = makeMd().render(MARKDOWN)
-  const strip = (s) => s.replace(/<style>[\s\S]*?<\/style>\n?/, '').replace(/ v-pre data-chromaglyph="\d+"/g, '')
+  const strip = (s: string) => s.replace(/<style>[\s\S]*?<\/style>\n?/, '').replace(/ v-pre data-chromaglyph="\d+"/g, '')
   assert.equal(strip(ours), strip(plain))
 })
 
@@ -50,7 +52,7 @@ test('style: link injects a stylesheet link, not a <style> tag (Vue-template fra
   const html = makeMd({ style: 'link' }).render(MARKDOWN)
   assert.ok(!html.includes('<style>'), 'no style tag — Vue client compile would throw on it')
   assert.equal((html.match(/<link rel="stylesheet" href="data:text\/css;base64,/g) || []).length, 1)
-  const b64 = html.match(/href="data:text\/css;base64,([^"]+)"/)[1]
+  const b64 = html.match(/href="data:text\/css;base64,([^"]+)"/)![1]!
   const css = Buffer.from(b64, 'base64').toString('utf8')
   assert.ok(css.includes('@font-face'), 'decoded stylesheet carries the font')
   assert.ok(css.includes('@font-palette-values'), 'decoded stylesheet carries palettes')
@@ -61,7 +63,7 @@ test('style: link injects a stylesheet link, not a <style> tag (Vue-template fra
 test('generated css is var-driven with hash-free palette aliases', () => {
   clearCache()
   const html = makeMd({ style: 'link' }).render(MARKDOWN)
-  const b64 = html.match(/href="data:text\/css;base64,([^"]+)"/)[1]
+  const b64 = html.match(/href="data:text\/css;base64,([^"]+)"/)![1]!
   const css = Buffer.from(b64, 'base64').toString('utf8')
   // hash-free aliases let a site override the palettes without knowing
   // the per-page hash — the class-toggle dark mode recipe uses them
@@ -85,7 +87,7 @@ test('style: link with embed: false writes a css file next to the woff', () => {
   assert.match(html, /<link rel="stylesheet" href="\.\/chromaglyph-[0-9a-f]+\.css">/)
   const cssFile = readdirSync(outDir).find((f) => f.endsWith('.css'))
   assert.ok(cssFile, 'css file emitted')
-  assert.ok(readFileSync(join(outDir, cssFile), 'utf8').includes('@font-face'))
+  assert.ok(readFileSync(join(outDir, cssFile!), 'utf8').includes('@font-face'))
 })
 
 test('inline code in prose is never marked', () => {
@@ -97,9 +99,9 @@ test('second render of same source hits the cache', () => {
   clearCache()
   const md = makeMd()
   md.render(MARKDOWN)
-  const first = md.chromaglyph()
+  const first = glyphs(md) as BuildResult
   md.render(MARKDOWN)
-  const second = md.chromaglyph()
+  const second = glyphs(md) as BuildResult
   assert.equal(first.cached, false)
   assert.equal(second.cached, true)
 })
@@ -117,22 +119,6 @@ test('langs filter leaves other fences untouched', () => {
   assert.equal((html.match(/data-chromaglyph=/g) || []).length, 1)
 })
 
-test('chained after another fence rule (VitePress-like)', () => {
-  const md = new MarkdownIt({ html: true })
-  // simulate a site that already customizes fence rendering
-  md.renderer.rules.fence = (tokens, idx) => {
-    const token = tokens[idx]
-    return `<pre class="vp-code"><code>${md.utils.escapeHtml(token.content)}</code></pre>\n`
-  }
-  md.use(chromaglyph, { font: FONT })
-  const html = md.render(MARKDOWN)
-  assert.ok(
-    /<pre[^>]*class="vp-code"[^>]*>/.test(html) && /<pre[^>]*data-chromaglyph="0"[^>]*>/.test(html),
-    `chains onto custom fence: ${html.slice(0, 200)}`
-  )
-  assert.ok(html.includes('<style>'))
-})
-
 test('a wrapper chain around md.render (VitePress-like sfc hoisting) keeps working', () => {
   // VitePress assembles its markdown features as wrappers around the render
   // entry points: its sfc plugin initializes env.sfcBlocks inside its own
@@ -145,16 +131,16 @@ test('a wrapper chain around md.render (VitePress-like sfc hoisting) keeps worki
   const md = new MarkdownIt({ html: true })
   // host wrappers install BEFORE the user's markdown.config (chromaglyph)
   const prevHtmlBlock = md.renderer.rules.html_block
-  md.renderer.rules.html_block = (tokens, idx, opts, env, self) => {
-    const hoisted = env.sfcBlocks
-    if (!hoisted || !/^<script[\s\S]*<\/script>$/.test(tokens[idx].content.trim())) {
-      return prevHtmlBlock(tokens, idx, opts, env, self)
+  md.renderer.rules.html_block = (tokens, idx, opts, env: any, self) => {
+    const hoisted = env?.sfcBlocks
+    if (!hoisted || !/^<script[\s\S]*<\/script>$/.test(tokens[idx]!.content.trim())) {
+      return prevHtmlBlock!(tokens, idx, opts, env, self)
     }
-    hoisted.scripts.push(tokens[idx].content)
+    hoisted.scripts.push(tokens[idx]!.content)
     return ''
   }
   const render = md.render.bind(md)
-  md.render = (src, env = {}) => {
+  md.render = (src: string, env: any = {}) => {
     env.sfcBlocks = { scripts: [] }
     return render(src, env)
   }
@@ -166,6 +152,22 @@ test('a wrapper chain around md.render (VitePress-like sfc hoisting) keeps worki
   assert.ok(!html.includes('<script'), `script must be hoisted out of the html: ${html}`)
   assert.ok(html.includes('<style>'), 'chromaglyph still injects its stylesheet')
   assert.ok(/data-chromaglyph="0"/.test(html), 'fence still marked')
+})
+
+test('chained after another fence rule (VitePress-like)', () => {
+  const md = new MarkdownIt({ html: true })
+  // simulate a site that already customizes fence rendering
+  md.renderer.rules.fence = (tokens, idx) => {
+    const token = tokens[idx]!
+    return `<pre class="vp-code"><code>${md.utils.escapeHtml(token.content)}</code></pre>\n`
+  }
+  md.use(chromaglyph, { font: FONT })
+  const html = md.render(MARKDOWN)
+  assert.ok(
+    /<pre[^>]*class="vp-code"[^>]*>/.test(html) && /<pre[^>]*data-chromaglyph="0"[^>]*>/.test(html),
+    `chains onto custom fence: ${html.slice(0, 200)}`,
+  )
+  assert.ok(html.includes('<style>'))
 })
 
 test('file mode emits assets', () => {
@@ -203,7 +205,7 @@ test("grouping: 'lang' ships one scoped font per language", () => {
   // one stylesheet link per language, both injected before the first fence
   assert.equal((html.match(/<link rel="stylesheet" href="data:text\/css;base64,/g) || []).length, 2)
   const css = [...html.matchAll(/href="data:text\/css;base64,([^"]+)"/g)]
-    .map((m) => Buffer.from(m[1], 'base64').toString('utf8'))
+    .map((m) => Buffer.from(m[1]!, 'base64').toString('utf8'))
     .join('\n')
   assert.equal((css.match(/@font-face/g) || []).length, 2, 'one font-face per language')
   assert.ok(html.includes('<pre v-pre data-chromaglyph="0" data-chromaglyph-lang="rust"'), 'rust fence tagged')
@@ -220,38 +222,38 @@ test("grouping: 'lang' ships one scoped font per language", () => {
   // introspection: one BuildResult per language
   const md2 = makeMd({ grouping: 'lang' })
   md2.render(MARKDOWN)
-  assert.equal(md2.chromaglyph().length, 2)
+  assert.equal((glyphs(md2) as BuildResult[]).length, 2)
 })
 
 test("grouping: 'lang' rebuilds only the edited language's font", () => {
   clearCache()
   const md = makeMd({ grouping: 'lang' })
-  const page = (rustBody) => `\`\`\`rust\n${rustBody}\n\`\`\`\n\n\`\`\`javascript\nconst n = 42; // the answer\n\`\`\`\n`
+  const page = (rustBody: string) => `\`\`\`rust\n${rustBody}\n\`\`\`\n\n\`\`\`javascript\nconst n = 42; // the answer\n\`\`\`\n`
   md.render(page('let a = 1;'))
-  const first = md.chromaglyph().map((r) => r.contentHash)
+  const first = (glyphs(md) as BuildResult[]).map((r) => r.contentHash)
   md.render(page('let a = 1;'))
-  assert.ok(md.chromaglyph().every((r) => r.cached), 'unchanged page hits the cache')
+  assert.ok((glyphs(md) as BuildResult[]).every((r) => r.cached), 'unchanged page hits the cache')
   md.render(page('let a = 2;'))
-  const after = md.chromaglyph()
-  assert.equal(after[0].cached, false, 'edited rust group rebuilds')
-  assert.equal(after[1].cached, true, 'untouched js group hits the cache')
-  assert.notEqual(after[0].contentHash, first[0])
-  assert.equal(after[1].contentHash, first[1])
+  const after = glyphs(md) as BuildResult[]
+  assert.equal(after[0]!.cached, false, 'edited rust group rebuilds')
+  assert.equal(after[1]!.cached, true, 'untouched js group hits the cache')
+  assert.notEqual(after[0]!.contentHash, first[0])
+  assert.equal(after[1]!.contentHash, first[1])
 })
 
 test('grouping rejects unknown values', () => {
-  assert.throws(() => makeMd({ grouping: 'nope' }), /unknown grouping/)
+  assert.throws(() => makeMd({ grouping: 'nope' as 'page' }), /unknown grouping/)
 })
 
 test('semantic option produces its own build (distinct hash)', () => {
   const md = new MarkdownIt({ html: true })
   md.use(chromaglyph, { font: FONT, verify: false })
   md.render('```rust\nfn area(r: f64) -> f64 { let p = r * 2.0; p }\n```\n')
-  const plain = md.chromaglyph().contentHash
+  const plain = (glyphs(md) as BuildResult).contentHash
   const md2 = new MarkdownIt({ html: true })
   md2.use(chromaglyph, { font: FONT, verify: false, semantic: true })
   md2.render('```rust\nfn area(r: f64) -> f64 { let p = r * 2.0; p }\n```\n')
-  const semantic = md2.chromaglyph().contentHash
+  const semantic = (glyphs(md2) as BuildResult).contentHash
   assert.notStrictEqual(plain, semantic, 'semantic joins the content hash')
 })
 
