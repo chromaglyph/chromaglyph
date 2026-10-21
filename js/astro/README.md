@@ -57,9 +57,9 @@ export default defineConfig({
 
 `starlightPlugin(options)` accepts every
 [`@chromaglyph/remark` option](../remark#options) except `style` (pinned
-to `'link'`). `@astrojs/starlight` is an optional peer dependency — it
-is only present in Starlight projects, which is the only place
-`starlightPlugin` is used.
+to `'link'`). The plugin types Starlight's plugin API structurally and
+declares no dependency on `@astrojs/starlight` — your Starlight project
+already provides it.
 
 ## License
 

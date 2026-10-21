@@ -23,14 +23,6 @@
     "@chromaglyph/node": "workspace:*",
     "@chromaglyph/remark": "workspace:*"
   },
-  "peerDependencies": {
-    "@astrojs/starlight": "*"
-  },
-  "peerDependenciesMeta": {
-    "@astrojs/starlight": {
-      "optional": true
-    }
-  },
   "devDependencies": {
     "rehype-stringify": "^10",
     "remark-parse": "^11",
