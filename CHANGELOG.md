@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **generic mode: WGSL** (`--generic wgsl`): the WebGPU Shading Language —
+  five keyword groups (control flow, declarations, `true`/`false`,
+  predeclared type words, ~150 builtin functions), `"` strings with
+  escapes, `//` and `/* */` comments, and numbers whose `u`/`i`/`f`/`h`
+  suffixes ride the number state (`42u`, `3.14f`, `0.5h`, `0x1Fu`).
+  Attribute names (`@vertex`, `@builtin(position)`) stay uncolored —
+  contextual keywords, treated like the C# spec's contextual words.
+
 ## 0.6.0 (2026-10-21)
 
 - **`chromaglyph` on npm**: `npm install -g chromaglyph` installs the

@@ -7,8 +7,8 @@
   真实 TextMate 语法解析，不依赖内置语言清单。
 - **generic 模式**（`--generic`）：目前只支持有限的内置语言——rust、js、
   ts、python、go、java、c、cpp、csharp、php、ruby、lua、shell、html、
-  css——每种语言由手写 spec 合成为字形替换状态机。下面的小节覆盖其中
-  十一种（PHP、Ruby、Lua、Shell 补全清单）。
+  css、wgsl——每种语言由手写 spec 合成为字形替换状态机。下面的小节覆盖
+  其中十二种（PHP、Ruby、Lua、Shell 补全清单）。
 
 本页所有代码块都以 exact 模式渲染，复制出来都是纯文本——本站按语言分组
 （一语言一字体）；默认分组是整页合并为一个字体。
@@ -228,4 +228,30 @@ public class Stack<T> {
   background: url("bg.png") no-repeat;
 }
 @media (min-width: 600px) { .card { padding: 8px !important; } }
+```
+
+## WGSL
+
+WebGPU 着色器：控制流与声明关键字分组着色，预声明类型词（标量、`vec`/`mat`
+模板及其 `f`/`h`/`i`/`u` 简写别名、采样器、纹理）和约 150 个内建函数各有
+自己的 scope。数字后缀走数字状态（`42u`、`3.14f`、`0.5h`、`0x1Fu`）。
+属性名（`@vertex`、`@builtin(position)`）不着色——它们是上下文关键字，
+无状态的字体内词法分析无法与普通名字区分，与 C# spec 的上下文关键字同策。
+
+```wgsl
+struct Uniforms { mvp: mat4x4f, tint: vec4f, time: f32 };
+
+@group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(1) var samp: sampler;
+@group(0) @binding(2) var tex: texture_2d<f32>;
+
+@vertex fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
+  let x = f32(vi % 3u) - 1.0;
+  return u.mvp * vec4f(x, 0.5 * sin(u.time + x), 0.0, 1.0);
+}
+
+@fragment fn fs(@location(0) uv: vec2f) -> @location(0) vec4f {
+  let c = textureSample(tex, samp, uv);
+  return vec4f(c.rgb * u.tint.rgb, 1.0);
+}
 ```

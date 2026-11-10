@@ -511,7 +511,7 @@ pub fn lex(spec: &LanguageSpec, text: &str, mapped: &dyn Fn(char) -> bool) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generic::{csharp, go, html, java, javascript, python, rust};
+    use crate::generic::{csharp, go, html, java, javascript, python, rust, wgsl};
 
     fn toks(s: &str) -> Vec<Tok> {
         // everything mapped except the barrier chars that shape no glyph
@@ -1029,5 +1029,67 @@ mod tests {
         let t = lex(&spec, "x return null;", &|_| true);
         assert_eq!(&t[2..8], &[Tok::Keyword(0); 6], "control group");
         assert_eq!(&t[9..13], &[Tok::Keyword(4); 4], "constant group");
+    }
+
+    // ---- WGSL ------------------------------------------------------------
+
+    #[test]
+    fn lex_wgsl_keyword_groups() {
+        let spec = wgsl();
+        // groups per the spec: 0 control, 1 storage, 2 constants,
+        // 3 type words, 4 builtin functions
+        let t = lex(&spec, "x return struct;", &|_| true);
+        assert_eq!(&t[2..8], &[Tok::Keyword(0); 6], "control group");
+        assert_eq!(&t[9..15], &[Tok::Keyword(1); 6], "storage group");
+        let t = lex(&spec, "a = true;", &|_| true);
+        assert_eq!(&t[4..8], &[Tok::Keyword(2); 4], "constant group");
+        let t = lex(&spec, "let v = vec4f(1.0);", &|_| true);
+        assert_eq!(&t[0..3], &[Tok::Keyword(1); 3], "let is storage");
+        assert_eq!(&t[8..12], &[Tok::Keyword(3); 4], "vec4f is a type word");
+        assert_eq!(&t[14..17], &[Tok::Number; 3], "1.0 colors");
+        let t = lex(&spec, "let d = dot(a, b);", &|_| true);
+        assert_eq!(&t[8..11], &[Tok::Keyword(4); 3], "dot is a builtin");
+    }
+
+    #[test]
+    fn lex_wgsl_prefixed_words_across_groups() {
+        let spec = wgsl();
+        // `atomic` (type, group 3) prefixes `atomicAdd` (builtin, group
+        // 4): each colors whole, and inside a longer word neither fires
+        // 0..6:atomic 6:sp 7..16:atomicAdd 16:sp 17..24:atomicX 25..32:xatomic
+        let t = lex(&spec, "atomic atomicAdd atomicX xatomic", &|_| true);
+        assert_eq!(&t[0..6], &[Tok::Keyword(3); 6]);
+        assert_eq!(&t[7..16], &[Tok::Keyword(4); 9]);
+        assert_eq!(&t[17..24], &[Tok::Plain; 7]);
+        assert_eq!(&t[25..32], &[Tok::Plain; 7]);
+        // same-group prefixes: the template and the shorthand alias
+        let t = lex(&spec, "sampler sampler_comparison", &|_| true);
+        assert_eq!(&t[0..7], &[Tok::Keyword(3); 7]);
+        assert_eq!(&t[8..25], &[Tok::Keyword(3); 17]);
+        // builtins prefix builtins too
+        let t = lex(&spec, "subgroupBroadcast subgroupBroadcastFirst", &|_| true);
+        assert_eq!(&t[0..17], &[Tok::Keyword(4); 17]);
+        assert_eq!(&t[18..], &[Tok::Keyword(4); 22]);
+    }
+
+    #[test]
+    fn lex_wgsl_attributes_and_number_suffixes() {
+        let spec = wgsl();
+        // attribute names are contextual keywords: `@` is a plain word
+        // boundary and nothing after it colors (the C#-verbatim rule —
+        // a stateless lexer cannot tell `@vertex` from a name)
+        let t = lex(&spec, "@vertex fn vs() {}", &|_| true);
+        assert_eq!(&t[0..8], &[Tok::Plain; 8], "@vertex stays plain");
+        assert_eq!(&t[8..10], &[Tok::Keyword(1); 2], "fn colors after @word");
+        let t = lex(&spec, "@builtin(position) vec4f", &|_| true);
+        assert_eq!(&t[0..18], &[Tok::Plain; 18], "@builtin(position) plain");
+        assert_eq!(&t[19..24], &[Tok::Keyword(3); 5], "vec4f colors");
+        // suffix letters are identifier chars riding the number state
+        let t = lex(&spec, "x = 42u;", &|_| true);
+        assert_eq!(&t[4..7], &[Tok::Number; 3], "42u");
+        let t = lex(&spec, "x = 0x1Fu;", &|_| true);
+        assert_eq!(&t[4..9], &[Tok::Number; 5], "0x1Fu");
+        let t = lex(&spec, "x = 0.5h;", &|_| true);
+        assert_eq!(&t[4..8], &[Tok::Number; 4], "0.5h");
     }
 }

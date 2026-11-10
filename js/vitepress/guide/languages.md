@@ -8,9 +8,10 @@ Language support comes in two tiers:
   No builtin language list is involved.
 - **Generic mode** (`--generic`) currently supports a limited set of
   builtin languages only — rust, js, ts, python, go, java, c, cpp,
-  csharp, php, ruby, lua, shell, html, css — each a glyph-substitution
-  state machine synthesized from a hand-written spec. The sections below
-  cover eleven of them (PHP, Ruby, Lua and Shell round out the list).
+  csharp, php, ruby, lua, shell, html, css, wgsl — each a
+  glyph-substitution state machine synthesized from a hand-written
+  spec. The sections below cover twelve of them (PHP, Ruby, Lua and
+  Shell round out the list).
 
 Every block on this page is rendered in exact mode and copies out as
 plain text — this site groups one font per language; the default grouping
@@ -256,4 +257,33 @@ lookahead — block state cannot cross a line.
   background: url("bg.png") no-repeat;
 }
 @media (min-width: 600px) { .card { padding: 8px !important; } }
+```
+
+## WGSL
+
+WebGPU shader code: control and declaration keywords in separate
+groups, predeclared type words (scalars, `vec`/`mat` templates and
+their `f`/`h`/`i`/`u` aliases, samplers, textures) and the ~150 builtin
+functions each carry their own scope. Numeric suffixes ride the number
+state (`42u`, `3.14f`, `0.5h`, `0x1Fu`). Attribute names (`@vertex`,
+`@builtin(position)`) stay uncolored — they are contextual keywords a
+stateless in-font lexer cannot tell from ordinary names, like the C#
+spec's contextual words.
+
+```wgsl
+struct Uniforms { mvp: mat4x4f, tint: vec4f, time: f32 };
+
+@group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(1) var samp: sampler;
+@group(0) @binding(2) var tex: texture_2d<f32>;
+
+@vertex fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
+  let x = f32(vi % 3u) - 1.0;
+  return u.mvp * vec4f(x, 0.5 * sin(u.time + x), 0.0, 1.0);
+}
+
+@fragment fn fs(@location(0) uv: vec2f) -> @location(0) vec4f {
+  let c = textureSample(tex, samp, uv);
+  return vec4f(c.rgb * u.tint.rgb, 1.0);
+}
 ```

@@ -84,7 +84,7 @@ pub use langs::{
     c::spec as c, cpp::spec as cpp, csharp::spec as csharp, css::spec as css, go::spec as go,
     html::spec as html, java::spec as java, javascript::spec as javascript, lua::spec as lua,
     php::spec as php, python::spec as python, ruby::spec as ruby, rust::spec as rust,
-    shell::spec as shell, typescript::spec as typescript,
+    shell::spec as shell, typescript::spec as typescript, wgsl::spec as wgsl,
 };
 pub use lex::{lex, Tok};
 pub use oracle::{sample_texts, verify_generic};
@@ -108,8 +108,9 @@ pub fn spec_by_name(name: &str) -> Result<LanguageSpec, BuildError> {
         "shell" | "sh" | "bash" => Ok(shell()),
         "html" | "htm" => Ok(html()),
         "css" => Ok(css()),
+        "wgsl" => Ok(wgsl()),
         other => Err(BuildError::Tokenize(format!(
-            "unknown generic language {other:?}; available: rust, js, ts, python, go, java, c, cpp, csharp, php, ruby, lua, shell, html, css"
+            "unknown generic language {other:?}; available: rust, js, ts, python, go, java, c, cpp, csharp, php, ruby, lua, shell, html, css, wgsl"
         ))),
     }
 }

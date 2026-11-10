@@ -807,6 +807,9 @@ fn generic_mode_new_languages() {
         // empty-context rules + guards replace the boundary enumeration,
         // so CSS needs far fewer rules than the 0.3.x boundary sets
         (chromaglyph_core::generic::css(), 1100),
+        // ~250 words across five groups (types and builtin functions
+        // included) plus the string/comment/number machinery
+        (chromaglyph_core::generic::wgsl(), 2600),
     ] {
         let out = build(&BuildInput {
             font_bytes: FONT,
@@ -1081,6 +1084,31 @@ fn generic_mode_adversarial_new_languages() {
             "color:\nred;",
             "\ncolor at_line_start\ndiv at_line_start\n42 at_line_start",
             "color: red; display: flex; gap: 8px",
+        ],
+    );
+    adversarial(
+        &chromaglyph_core::generic::wgsl(),
+        &[
+            "// only comment",
+            "\"only string\"",
+            "fn//c\n\"s\"let",
+            "\"unterminated string let fn",
+            "@vertex @fragment @compute",
+            "@vertex fn vs() -> @builtin(position) vec4f { return vec4f(); }",
+            "@workgroup_size(8, 8) @compute fn cs(@builtin(global_invocation_id) gid: vec3u) {}",
+            "vec2vec2 vec2f_ _vec2f 1vec2 vec2f1",
+            "atomic atomicAdd atomicStore xatomic atomicx",
+            "sampler sampler_comparison samplerx xsampler",
+            "texture_2d texture_2d_array texture_depth_2d",
+            "subgroupBroadcast subgroupBroadcastFirst xsubgroupBroadcast",
+            "let m = mat2x2f(1.0, 0.0, 0.0, 1.0) * mat2x2(1.0, 2.0, 3.0, 4.0);",
+            "let d = dot(a, b) / length(c) - clamp(d, 0.0, 1.0);",
+            "x = textureSampleLevel(tex, samp, uv, 3.0).rgb;",
+            "0x1Fu 1.5e3f 0.5h 42u 1i 3.14 1.",
+            "@location(0) @interpolate(flat)",
+            "enable f16; requires f16;",
+            "fn f(p: ptr<function, i32>) -> i32 { return *p; }",
+            "\nfn at_line_start\n42 at_line_start",
         ],
     );
 }

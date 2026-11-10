@@ -17,3 +17,4 @@ pub mod ruby;
 pub mod rust;
 pub mod shell;
 pub mod typescript;
+pub mod wgsl;

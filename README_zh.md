@@ -42,7 +42,7 @@ tokenize+theme → compile → fontbuild → verify
 - **exact**（`--input`）：内容构建期已知；多语言共用一个字体（全局消歧）。
   `--ligatures` 保留源字体的连字——`!=`、`->` 及上下文变体都按字体本来的
   样子渲染，同时保持高亮。
-- **generic**（`--generic rust|js|ts|python|go|java|c|cpp|csharp|php|ruby|lua|shell|html|css`）：
+- **generic**（`--generic rust|js|ts|python|go|java|c|cpp|csharp|php|ruby|lua|shell|html|css|wgsl`）：
   不需要指定内容——字体高亮该语言的**任意**文本，纯靠字形替换推进状态。
   一语言一字体，着色为行内语义。
 - 可选 `--semantic`（tree-sitter；Rust / JS / TS / Python / Java）：把语义

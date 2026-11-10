@@ -140,6 +140,7 @@ fn curated(name: &str) -> Vec<String> {
         "javascript" => langs::javascript::samples(),
         "python" => langs::python::samples(),
         "typescript" => langs::typescript::samples(),
+        "wgsl" => langs::wgsl::samples(),
         // rust (and unknown names) keeps the v1.1 curated set
         _ => langs::rust::samples(),
     }

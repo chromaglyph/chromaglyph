@@ -54,7 +54,7 @@ enum Command {
         /// language (keywords, comments, strings, numbers) instead of
         /// compiling --input; one of `rust`, `js`, `ts`, `python`, `go`,
         /// `java`, `c`, `cpp`, `csharp`, `php`, `ruby`, `lua`, `shell`,
-        /// `html`, `css`
+        /// `html`, `css`, `wgsl`
         #[arg(long, conflicts_with = "input")]
         generic: Option<String>,
         /// Theme: builtin name (`dark-plus`, `github-light`, … — see

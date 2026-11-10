@@ -52,7 +52,7 @@ Two modes:
   one font (disambiguated globally). `--ligatures` preserves the source font's
   ligatures — `!=`, `->` or contextual alternates render exactly as the font
   intends while staying highlighted.
-- **generic** (`--generic rust|js|ts|python|go|java|c|cpp|csharp|php|ruby|lua|shell|html|css`):
+- **generic** (`--generic rust|js|ts|python|go|java|c|cpp|csharp|php|ruby|lua|shell|html|css|wgsl`):
   no content needed — the font highlights **any** text of that language by
   advancing state purely through glyph substitution. One language per font,
   line-scoped coloring.
